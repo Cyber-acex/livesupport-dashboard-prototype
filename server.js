@@ -2856,9 +2856,16 @@ app.post("/webhook", async (req, res) => {
     const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!msg) return res.sendStatus(200);
 
-    const phone = msg.from;
+    const metadataPhoneNumberId = req.body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+    const businessPhoneNumberId = metadataPhoneNumberId || process.env.PHONE_NUMBER_ID;
+    const msgFrom = msg.from || "";
+    const msgTo = msg.to || "";
+    const contactWaId = req.body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.wa_id || "";
+    const isOutgoingWebhook = businessPhoneNumberId && msgFrom === businessPhoneNumberId;
+    const sender = isOutgoingWebhook ? 'sent' : 'received';
+    const phone = sender === 'sent' ? (msgTo || contactWaId || msgFrom) : msgFrom;
+
     let text = msg.text?.body || "";
-    const sender = msg.from === process.env.PHONE_NUMBER_ID ? 'sent' : 'received';
 
     // Handle audio messages
     if (msg.audio && !text) {
@@ -2886,13 +2893,21 @@ app.post("/webhook", async (req, res) => {
         }
     }
 
+    if (!text) {
+        text = msg.image?.caption || msg.document?.filename || msg.button?.text || msg.interactive?.type || "[Non-text message]";
+    }
+
     console.log(`\n📩 WEBHOOK MESSAGE RECEIVED:`, {
         phone,
         text,
         sender,
         msgFrom: msg.from,
+        msgTo: msg.to,
+        contactWaId,
+        metadataPhoneNumberId,
         phoneNumberId: process.env.PHONE_NUMBER_ID,
-        isSent: msg.from === process.env.PHONE_NUMBER_ID,
+        businessPhoneNumberId,
+        isSent: isOutgoingWebhook,
         hasAudio: !!msg.audio
     });
 

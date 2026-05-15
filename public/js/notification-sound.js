@@ -17,7 +17,7 @@ function notifyDesktop(message, title = 'LiveSupport') {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     new Notification(title, {
         body: message,
-        icon: '/favicon.ico'
+        icon: '/favicon.png'
     });
 }
 

@@ -130,7 +130,7 @@ socket.on("newMessage", function (data) {
         if ('Notification' in window && Notification.permission === 'granted') {
             const notification = new Notification('New Message', {
                 body: data.message,
-                icon: '/favicon.ico' // or some icon
+                icon: '/favicon.png' // or some icon
             });
             notification.onclick = function() {
                 window.focus();

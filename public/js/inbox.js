@@ -1280,7 +1280,7 @@ socket.on("newMessage", msg => {
     if (localStorage.getItem('msgAlert') === 'true' && !document.hasFocus() && 'Notification' in window && Notification.permission === 'granted') {
         new Notification('LiveSupport - New Message', {
             body: `New message: ${msg.message}`,
-            icon: '/favicon.ico'
+            icon: '/favicon.png'
         });
     }
 
