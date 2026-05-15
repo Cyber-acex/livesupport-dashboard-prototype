@@ -18,7 +18,7 @@ function convertSqlPlaceholders(sql, params) {
     if (param === null || param === undefined) return 'NULL';
     if (typeof param === 'string') return `'${param.replace(/'/g, "''")}'`;
     if (typeof param === 'number') return param.toString();
-    if (typeof param === 'boolean') return param ? '1' : '0';
+    if (typeof param === 'boolean') return param ? 'TRUE' : 'FALSE';
     if (param instanceof Date) return `'${param.toISOString()}'`;
     return String(param);
   });
@@ -37,12 +37,13 @@ const db = {
       try {
         const sqlUpper = sql.toUpperCase().trim();
 
+        const convertedSql = convertSqlPlaceholders(sql, params);
+
         if (sqlUpper.startsWith('CREATE') || sqlUpper.startsWith('ALTER') || sqlUpper.startsWith('DROP')) {
-          if (callback) callback(null, { ok: true });
+          const result = await pool.query(convertedSql);
+          if (callback) callback(null, result);
           return;
         }
-
-        const convertedSql = convertSqlPlaceholders(sql, params);
 
         if (sqlUpper.startsWith('SELECT')) {
           const result = await prisma.$queryRawUnsafe(convertedSql);
