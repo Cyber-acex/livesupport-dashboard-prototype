@@ -1410,13 +1410,13 @@ app.post('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
     db.query(sql, [name || email.split('@')[0], email, password, role || 'agent'], (err, result) => {
         if (err) {
             console.error('Failed to insert user:', err);
-            // return helpful error for client
             const payload = { error: 'db_error', code: err.code || null, message: err.sqlMessage || String(err) };
             return res.status(500).json(payload);
         }
-        console.log('User created id=', result.insertId);
-        try { io.emit('admin:users:changed', { action: 'create', id: result.insertId, email }); } catch (e) { console.error('Emit admin users changed error', e); }
-        res.json({ success: true, id: result.insertId });
+        const insertedId = result && (result.insertId || result.lastID || (result.rows && result.rows[0] && result.rows[0].id) || null);
+        console.log('User created id=', insertedId);
+        try { io.emit('admin:users:changed', { action: 'create', id: insertedId, email }); } catch (e) { console.error('Emit admin users changed error', e); }
+        res.json({ success: true, id: insertedId });
     });
 });
 

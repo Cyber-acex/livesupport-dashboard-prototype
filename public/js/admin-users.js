@@ -96,6 +96,9 @@ window.addEventListener('DOMContentLoaded', () => {
         if (msgEl) { msgEl.style.display = 'block'; msgEl.style.color = '#b91c1c'; msgEl.textContent = 'Email and password required'; setTimeout(()=>{ msgEl.style.display='none'; }, 4000); }
         return;
       }
+      if (!confirm(`Create new user ${name || email}?`)) {
+        return;
+      }
       try {
         const res = await fetch('/api/admin/users', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, email, password, role }) });
         if (!res.ok) {

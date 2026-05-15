@@ -180,7 +180,7 @@ function displayOrders() {
       <td>
         <div class="order-id-cell">
           <span class="order-id" onclick="viewOrderDetails('${order.id}')">${order.id}</span>
-          <button class="copy-order-btn" onclick="copyOrderId(event, '${order.id}')" aria-label="Copy order ID">📋</button>
+          <button type="button" class="copy-order-btn" onclick="copyOrderId(event, '${order.id}')" aria-label="Copy order ID">📋</button>
         </div>
       </td>
       <td>${order.customerName || ''}</td>
@@ -384,7 +384,27 @@ async function saveOrderChanges(event) {
 }
 function copyOrderId(event, orderId) {
   event.stopPropagation();
-  navigator.clipboard.writeText(orderId)
+  event.preventDefault();
+  if (!orderId) {
+    return showNotification('Order ID not available');
+  }
+  const textToCopy = String(orderId);
+  const writeText = () => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(textToCopy);
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = textToCopy;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return successful ? Promise.resolve() : Promise.reject(new Error('Fallback copy failed'));
+  };
+  writeText()
     .then(() => {
       showNotification(`Copied ${orderId} to clipboard.`);
     })
