@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <link rel="icon" href="/favicon.png" type="image/png">
@@ -10,6 +10,7 @@
   <title>LiveSupport - Orders</title>
   <link rel="stylesheet" href="./css/style.css">
   <link rel="stylesheet" href="./css/sidebar.css">
+  <link rel="stylesheet" href="./css/tailadmin.css">
   <link rel="stylesheet" href="./css/timestamp.css">
   <script>
     // Apply theme from localStorage immediately to prevent flash
@@ -34,18 +35,127 @@
       margin-bottom: 25px;
     }
     
+    .orders-summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .summary-card {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 24px;
+      border-radius: 20px;
+      background: #ffffff;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+      min-height: 120px;
+    }
+
+    .summary-card-icon {
+      width: 68px;
+      height: 68px;
+      border-radius: 20px;
+      display: grid;
+      place-items: center;
+      background: #f8fafc;
+      color: #111827;
+      font-size: 28px;
+      flex-shrink: 0;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+    }
+
+    .summary-card-icon svg {
+      width: 34px;
+      height: 34px;
+    }
+
+    .summary-card-icon-truck {
+      background: #eef2ff;
+      color: #1f2937;
+    }
+
+    .summary-card-details {
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: flex-start;
+      gap: 4px;
+    }
+
+    .summary-card-label {
+      color: #6b7280;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 8px;
+    }
+
+    .summary-card-value {
+      font-size: 2.4rem;
+      font-weight: 800;
+      color: #111827;
+      line-height: 1;
+    }
+
+    .summary-card-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #047857;
+      background: #dcfce7;
+      min-width: 72px;
+      text-align: center;
+    }
+
+    .summary-card-badge.negative {
+      color: #b91c1c;
+      background: #fee2e2;
+    }
+
+    .dark-theme .summary-card {
+      background: #111827;
+      color: #f8fafc;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+    }
+
+    .dark-theme .summary-card-label {
+      color: #94a3b8;
+    }
+
+    .dark-theme .summary-card-value {
+      color: #f8fafc;
+    }
+
+    .dark-theme .summary-card-badge.positive {
+      color: #ecfccb;
+      background: #166534;
+    }
+
+    .dark-theme .summary-card-badge.negative {
+      color: #fecaca;
+      background: #7f1d1d;
+    }
+
     .orders-header h1 {
       font-size: 28px;
       margin: 0;
     }
-    
+
     .orders-filters {
       display: flex;
       gap: 10px;
       margin-bottom: 20px;
       flex-wrap: wrap;
     }
-    
+
     .filter-input {
       padding: 10px 15px;
       border: 1px solid #ddd;
@@ -190,6 +300,152 @@
       cursor: pointer;
       font-size: 12px;
       font-weight: 600;
+    }
+    
+    /* Modern modal UI */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 10, 29, 0.75);
+      backdrop-filter: blur(14px);
+      z-index: 2100;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .modal-backdrop.show {
+      display: flex;
+    }
+    .modal-card {
+      width: 100%;
+      max-width: 640px;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(255, 255, 255, 0.55);
+      border-radius: 28px;
+      box-shadow: 0 36px 80px rgba(0, 0, 0, 0.18);
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+      backdrop-filter: saturate(180%) blur(18px);
+    }
+    .modal-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(0, 123, 255, 0.14), transparent 32%), radial-gradient(circle at bottom left, rgba(88, 101, 242, 0.12), transparent 28%);
+      pointer-events: none;
+    }
+    .modal-card > * {
+      position: relative;
+      z-index: 1;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .modal-title {
+      margin: 0;
+      font-size: 1.8rem;
+      letter-spacing: -0.04em;
+    }
+    .modal-subtitle {
+      margin-top: 8px;
+      color: #586069;
+      font-size: 0.95rem;
+      line-height: 1.5;
+    }
+    .close-modal-btn {
+      width: 44px;
+      height: 44px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.88);
+      color: #212529;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+    .close-modal-btn:hover {
+      transform: scale(1.05);
+      background: rgba(255, 255, 255, 1);
+    }
+    .modal-form {
+      display: grid;
+      gap: 18px;
+    }
+    .modal-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .modal-field {
+      display: grid;
+      gap: 8px;
+    }
+    .modal-field label {
+      font-size: 0.95rem;
+      color: #334155;
+      font-weight: 600;
+    }
+    .modal-field input,
+    .modal-field select {
+      width: 100%;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: #fbfcfe;
+      color: #111827;
+      font-size: 0.98rem;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .modal-field input:focus,
+    .modal-field select:focus {
+      outline: none;
+      border-color: #4f46e5;
+      box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12);
+      transform: translateY(-1px);
+    }
+    .modal-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 8px;
+    }
+    .modal-actions .btn {
+      border-radius: 14px;
+      padding: 14px 18px;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .modal-actions .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 30px rgba(15, 23, 42, 0.12);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #4f46e5 0%, #0ea5e9 100%);
+      color: white;
+    }
+    .btn-secondary {
+      background: rgba(15, 23, 42, 0.06);
+      color: #111827;
+    }
+    .modal-flag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(79, 70, 229, 0.08);
+      color: #4338ca;
+      font-size: 0.9rem;
+      width: fit-content;
     }
     
     .view-btn {
@@ -340,9 +596,9 @@
             <div class="profile-session">
               <div class="session-header">Session Info</div>
               <div class="session-details">
-                <div class="session-item"><span class="session-icon">🕐</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
-                <div class="session-item"><span class="session-icon">⏱️</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
-                <div class="session-item"><span class="session-icon">⚡</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
+              <div class="session-item"><span class="session-icon">🕐</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
+              <div class="session-item"><span class="session-icon">⏱️</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
+              <div class="session-item"><span class="session-icon">⚡</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
               </div>
             </div>
             <div class="profile-actions">
@@ -354,12 +610,46 @@
       </div>
     </header>
 
+      <!-- NOTIFICATION BAR -->
+      <div id="notificationBar" class="notification-bar" style="display: none; background: #ff6b6b; color: white; padding: 10px; text-align: center; position: relative; z-index: 1000;">
+        <span id="notificationText">New message received!</span>
+        <button id="closeNotification" class="close-btn" style="background: none; border: none; color: white; font-size: 20px; position: absolute; right: 10px; top: 5px; cursor: pointer;">&times;</button>
+      </div>
+
     <!-- ORDERS SECTION -->
     <div class="orders-container" id="ordersView">
       <div class="orders-header">
         <h1>Orders</h1>
         <div class="menu-action-group">
           <button class="filter-btn" onclick="openNewOrderModal()">+ New Order</button>
+        </div>
+      </div>
+      <div class="orders-summary-cards">
+        <div class="summary-card">
+          <div class="summary-card-icon">📦</div>
+          <div class="summary-card-details">
+            <div class="summary-card-label">Total Orders</div>
+            <div class="summary-card-value" id="totalOrdersCount">0</div>
+          </div>
+          <div class="summary-card-badge positive">+20%</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-icon summary-card-icon-truck" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 15h10v-6H3v6z" />
+              <path d="M13 13h6l2 3v3H17" />
+              <path d="M5 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+              <path d="M17 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
+              <path d="M13 9V6a1 1 0 0 1 1-1h3.5l2.5 3v1" />
+              <path d="M15 6v4" />
+              <path d="M8 11h4" />
+            </svg>
+          </div>
+          <div class="summary-card-details">
+            <div class="summary-card-label">Orders in Transit</div>
+            <div class="summary-card-value" id="ordersInTransitCount">0</div>
+          </div>
+          <div class="summary-card-badge positive">+20%</div>
         </div>
       </div>
       <!-- FILTERS -->
@@ -431,31 +721,33 @@
   </div>
 </div>
 <!-- NEW ORDER MODAL -->
-  <!-- VIEW / EDIT ORDER MODAL -->
-  <div id="orderViewModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2100; align-items: center; justify-content: center;">
-    <div style="background: white; padding: 24px; border-radius: 8px; width: 92%; max-width: 540px; box-shadow: 0 6px 18px rgba(0,0,0,0.12);">
-      <h2 style="margin-top:0;">Order Details</h2>
-      <form id="orderViewForm" onsubmit="saveOrderChanges(event)">
-        <div style="margin-bottom:12px;">
-          <label style="display:block; font-weight:600; margin-bottom:6px;">Order ID</label>
-          <input id="view_order_id" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f6f6f6;">
+  <div id="orderModal" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">New Order</h2>
+          <div class="modal-subtitle">Launch the order with a clean interface and instant validation.</div>
         </div>
-        <div style="margin-bottom:12px;">
-          <label style="display:block; font-weight:600; margin-bottom:6px;">Customer</label>
-          <input id="view_customerName" required style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px;">
+        <button type="button" class="close-modal-btn" aria-label="Close modal" onclick="closeOrderModal()">×</button>
+      </div>
+      <form id="orderForm" class="modal-form" onsubmit="handleCreateOrder(event)">
+        <div class="modal-field">
+          <span class="modal-flag">Order type</span>
+          <label for="customerName">Customer Name</label>
+          <input id="customerName" required autocomplete="off" placeholder="Enter customer name">
         </div>
-        <div style="margin-bottom:12px;">
-          <label style="display:block; font-weight:600; margin-bottom:6px;">Product</label>
-          <input id="view_product" required style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px;">
+        <div class="modal-field">
+          <label for="product">Product</label>
+          <input id="product" required autocomplete="off" placeholder="Enter product name">
         </div>
-        <div style="margin-bottom:12px; display:flex; gap:10px;">
-          <div style="flex:1;">
-            <label style="display:block; font-weight:600; margin-bottom:6px;">Amount</label>
-            <input id="view_amount" type="number" step="0.01" required style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px;">
+        <div class="modal-grid">
+          <div class="modal-field">
+            <label for="amount">Amount</label>
+            <input id="amount" type="number" step="0.01" required placeholder="0.00">
           </div>
-          <div style="width:160px;">
-            <label style="display:block; font-weight:600; margin-bottom:6px;">Status</label>
-            <select id="view_status" required style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px;">
+          <div class="modal-field">
+            <label for="orderStatus">Status</label>
+            <select id="orderStatus" required>
               <option value="pending">Pending</option>
               <option value="processing">Processing</option>
               <option value="completed">Completed</option>
@@ -463,21 +755,68 @@
             </select>
           </div>
         </div>
-        <div style="margin-bottom:12px;">
-          <label style="display:block; font-weight:600; margin-bottom:6px;">Date</label>
-          <input id="view_date" readonly style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f6f6f6;">
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Create Order</button>
+          <button type="button" class="btn btn-secondary" onclick="closeOrderModal()">Cancel</button>
         </div>
-        <div style="display:flex; gap:10px;">
-          <button type="submit" style="flex:1; padding:10px; background:#007bff; color:#fff; border:none; border-radius:4px; font-weight:600;">Save Changes</button>
-          <button type="button" onclick="closeOrderViewModal()" style="flex:1; padding:10px; background:#6c757d; color:#fff; border:none; border-radius:4px; font-weight:600;">Close</button>
+      </form>
+    </div>
+  </div>
+  <!-- VIEW / EDIT ORDER MODAL -->
+  <div id="orderViewModal" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title">Order Details</h2>
+          <div class="modal-subtitle">Update the order with a polished, lightweight panel.</div>
+        </div>
+        <button type="button" class="close-modal-btn" aria-label="Close modal" onclick="closeOrderViewModal()">×</button>
+      </div>
+      <form id="orderViewForm" class="modal-form" onsubmit="saveOrderChanges(event)">
+        <div class="modal-field">
+          <label for="view_order_id">Order ID</label>
+          <input id="view_order_id" readonly>
+        </div>
+        <div class="modal-field">
+          <label for="view_customerName">Customer</label>
+          <input id="view_customerName" required autocomplete="off">
+        </div>
+        <div class="modal-field">
+          <label for="view_product">Product</label>
+          <input id="view_product" required autocomplete="off">
+        </div>
+        <div class="modal-grid">
+          <div class="modal-field">
+            <label for="view_amount">Amount</label>
+            <input id="view_amount" type="number" step="0.01" required>
+          </div>
+          <div class="modal-field">
+            <label for="view_status">Status</label>
+            <select id="view_status" required>
+              <option value="pending">Pending</option>
+              <option value="processing">Processing</option>
+              <option value="completed">Completed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
+        <div class="modal-field">
+          <label for="view_date">Date</label>
+          <input id="view_date" readonly>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Save Changes</button>
+          <button type="button" class="btn btn-secondary" onclick="closeOrderViewModal()">Close</button>
         </div>
       </form>
     </div>
   </div>
 <script src="/socket.io/socket.io.js"></script>
+<script src="./js/notification-sound.js"></script>
 <script src="./js/orders.js"></script>
 <script src="./js/sidebar.js" defer></script>
 </body>
 </html>
+
 
 

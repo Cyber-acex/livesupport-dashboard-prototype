@@ -66,40 +66,289 @@ document.addEventListener('DOMContentLoaded', ()=>{
   }
 
   const notifBtn = document.getElementById('notifBtn');
-  if(notifBtn){
-    const popup = document.createElement('div');
-    popup.className = 'notif-popup';
-    const notifications = getSharedNotifications(5);
-    let notifContent = '<strong>Notifications</strong><ul><li>No recent notifications</li></ul>';
-    if (notifications.length) {
-      notifContent = '<strong>Notifications</strong><ul>' + notifications.map(n => {
-        const time = n.time ? new Date(n.time).toLocaleString() : '';
-        const label = n.source ? `<strong>${escapeHtml(n.source)}:</strong> ` : '';
-        const timeMarkup = time ? `<br><small>${escapeHtml(time)}</small>` : '';
-        return `<li>${label}${escapeHtml(n.message)}${timeMarkup}</li>`;
-      }).join('') + '</ul>';
+  const notifPopup = document.getElementById('notifPopup');
+  const notifClose = document.getElementById('notifClose');
+  const notifList = document.querySelector('.notif-list');
+
+  async function fetchDashboardNotifications(limit = 5) {
+    try {
+      const [messagesRes, ticketsRes] = await Promise.all([
+        fetch('/api/recent-messages?limit=' + limit),
+        fetch('/api/recent-tickets?limit=' + limit)
+      ]);
+      if (!messagesRes.ok || !ticketsRes.ok) throw new Error('Failed to load notification data');
+      const [messages, tickets] = await Promise.all([messagesRes.json(), ticketsRes.json()]);
+
+      const sharedNotifications = getSharedNotifications(limit).map((n, index) => ({
+        id: `shared-${index}-${n.time}`,
+        title: n.source || 'System',
+        body: n.message || 'New event',
+        meta: new Date(n.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+        time: n.time,
+        icon: (n.source || 'S').charAt(0).toUpperCase()
+      }));
+
+      const messageNotifications = (messages || []).map((m) => ({
+        id: `msg-${m.id}`,
+        title: m.customer_name || m.phone || 'Customer',
+        body: m.message || 'New message received',
+        meta: `${new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
+        time: m.created_at,
+        icon: m.customer_name || m.phone ? String(m.customer_name || m.phone).charAt(0).toUpperCase() : 'C'
+      }));
+
+      const ticketNotifications = (tickets || []).map((t) => ({
+        id: `ticket-${t.id}`,
+        title: `Ticket #${t.id}`,
+        body: t.last_message ? String(t.last_message).slice(0, 80) : `${t.status || 'Open'} ticket updated`,
+        meta: `${t.status || 'Open'} · ${new Date(t.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`,
+        time: t.created_at,
+        icon: `#${t.id}`
+      }));
+
+      return [...messageNotifications, ...ticketNotifications, ...sharedNotifications]
+        .sort((a, b) => new Date(b.time) - new Date(a.time))
+        .slice(0, limit);
+    } catch (err) {
+      console.error('Failed loading notifications', err);
+      return getSharedNotifications(limit).map((n, index) => ({
+        id: `shared-${index}-${n.time}`,
+        title: n.source || 'System',
+        body: n.message || 'New event',
+        meta: new Date(n.time).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+        time: n.time,
+        icon: (n.source || 'S').charAt(0).toUpperCase()
+      }));
     }
-    popup.innerHTML = notifContent;
-    document.body.appendChild(popup);
-    notifBtn.addEventListener('click', (e)=>{
-      const notifications = getSharedNotifications(5);
-      let content = '<strong>Notifications</strong><ul><li>No recent notifications</li></ul>';
-      if (notifications.length) {
-        content = '<strong>Notifications</strong><ul>' + notifications.map(n => {
-          const time = n.time ? new Date(n.time).toLocaleString() : '';
-          const label = n.source ? `<strong>${escapeHtml(n.source)}:</strong> ` : '';
-          const timeMarkup = time ? `<br><small>${escapeHtml(time)}</small>` : '';
-          return `<li>${label}${escapeHtml(n.message)}${timeMarkup}</li>`;
-        }).join('') + '</ul>';
+  }
+
+  function updateNotifBadge(count) {
+    if (!notifBtn) return;
+    const badge = notifBtn.querySelector('.notif-badge');
+    if (!badge) return;
+    if (count > 0) {
+      badge.classList.add('show');
+      badge.setAttribute('aria-label', `${count} new notifications`);
+    } else {
+      badge.classList.remove('show');
+      badge.removeAttribute('aria-label');
+    }
+  }
+
+  function renderNotifications(items) {
+    if (!notifList) return;
+    if (!items || items.length === 0) {
+      notifList.innerHTML = '<div class="notif-empty">No recent notifications</div>';
+      return;
+    }
+    notifList.innerHTML = items.map(item => `
+      <a href="#" class="notif-item">
+        <div class="notif-avatar"><span>${escapeHtml(String(item.icon || 'N'))}</span></div>
+        <div class="notif-body">
+          <strong>${escapeHtml(item.title)}</strong>
+          <p>${escapeHtml(item.body)}</p>
+          <small>${escapeHtml(item.meta)}</small>
+        </div>
+      </a>
+    `).join('');
+  }
+
+  async function loadNotifications() {
+    const items = await fetchDashboardNotifications(5);
+    renderNotifications(items);
+    updateNotifBadge(items.length);
+    return items;
+  }
+
+  function calculatePercentageChange(current, previous) {
+    if (!previous || previous === 0) return 0;
+    return ((current - previous) / previous) * 100;
+  }
+
+  function updateStatChange(element, percentage) {
+    if (!element) return;
+    const span = element.querySelector('span');
+    if (percentage === null || typeof percentage === 'undefined') {
+      element.classList.remove('positive', 'negative');
+      if (span) span.textContent = '—';
+      return;
+    }
+    const isPositive = Number(percentage) >= 0;
+    element.classList.toggle('positive', isPositive);
+    element.classList.toggle('negative', !isPositive);
+    if (span) {
+      span.textContent = `${Math.abs(Number(percentage)).toFixed(2)}%`;
+    }
+  }
+
+  async function loadDashboardStats() {
+    try {
+      // Instant change mode: fetch last instant snapshot from server (falls back to null)
+      let prevSnapshot = {};
+      try {
+        const snapRes = await fetch('/api/dashboard-snapshot/instant');
+        if (snapRes.ok) {
+          const snapJson = await snapRes.json();
+          prevSnapshot = snapJson.data || {};
+        }
+      } catch (e) {
+        console.warn('Failed to load previous dashboard snapshot from server', e);
+        prevSnapshot = {};
       }
-      popup.innerHTML = content;
-      popup.style.right = '24px';
-      popup.style.top = (notifBtn.getBoundingClientRect().bottom + 8) + 'px';
-      popup.classList.toggle('show');
+
+      // Fetch conversations to get chat count
+      const convRes = await fetch('/api/conversations');
+      if (!convRes.ok) throw new Error('Failed to load conversations');
+      const conversations = await convRes.json();
+      const customersEl = document.getElementById('customersCount');
+      const customersChangeEl = document.getElementById('customersChange');
+
+      const chatCount = Array.isArray(conversations) ? conversations.length : 0;
+      const currentCount = Number(chatCount);
+      if (customersEl) customersEl.textContent = currentCount.toLocaleString();
+
+      // Instant comparison: prefer server-provided calculation, otherwise compute against saved previous values
+      try {
+        if (typeof prevSnapshot.customers_change !== 'undefined' && prevSnapshot.customers_change !== null) {
+          updateStatChange(customersChangeEl, Number(prevSnapshot.customers_change));
+        } else {
+          const prevCustomers = (typeof prevSnapshot.customers !== 'undefined') ? Number(prevSnapshot.customers) : null;
+          if (prevCustomers === null) {
+            updateStatChange(customersChangeEl, null);
+          } else {
+            const percentChange = calculatePercentageChange(currentCount, prevCustomers);
+            updateStatChange(customersChangeEl, percentChange);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to compute instant customers change', e);
+        updateStatChange(customersChangeEl, null);
+      }
+
+      // Fetch orders count
+      const res = await fetch('/api/dashboard-stats');
+      if (res.ok) {
+        const data = await res.json();
+        const ordersEl = document.getElementById('ordersCount');
+        const ordersChangeEl = document.getElementById('ordersChange');
+
+        if (ordersEl) {
+          const currentOrders = Number(data.orders || 0);
+          ordersEl.textContent = currentOrders.toLocaleString();
+
+          // Instant comparison for orders: prefer server-provided calculation
+          try {
+            if (typeof prevSnapshot.orders_change !== 'undefined' && prevSnapshot.orders_change !== null) {
+              updateStatChange(ordersChangeEl, Number(prevSnapshot.orders_change));
+            } else {
+              const prevOrders = (typeof prevSnapshot.orders !== 'undefined') ? Number(prevSnapshot.orders) : null;
+              if (prevOrders === null) {
+                updateStatChange(ordersChangeEl, null);
+              } else {
+                const percentChange = calculatePercentageChange(currentOrders, prevOrders);
+                updateStatChange(ordersChangeEl, percentChange);
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to compute instant orders change', e);
+            updateStatChange(ordersChangeEl, null);
+          }
+
+          // Persist instant snapshot to server for next comparison and use server-calculated deltas
+          try {
+            const postRes = await fetch('/api/dashboard-snapshot', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({ name: 'instant', data: { customers: currentCount, orders: currentOrders, ts: new Date().toISOString() } })
+            });
+            if (postRes.ok) {
+              const postJson = await postRes.json();
+              if (postJson && postJson.data) {
+                if (typeof postJson.data.customers_change !== 'undefined') updateStatChange(customersChangeEl, postJson.data.customers_change);
+                if (typeof postJson.data.orders_change !== 'undefined') updateStatChange(ordersChangeEl, postJson.data.orders_change);
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to persist instant dashboard snapshot to server', e);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load dashboard stats', err);
+    }
+  }
+
+  async function loadRecentOrders(limit = 5) {
+    try {
+      const res = await fetch('/api/orders');
+      if (!res.ok) throw new Error('Failed to load orders');
+      const orders = await res.json();
+      const recent = (orders || []).slice(0, limit);
+      const tbody = document.getElementById('recentOrdersBody');
+      if (!tbody) return;
+      if (recent.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="muted">No recent orders available</td></tr>';
+        return;
+      }
+      tbody.innerHTML = recent.map(order => {
+        const status = String(order.status || 'pending').toLowerCase();
+        const statusText = status.charAt(0).toUpperCase() + status.slice(1);
+        const amount = Number(order.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return `
+          <tr>
+            <td>
+              <div class="product-cell">
+                <div class="product-info">
+                  <strong>${escapeHtml(order.product || 'Unknown product')}</strong>
+                  <span class="variants">${escapeHtml(order.id || '')}</span>
+                </div>
+              </div>
+            </td>
+            <td>${escapeHtml(order.customerName || 'N/A')}</td>
+            <td>$${escapeHtml(amount)}</td>
+            <td><span class="status-badge ${escapeHtml(status)}">${escapeHtml(statusText)}</span></td>
+          </tr>
+        `;
+      }).join('');
+    } catch (err) {
+      console.error('Failed to load recent orders', err);
+      const tbody = document.getElementById('recentOrdersBody');
+      if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="4" class="muted">Unable to load recent orders</td></tr>';
+      }
+    }
+  }
+
+  loadDashboardStats();
+  loadRecentOrders();
+
+  if (notifBtn && notifPopup) {
+    notifBtn.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      notifPopup.classList.toggle('show');
+      const isOpen = notifPopup.classList.contains('show');
+      notifPopup.setAttribute('aria-hidden', !isOpen);
+      if (isOpen) await loadNotifications();
     });
-    document.addEventListener('click', (ev)=>{
-      if(!notifBtn.contains(ev.target) && !popup.contains(ev.target)) popup.classList.remove('show');
+
+    if (notifClose) {
+      notifClose.addEventListener('click', (event) => {
+        event.stopPropagation();
+        notifPopup.classList.remove('show');
+        notifPopup.setAttribute('aria-hidden', 'true');
+      });
+    }
+
+    document.addEventListener('click', (ev) => {
+      if (!notifBtn.contains(ev.target) && notifPopup && !notifPopup.contains(ev.target)) {
+        notifPopup.classList.remove('show');
+        notifPopup.setAttribute('aria-hidden', 'true');
+      }
     });
+
+    // initial badge state
+    loadNotifications();
   }
 
   // search filter for tickets & activity
@@ -156,19 +405,23 @@ document.addEventListener('DOMContentLoaded', ()=>{
       socket.on && socket.on('ticketCreated', (t) => {
         loadRecentTickets();
         try { saveSharedNotification(`Ticket #${t.id} created successfully!`, 'Ticket', 'ticket'); } catch (e) {}
+        loadNotifications();
       });
       socket.on && socket.on('ticketDeleted', (d) => {
         loadRecentTickets();
         try { saveSharedNotification(`Ticket #${d.id} deleted.`, 'Ticket', 'ticket'); } catch (e) {}
+        loadNotifications();
       });
       socket.on && socket.on('ticketResolved', (d) => {
         loadRecentTickets();
         const msg = d.resolved_by ? `Ticket #${d.ticket_id} resolved by ${d.resolved_by}` : `Ticket #${d.ticket_id} marked resolved`;
         try { saveSharedNotification(msg, 'Ticket', 'ticket'); } catch (e) {}
+        loadNotifications();
       });
       socket.on && socket.on('ticketEscalated', (d) => {
         loadRecentTickets();
         try { saveSharedNotification(`Ticket #${d.ticket_id} escalated!`, 'Ticket', 'ticket'); } catch (e) {}
+        loadNotifications();
       });
 
       socket.on && socket.on('newMessage', (m) => {
@@ -177,6 +430,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
           if(sender === 'sent') return;
           loadRecentMessages();
           if (m && m.message) saveSharedNotification(m.message, 'Inbox', 'message');
+          loadNotifications();
         }catch(e){}
       });
     }catch(e){
@@ -244,6 +498,24 @@ document.addEventListener('DOMContentLoaded', ()=>{
     const avatarSm = document.querySelector('.avatar-sm');
     const avatarImg = document.querySelector('.avatar-sm-img');
     if(!profileBtn || !profileDropdown) return;
+
+    let currentSessionInfo = { loginTime: null, lastActivity: null };
+    async function loadSessionInfo() {
+      try {
+        const res = await fetch('/api/session', { credentials: 'same-origin' });
+        if (res.ok) {
+          const data = await res.json();
+          if (data) {
+            currentSessionInfo.loginTime = data.loginTime || null;
+            currentSessionInfo.lastActivity = data.lastActivity || null;
+            if (currentSessionInfo.loginTime) localStorage.setItem('loginTime', currentSessionInfo.loginTime);
+            if (currentSessionInfo.lastActivity) localStorage.setItem('lastActivity', currentSessionInfo.lastActivity);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load session info', e);
+      }
+    }
     try{
       let displayName = null;
       const sres = await fetch('/api/settings');
@@ -348,7 +620,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       if (!loginTimeEl || !sessionDurationEl || !lastActivityEl) return;
 
       // Get or set login time
-      let loginTime = localStorage.getItem('loginTime');
+      let loginTime = currentSessionInfo.loginTime || localStorage.getItem('loginTime');
       if (!loginTime) {
         loginTime = new Date().toISOString();
         localStorage.setItem('loginTime', loginTime);
@@ -367,8 +639,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
       const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
       sessionDurationEl.textContent = `${hours}h ${minutes}m`;
 
-      // Update last activity (simulate with current time for now)
-      const lastActivity = localStorage.getItem('lastActivity') || loginTime;
+      // Update last activity from server or local fallback
+      const lastActivity = currentSessionInfo.lastActivity || localStorage.getItem('lastActivity') || loginTime;
       const lastActivityDate = new Date(lastActivity);
       const timeSince = now - lastActivityDate;
       const minutesSince = Math.floor(timeSince / (1000 * 60));
@@ -384,6 +656,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     }
 
     // Update session info immediately and set interval
+    await loadSessionInfo();
     updateSessionInfo();
     setInterval(updateSessionInfo, 60000); // Update every minute
 
@@ -409,55 +682,27 @@ document.addEventListener('DOMContentLoaded', ()=>{
   }
   initProfile();
 
-  // --- Messages chart: AI vs Staff over last 7 days ---
+  // --- Monthly outward messages chart ---
   function initMessagesChart(){
     const canvas = document.getElementById('messagesChart');
     if(!canvas) return;
 
-    const defaultLabels = ['1d','2d','3d','4d','5d','6d','7d'];
+    const defaultLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const ctx = canvas.getContext('2d');
-    // create subtle vertical gradients for area fills
-    const gradAI = ctx.createLinearGradient(0, 0, 0, 320);
-    gradAI.addColorStop(0, 'rgba(22,163,74,0.28)');
-    gradAI.addColorStop(1, 'rgba(22,163,74,0.04)');
-    const gradStaff = ctx.createLinearGradient(0, 0, 0, 320);
-    gradStaff.addColorStop(0, 'rgba(37,99,235,0.26)');
-    gradStaff.addColorStop(1, 'rgba(37,99,235,0.04)');
 
     const cfg = {
-      type: 'line',
+      type: 'bar',
       data: {
         labels: defaultLabels.slice(),
         datasets: [
           {
-            label: 'AI',
-            data: [0,0,0,0,0,0,0],
-            borderColor: '#16a34a',
-            backgroundColor: gradAI,
-            fill: true,
-            cubicInterpolationMode: 'monotone',
-            tension: 0.4,
-            pointRadius:4,
-            pointBackgroundColor: '#16a34a',
-            pointBorderColor: '#07201a',
-            pointHoverRadius:8,
-            pointHoverBorderWidth:2,
-            borderWidth:2
-          },
-          {
-            label: 'Staff',
-            data: [0,0,0,0,0,0,0],
-            borderColor: '#2563eb',
-            backgroundColor: gradStaff,
-            fill: true,
-            cubicInterpolationMode: 'monotone',
-            tension: 0.4,
-            pointRadius:4,
-            pointBackgroundColor: '#2563eb',
-            pointBorderColor: '#07203a',
-            pointHoverRadius:8,
-            pointHoverBorderWidth:2,
-            borderWidth:2
+            label: 'Outward Messages',
+            data: [130, 360, 240, 285, 260, 290, 325, 190, 220, 360, 290, 140],
+            backgroundColor: '#2563eb',
+            borderRadius: 10,
+            borderSkipped: 'bottom',
+            maxBarThickness: 28,
+            borderWidth: 0
           }
         ]
       },
@@ -467,134 +712,65 @@ document.addEventListener('DOMContentLoaded', ()=>{
         interaction: { mode: 'nearest', intersect: true },
         hover: { mode: 'nearest', intersect: true },
         plugins: {
-          legend: { labels: { color: 'rgba(255,255,255,0.9)' } },
+          legend: { display: false },
           tooltip: {
             enabled: true,
-            mode: 'nearest',
-            intersect: true,
-            backgroundColor: 'rgba(6,8,12,0.95)',
+            backgroundColor: 'rgba(15,23,42,0.95)',
             titleColor: '#fff',
             bodyColor: '#fff',
-            borderColor: 'rgba(255,255,255,0.06)',
+            borderColor: 'rgba(255,255,255,0.08)',
             borderWidth: 1,
-            padding: 8,
-            displayColors: true,
-            caretSize: 0,
-            cornerRadius: 6,
+            padding: 10,
+            displayColors: false,
+            cornerRadius: 8,
             bodyFont: { weight: '600' }
-          }
-        ,
-          // zoom plugin config (pan/zoom)
-          zoom: {
-            zoom: {
-              wheel: { enabled: true },
-              pinch: { enabled: true },
-              mode: 'x'
-            },
-            pan: { enabled: true, mode: 'x' }
           }
         },
         scales: {
           x: {
-            title: { display: true, text: 'Days', color: 'rgba(255,255,255,0.9)', font: { weight: '600' } },
-            ticks: { color: 'rgba(255,255,255,0.8)' }
+            grid: { display: false },
+            ticks: { color: 'rgba(55,65,81,0.85)', font: { weight: '600' } }
           },
           y: {
-            title: { display: true, text: 'Number of messages', color: 'rgba(255,255,255,0.9)', font: { weight: '600' } },
-            min: 0,
-            max: 20,
-            grid: { color: 'rgba(255,255,255,0.04)' },
-            ticks: {
-              color: 'rgba(255,255,255,0.7)'
-            },
-            // Force ticks to the exact set we want (0,5,10,15,20)
-            afterBuildTicks: function(scale) {
-              const vals = [0,5,10,15,20];
-              scale.ticks = vals.map(v => ({ value: v, label: String(v) }));
-            }
+            beginAtZero: true,
+            grid: { color: 'rgba(15,23,42,0.08)' },
+            ticks: { color: 'rgba(55,65,81,0.75)', stepSize: 100 },
+            border: { display: false }
           }
         }
       }
     };
 
-    // Register zoom plugin if available
-    try{ if(window.Chart && window.chartjsPluginZoom) Chart.register(window.chartjsPluginZoom); }catch(e){}
     const chart = new Chart(ctx, cfg);
 
-    // Fetch last7 data from server and populate chart; fallback to simulated values
-    async function loadLast7FromServer(){
+    async function loadMonthlyData(){
       try{
-        const res = await fetch('/api/messages-last7');
-        if(!res.ok) {
-          console.warn('/api/messages-last7 responded with', res.status);
-          return; // don't overwrite chart with random data
-        }
+        const res = await fetch('/api/messages-monthly');
+        if(!res.ok) return;
         const js = await res.json();
-        console.debug('messages-last7 payload', js);
-        if(js && Array.isArray(js.labels) && Array.isArray(js.ai) && Array.isArray(js.staff)){
+        if(js && Array.isArray(js.labels) && Array.isArray(js.data)){
           chart.data.labels = js.labels;
-          chart.data.datasets[0].data = js.ai.map(n=>Number(n||0));
-          chart.data.datasets[1].data = js.staff.map(n=>Number(n||0));
+          chart.data.datasets[0].data = js.data.map(n => Number(n || 0));
           chart.update();
-          return;
         }
-        console.warn('/api/messages-last7 returned unexpected shape, ignoring');
-        return;
       }catch(e){
-        console.error('Failed to fetch /api/messages-last7', e);
-        return;
+        console.warn('Failed to fetch /api/messages-monthly', e);
       }
     }
-    loadLast7FromServer();
-    // refresh every 5 minutes
-    setInterval(loadLast7FromServer, 5 * 60 * 1000);
 
-    // Listen for real-time updates via Socket.IO and refresh chart
+    loadMonthlyData();
+    setInterval(loadMonthlyData, 5 * 60 * 1000);
+
     try{
       const socket = io();
-      if(socket && socket.on) socket.on('newMessage', () => { loadLast7FromServer(); });
-    }catch(e){ /* socket.io not available */ }
-    
-    // Hover tooltips handle showing per-point details; click popup removed in favor of hover.
+      if(socket && socket.on) socket.on('newMessage', loadMonthlyData);
+    }catch(e){ }
 
-    // Controls: toggles, reset zoom, export CSV
-    const toggleAI = document.getElementById('toggleAI');
-    const toggleStaff = document.getElementById('toggleStaff');
-    const resetZoomBtn = document.getElementById('resetZoom');
-    const exportCsvBtn = document.getElementById('exportCsv');
-    function setDatasetVisibility(){
-      if(toggleAI) chart.getDatasetMeta(0).hidden = !toggleAI.checked;
-      if(toggleStaff) chart.getDatasetMeta(1).hidden = !toggleStaff.checked;
-      chart.update();
-    }
-    if(toggleAI) toggleAI.addEventListener('change', setDatasetVisibility);
-    if(toggleStaff) toggleStaff.addEventListener('change', setDatasetVisibility);
-    if(resetZoomBtn) resetZoomBtn.addEventListener('click', ()=>{ try{ if(chart.resetZoom) chart.resetZoom(); else chart.zoomScale('x', {min: undefined, max: undefined}); }catch(e){} });
-    if(exportCsvBtn) exportCsvBtn.addEventListener('click', ()=>{
-      const labels = chart.data.labels || [];
-      const a = chart.data.datasets[0].data || [];
-      const b = chart.data.datasets[1].data || [];
-      let csv = 'day,AI,Staff\n';
-      for(let i=0;i<labels.length;i++) csv += `${labels[i]},${a[i]||0},${b[i]||0}\n`;
-      const blob = new Blob([csv], {type:'text/csv'});
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a'); link.href = url; link.download = 'messages-last7.csv'; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(url);
-    });
-
-    // Enhanced tooltip: include delta from previous day
     chart.options.plugins.tooltip.callbacks = chart.options.plugins.tooltip.callbacks || {};
     chart.options.plugins.tooltip.callbacks.label = function(context){
-      const idx = context.dataIndex;
-      const dsLabel = context.dataset.label || '';
-      const val = Number(context.parsed.y || 0);
-      let delta = '';
-      if(typeof idx === 'number' && idx > 0){
-        const prev = Number(context.dataset.data[idx-1] || 0);
-        const diff = val - prev;
-        const pct = prev === 0 ? (diff>0?'+100%':'0%') : Math.round((diff/prev)*100) + '%';
-        delta = ` (${diff>=0?'+':''}${diff} / ${pct})`;
-      }
-      return `${dsLabel}: ${val}${delta}`;
+      const label = chart.data.labels[context.dataIndex];
+      const value = chart.data.datasets[0].data[context.dataIndex];
+      return `${label}: ${value}`;
     };
   }
   initMessagesChart();

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <link rel="icon" href="/favicon.png" type="image/png">
@@ -10,6 +10,7 @@
   <title>LiveSupport - Tracking</title>
   <link rel="stylesheet" href="./css/style.css">
   <link rel="stylesheet" href="./css/sidebar.css">
+  <link rel="stylesheet" href="./css/tailadmin.css">
   <link rel="stylesheet" href="./css/timestamp.css">
   <link rel="stylesheet" href="./css/tracking.css">
   
@@ -469,9 +470,9 @@
         <div class="map-container">
           <div id="map"></div>
           <div class="map-controls">
-            <button onclick="centerMapOnDelivery()">📍 Center</button>
+            <button onclick="centerMapOnDelivery()">ðŸ“ Center</button>
             <button onclick="zoomToFitDeliveries()">🔍 Fit All</button>
-            <button class="stop" onclick="clearAllMarkers()">🗑️ Clear</button>
+            <button class="stop" onclick="clearAllMarkers()">🛑 Clear</button>
           </div>
         </div>
       </div>
@@ -498,6 +499,7 @@
 <!-- Tracking App -->
 <script src="./js/tracking.js"></script>
 <script src="/socket.io/socket.io.js"></script>
+<script src="./js/notification-sound.js"></script>
 <script src="./js/sidebar.js" defer></script>
 
 <!-- Staff name loader -->
@@ -524,4 +526,5 @@ fetch("/api/user")
 
 </body>
 </html>
+
 

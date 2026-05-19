@@ -14,7 +14,7 @@ import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-import { db, connectDatabase, config as dbConfig } from "./db/database.js";
+import { db, connectDatabase, config as dbConfig, prisma } from "./db/database.js";
 import { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, MENU_ITEMS, createTicket, detectTicketCategory } from "./replies.js";
 const app = express();
 
@@ -222,345 +222,35 @@ function computeSlaDue(assignee, ticketType) {
     return new Date(Date.now() + minutes * 60 * 1000);
 }
 
-if (isPg) {
-    // Postgres-friendly DDL
-    db.query(`
-        CREATE TABLE IF NOT EXISTS conversations (
-            id SERIAL PRIMARY KEY,
-            phone VARCHAR(255),
-            name VARCHAR(255),
-            platform VARCHAR(50) DEFAULT 'whatsapp',
-            last_viewed TIMESTAMP NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => {
-        if (err) console.log('Error creating conversations table (pg):', err);
-    });
+// Runtime SQL/DDL removed: schema is managed by Prisma migrations.
+// Use `npm run migrate` or `npx prisma db push` to apply the schema defined in `prisma/schema.prisma`.
+console.log('Runtime SQL/DDL blocks in server.js are disabled. Apply Prisma migrations to create tables.');
 
-    db.query(`
-        CREATE TABLE IF NOT EXISTS resolved (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        );
-    `, (err) => { if (err) console.log('Error creating resolved table (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS escalations (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT UNIQUE,
-            customer_name VARCHAR(255),
-            escalated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        );
-    `, (err) => { if (err) console.log('Error creating escalations table (pg):', err); });
-
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(255)", (err) => { if (err) console.log('Error adding claimed_by to escalations (pg):', err); });
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS claim_time TIMESTAMP", (err) => { if (err) console.log('Error adding claim_time to escalations (pg):', err); });
-
-    // Create AI/staff split message tables (optional enhanced schema)
-    db.query(`
-        CREATE TABLE IF NOT EXISTS ai_messages (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            sender VARCHAR(255),
-            message TEXT,
-            user_id INT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating ai_messages table (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS staff_messages (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            sender VARCHAR(255),
-            message TEXT,
-            user_id INT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating staff_messages table (pg):', err); });
-    // Create tables with spaces in names as requested
-    db.query(`
-        CREATE TABLE IF NOT EXISTS "ai replies" (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            sender VARCHAR(255),
-            message TEXT,
-            user_id INT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating "ai replies" table (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS "staff replies" (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            sender VARCHAR(255),
-            message TEXT,
-            user_id INT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating "staff replies" table (pg):', err); });
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP", (err) => { if (err) console.log('Error adding snoozed_until to escalations (pg):', err); });
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS alarm_active BOOLEAN DEFAULT true", (err) => { if (err) console.log('Error adding alarm_active to escalations (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS refunds (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            customer_name VARCHAR(255),
-            refunded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        );
-    `, (err) => { if (err) console.log('Error creating refunds table (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS ai_feedback (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT NULL,
-            message_id INT NULL,
-            user_id INT NULL,
-            rating SMALLINT NULL,
-            feedback_text TEXT NULL,
-            correction TEXT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating ai_feedback table (pg):', err); });
-    db.query('CREATE INDEX IF NOT EXISTS idx_ai_feedback_conv ON ai_feedback(conversation_id)', (err) => {});
-    db.query('CREATE INDEX IF NOT EXISTS idx_ai_feedback_user ON ai_feedback(user_id)', (err) => {});
-
-    db.query('CREATE INDEX IF NOT EXISTS idx_refunds_conversation_id ON refunds(conversation_id)', (err) => {});
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            email VARCHAR(255) UNIQUE,
-            password VARCHAR(255),
-            name VARCHAR(255),
-            role VARCHAR(50) DEFAULT 'agent',
-            disabled BOOLEAN DEFAULT false,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating users table (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS delivery_issues (
-            id SERIAL PRIMARY KEY,
-            conversation_id INT,
-            customer_name VARCHAR(255),
-            reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        );
-    `, (err) => { if (err) console.log('Error creating delivery_issues table (pg):', err); });
-
-    db.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT false", (err) => { if (err) console.log('Error adding disabled to users (pg):', err); });
-
-    db.query('CREATE INDEX IF NOT EXISTS idx_delivery_issues_conversation_id ON delivery_issues(conversation_id)', (err) => {});
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS whatsapp_tokens (
-            id SERIAL PRIMARY KEY,
-            token TEXT,
-            expires_at TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating whatsapp_tokens table (pg):', err); });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS instagram_tokens (
-            id SERIAL PRIMARY KEY,
-            token TEXT,
-            expires_at TIMESTAMP,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `, (err) => { if (err) console.log('Error creating instagram_tokens table (pg):', err); });
-} else {
-    // MySQL-compatible DDL (keep original behavior)
-    db.query(`
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            phone VARCHAR(255),
-            name VARCHAR(255),
-            platform VARCHAR(50) DEFAULT 'whatsapp',
-            last_viewed TIMESTAMP NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) {
-            console.log("Error creating conversations table:", err);
-        } else {
-            db.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS platform VARCHAR(50) DEFAULT 'whatsapp'`, (alterErr) => {
-                if (alterErr) console.log("Error adding platform column to conversations:", alterErr);
-            });
-            db.query(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_viewed TIMESTAMP NULL`, (alterErr) => {
-                if (alterErr) console.log("Error adding last_viewed column to conversations:", alterErr);
-            });
-        }
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS resolved (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT,
-            resolved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        )
-    `, (err) => {
-        if (err) console.log("Error creating resolved table:", err);
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS escalations (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT UNIQUE,
-            customer_name VARCHAR(255),
-            escalated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        )
-    `, (err) => {
-        if (err) console.log("Error creating escalations table:", err);
-    });
-
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS claimed_by VARCHAR(255) NULL", (err) => {
-        if (err && err.errno !== 1060) console.log("Error adding claimed_by to escalations:", err);
-    });
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS claim_time TIMESTAMP NULL", (err) => {
-        if (err && err.errno !== 1060) console.log("Error adding claim_time to escalations:", err);
-    });
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP NULL", (err) => {
-        if (err && err.errno !== 1060) console.log("Error adding snoozed_until to escalations:", err);
-    });
-    db.query("ALTER TABLE escalations ADD COLUMN IF NOT EXISTS alarm_active TINYINT(1) DEFAULT 1", (err) => {
-        if (err && err.errno !== 1060) console.log("Error adding alarm_active to escalations:", err);
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS refunds (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT,
-            customer_name VARCHAR(255),
-            refunded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        )
-    `, (err) => {
-        if (err) console.log("Error creating refunds table:", err);
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS ai_feedback (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT NULL,
-            message_id INT NULL,
-            user_id INT NULL,
-            rating TINYINT NULL,
-            feedback_text TEXT NULL,
-            correction TEXT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_ai_feedback_conv (conversation_id),
-            INDEX idx_ai_feedback_user (user_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `, (err) => {
-        if (err) console.log('Error creating ai_feedback table:', err);
-    });
-
-    db.query("ALTER TABLE refunds ADD INDEX idx_refunds_conversation_id (conversation_id)", (err) => {
-        if (err && err.errno !== 1061) {
-            console.log("Error adding refunds conversation_id index:", err);
-        }
-        db.query("ALTER TABLE refunds DROP INDEX conversation_id", (dropErr) => {
-            if (dropErr && dropErr.errno !== 1091) {
-                console.log("Error dropping refunds unique index:", dropErr);
-            }
-        });
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS delivery_issues (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT,
-            customer_name VARCHAR(255),
-            reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-        )
-    `, (err) => {
-        if (err) console.log("Error creating delivery_issues table:", err);
-    });
-
-    db.query("ALTER TABLE users ADD COLUMN disabled TINYINT(1) DEFAULT 0", (err) => {
-        if (err && err.errno !== 1060) {
-            console.log("Error adding disabled to users:", err);
-        }
-    });
-
-    db.query("ALTER TABLE delivery_issues ADD INDEX idx_delivery_issues_conversation_id (conversation_id)", (err) => {
-        if (err && err.errno !== 1061) {
-            console.log("Error adding delivery_issues conversation_id index:", err);
-        }
-        db.query("ALTER TABLE delivery_issues DROP INDEX conversation_id", (dropErr) => {
-            if (dropErr && dropErr.errno !== 1091) {
-                console.log("Error dropping delivery_issues unique index:", dropErr);
-            }
-        });
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS whatsapp_tokens (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            token TEXT,
-            expires_at DATETIME,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    `, (err) => {
-        if (err) console.log("Error creating whatsapp_tokens table:", err);
-    });
-
-    db.query(`
-        CREATE TABLE IF NOT EXISTS instagram_tokens (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            token TEXT,
-            expires_at DATETIME,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `, (err) => {
-        if (err) console.log('Error creating instagram_tokens table:', err);
-    });
-}
-
-function storeInstagramToken(token, expiresInSeconds = null) {
+async function storeInstagramToken(token, expiresInSeconds = null) {
     const expiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
-    db.query(
-        "INSERT INTO instagram_tokens (token, expires_at) VALUES (?, ?)",
-        [token, expiresAt],
-        (err) => {
-            if (err) console.error('Error storing Instagram token:', err);
-        }
-    );
+    try {
+        await prisma.instagramToken.create({ data: { token, expires_at: expiresAt } });
+    } catch (err) {
+        console.error('Error storing Instagram token:', err);
+    }
 }
 
-function storeWhatsAppToken(token, expiresInSeconds = null) {
+async function storeWhatsAppToken(token, expiresInSeconds = null) {
     const expiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
-    db.query(
-        "INSERT INTO whatsapp_tokens (token, expires_at) VALUES (?, ?)",
-        [token, expiresAt],
-        (err) => {
-            if (err) console.error("Error storing WhatsApp token:", err);
-        }
-    );
+    try {
+        await prisma.whatsappToken.create({ data: { token, expires_at: expiresAt } });
+    } catch (err) {
+        console.error("Error storing WhatsApp token:", err);
+    }
 }
 
-function getStoredWhatsAppToken() {
-    return new Promise((resolve, reject) => {
-        db.query(
-            "SELECT token, expires_at FROM whatsapp_tokens ORDER BY created_at DESC LIMIT 1",
-            (err, results) => {
-                if (err) return reject(err);
-                if (!results || results.length === 0) return resolve(null);
-                resolve(results[0]);
-            }
-        );
-    });
+async function getStoredWhatsAppToken() {
+    try {
+        const row = await prisma.whatsappToken.findFirst({ orderBy: { created_at: 'desc' } });
+        return row || null;
+    } catch (err) {
+        throw err;
+    }
 }
 
 async function getWhatsAppToken() {
@@ -629,20 +319,20 @@ app.post('/api/ai-feedback', express.json(), async (req, res) => {
     try {
         const { conversation_id, message_id, user_id, rating, feedback_text, correction } = req.body || {};
         if (!conversation_id && !message_id) {
-            // allow feedback without conversation linkage but require some content
             if (!feedback_text && !correction) return res.status(400).json({ error: 'Missing identifiers or feedback content' });
         }
 
-        const sql = isPg
-            ? `INSERT INTO ai_feedback (conversation_id, message_id, user_id, rating, feedback_text, correction) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
-            : `INSERT INTO ai_feedback (conversation_id, message_id, user_id, rating, feedback_text, correction) VALUES (?, ?, ?, ?, ?, ?)`;
-        db.query(sql, [conversation_id || null, message_id || null, user_id || null, rating || null, feedback_text || null, correction || null], (err, result) => {
-            if (err) {
-                console.error('Failed to save ai_feedback:', err);
-                return res.status(500).json({ error: 'db_error' });
+        const created = await prisma.aiFeedback.create({
+            data: {
+                conversation_id: conversation_id || null,
+                message_id: message_id || null,
+                user_id: user_id || null,
+                rating: rating || null,
+                feedback_text: feedback_text || null,
+                correction: correction || null
             }
-            res.json({ success: true, id: result.insertId });
         });
+        res.json({ success: true, id: created.id });
     } catch (e) {
         console.error('ai-feedback error', e);
         res.status(500).json({ error: 'internal_error' });
@@ -651,11 +341,14 @@ app.post('/api/ai-feedback', express.json(), async (req, res) => {
 
 // Simple endpoint to fetch recent feedback (admin use)
 app.get('/api/ai-feedback', async (req, res) => {
-    const limit = Math.min(1000, parseInt(req.query.limit || '200', 10));
-    db.query('SELECT * FROM ai_feedback ORDER BY created_at DESC LIMIT ?', [limit], (err, results) => {
-        if (err) return res.status(500).json({ error: 'db_error' });
+    try {
+        const limit = Math.min(1000, parseInt(req.query.limit || '200', 10));
+        const results = await prisma.aiFeedback.findMany({ take: limit, orderBy: { created_at: 'desc' } });
         res.json(results || []);
-    });
+    } catch (err) {
+        console.error('ai-feedback list error', err);
+        res.status(500).json({ error: 'db_error' });
+    }
 });
 
 // Create user settings, messages, instagram_conversations, replies, receipts, tickets (Postgres or MySQL)
@@ -1798,6 +1491,64 @@ app.put('/api/conversations', isAuthenticated, (req, res) => {
     });
 });
 
+app.delete('/api/conversations', isAuthenticated, (req, res) => {
+    const { id } = req.body || {};
+    if (!id) {
+        return res.status(400).json({ success: false, error: 'Missing conversation id' });
+    }
+    
+    const conversationId = id;
+    let deletedCount = 0;
+    let totalTables = 0;
+    let hasError = false;
+    
+    const tables = [
+        'messages',
+        'replies',
+        'instagram_conversations',
+        'ai_messages',
+        'staff_messages',
+        'ai replies',
+        'staff replies',
+        'escalations',
+        'resolved',
+        'refunds',
+        'ai_feedback',
+        'delivery_issues'
+    ];
+    
+    const deleteFromTable = (tableName, callback) => {
+        const sqlSafe = `DELETE FROM \`${tableName}\` WHERE conversation_id = ?`;
+        db.query(sqlSafe, [conversationId], (err, result) => {
+            if (err && err.code !== 'ER_NO_REFERENCED_ROW') {
+                // Silently ignore if table doesn't exist or other non-critical errors
+                console.error(`Error deleting from ${tableName}:`, err.code, err.message);
+            } else if (!err) {
+                deletedCount++;
+            }
+            callback();
+        });
+    };
+    
+    let completed = 0;
+    tables.forEach((tableName) => {
+        totalTables++;
+        deleteFromTable(tableName, () => {
+            completed++;
+            if (completed === tables.length) {
+                // All related data deleted, now delete the conversation itself
+                db.query('DELETE FROM conversations WHERE id = ?', [conversationId], (err) => {
+                    if (err) {
+                        console.error('DELETE /api/conversations - delete conversation error', err);
+                        return res.status(500).json({ success: false, error: 'Failed to delete conversation' });
+                    }
+                    res.json({ success: true, message: 'Conversation deleted successfully' });
+                });
+            }
+        });
+    });
+});
+
 // Recent tickets endpoint used by dashboard (joins last message and status)
 app.get('/api/recent-tickets', (req, res) => {
     const sql = `
@@ -2108,6 +1859,7 @@ app.post('/webhook/instagram', (req, res) => {
                         });
                     });
 
+                        if (!isPg) {
                         // Create AI/staff split message tables (MySQL)
                         db.query(`
                             CREATE TABLE IF NOT EXISTS ai_messages (
@@ -2152,6 +1904,7 @@ app.post('/webhook/instagram', (req, res) => {
                                 created_at DATETIME DEFAULT NOW()
                             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
                         `, (err) => { if (err) console.error('Error creating staff replies table:', err); else console.log('`staff replies` table ensured'); });
+                        }
                 }
                 // legacy messaging field handling
                 if (entry.messaging && entry.messaging.length) {
@@ -3602,7 +3355,7 @@ app.get('/api/orders', (req, res) => {
                 product: order.product,
                 amount: parseFloat(order.total_amount) || 0,
                 status: order.status,
-                date: new Date(order.order_date).toLocaleDateString()
+                date: order.order_date ? new Date(order.order_date).toISOString() : null
             }));
             res.json(formattedResults);
         }

@@ -80,7 +80,26 @@
     const avatarSm = document.querySelector('.avatar-sm');
     const avatarImg = document.querySelector('.avatar-sm-img');
 
+    let currentSessionInfo = { loginTime: null, lastActivity: null };
+    async function loadSessionInfo() {
+      try {
+        const sres = await fetch('/api/session', { credentials: 'same-origin' });
+        if (sres.ok) {
+          const data = await sres.json();
+          if (data) {
+            currentSessionInfo.loginTime = data.loginTime || null;
+            currentSessionInfo.lastActivity = data.lastActivity || null;
+            if (currentSessionInfo.loginTime) localStorage.setItem('loginTime', currentSessionInfo.loginTime);
+            if (currentSessionInfo.lastActivity) localStorage.setItem('lastActivity', currentSessionInfo.lastActivity);
+          }
+        }
+      } catch (e) {
+        // ignore network/session fetch errors
+      }
+    }
+
     async function loadProfileData(){
+      await loadSessionInfo();
       let displayName = null;
       let profileImage = null;
       try{
@@ -123,6 +142,7 @@
           avatarImg.onerror = function(){ avatarImg.style.display = 'none'; if(avatarSm) avatarSm.style.display = ''; };
         }catch(e){}
       }
+      updateSessionInfo();
     }
 
     function updateStatusDisplay(status){
@@ -144,7 +164,7 @@
       const lastActivityEl = document.getElementById('lastActivity');
       if (!loginTimeEl || !sessionDurationEl || !lastActivityEl) return;
 
-      let loginTime = localStorage.getItem('loginTime');
+      let loginTime = currentSessionInfo.loginTime || localStorage.getItem('loginTime');
       if (!loginTime) {
         loginTime = new Date().toISOString();
         localStorage.setItem('loginTime', loginTime);
@@ -159,7 +179,7 @@
       const minutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
       sessionDurationEl.textContent = `${hours}h ${minutes}m`;
 
-      const lastActivity = localStorage.getItem('lastActivity') || loginTime;
+      const lastActivity = currentSessionInfo.lastActivity || localStorage.getItem('lastActivity') || loginTime;
       const lastActivityDate = new Date(lastActivity);
       const minutesSince = Math.floor((now - lastActivityDate) / (1000 * 60));
       lastActivityEl.textContent = minutesSince < 1 ? 'Just now' : minutesSince < 60 ? `${minutesSince}m ago` : `${Math.floor(minutesSince / 60)}h ago`;

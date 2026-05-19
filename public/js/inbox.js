@@ -164,6 +164,7 @@ const aiUseButton = document.getElementById("ai-send");
 const fileInput = document.getElementById("internalFileInput");
 const addFileButton = document.getElementById("add-file");
 const selectedFileDisplay = document.getElementById("selected-file-display");
+const testHandoffAudioBtn = document.getElementById("test-handoff-audio-btn");
 const editChatNameBtn = document.getElementById('editChatNameBtn');
 const saveChatNameBtn = document.getElementById('saveChatNameBtn');
 const cancelChatNameBtn = document.getElementById('cancelChatNameBtn');
@@ -295,6 +296,77 @@ editChatNameBtn && editChatNameBtn.addEventListener('click', enterChatNameEditMo
 saveChatNameBtn && saveChatNameBtn.addEventListener('click', saveChatName);
 cancelChatNameBtn && cancelChatNameBtn.addEventListener('click', cancelChatNameEditMode);
 
+// Delete chat button handler
+const deleteChatBtn = document.getElementById('deleteChatBtn');
+if (deleteChatBtn) {
+    deleteChatBtn.addEventListener('click', async () => {
+        if (!currentConversationId) return;
+        
+        // Add hover effect
+        deleteChatBtn.style.backgroundColor = '#fecaca';
+        
+        const confirmed = confirm('Are you sure you want to delete this entire conversation? This action cannot be undone.');
+        if (!confirmed) {
+            deleteChatBtn.style.backgroundColor = 'transparent';
+            return;
+        }
+        
+        try {
+            const res = await fetch('/api/conversations', {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: currentConversationId })
+            });
+            
+            const data = await res.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Delete failed');
+            }
+            
+            // Remove the conversation from the list
+            const convElement = document.querySelector(`.conversation[data-id="${currentConversationId}"]`);
+            if (convElement) {
+                convElement.remove();
+            }
+            
+            // Remove the conversation from cache
+            conversationCache = conversationCache.filter(c => String(c.id) !== String(currentConversationId));
+            
+            // Clear the chat panel
+            currentConversationId = null;
+            window.currentConversationId = null;
+            window.currentConversation = null;
+            
+            if (messagesContainer) {
+                messagesContainer.innerHTML = '<div style="padding: 20px; color: #888; text-align: center;">Select a conversation to open it</div>';
+            }
+            
+            const chatHeader = document.querySelector('.chat-header');
+            if (chatHeader) {
+                const nameEl = chatHeader.querySelector('#chatName');
+                if (nameEl) nameEl.textContent = 'Select a conversation';
+            }
+            
+        } catch (error) {
+            console.error('Error deleting conversation', error);
+            alert('Failed to delete conversation. Please try again.');
+        } finally {
+            deleteChatBtn.style.backgroundColor = 'transparent';
+        }
+    });
+    
+    // Hover effect for delete button
+    deleteChatBtn.addEventListener('mouseover', () => {
+        if (currentConversationId) {
+            deleteChatBtn.style.backgroundColor = '#fee2e2';
+        }
+    });
+    
+    deleteChatBtn.addEventListener('mouseout', () => {
+        deleteChatBtn.style.backgroundColor = 'transparent';
+    });
+}
+
 // Typing indicator: emit typing events when agent types
 let _typingEmitTimer = null;
 if (messageInput) {
@@ -350,6 +422,13 @@ if (aiUseButton && messageInput) {
         if (!aiSuggestionField || !messageInput) return;
         messageInput.value = aiSuggestionField.value;
         messageInput.focus();
+    });
+}
+
+if (testHandoffAudioBtn) {
+    testHandoffAudioBtn.addEventListener("click", () => {
+        playHandoffAudio();
+        console.log("Local handoff audio test triggered");
     });
 }
 

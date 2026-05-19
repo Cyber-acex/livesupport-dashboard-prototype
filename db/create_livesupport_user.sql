@@ -1,14 +1,14 @@
 -- create_livesupport_user.sql
--- Replace StrongPasswordHere with a strong password before running.
-
-CREATE DATABASE IF NOT EXISTS `livesupport`;
-
--- Create/grant for localhost (PHP/Apache default)
-CREATE USER IF NOT EXISTS 'livesupport'@'localhost' IDENTIFIED BY 'localpass11';
-GRANT ALL PRIVILEGES ON `livesupport`.* TO 'livesupport'@'localhost';
-
--- Create/grant for 127.0.0.1 (Node often connects via TCP to 127.0.0.1)
-CREATE USER IF NOT EXISTS 'livesupport'@'127.0.0.1' IDENTIFIED BY 'localpass11';
-GRANT ALL PRIVILEGES ON `livesupport`.* TO 'livesupport'@'127.0.0.1';
-
-FLUSH PRIVILEGES;
+-- DEPRECATED: database creation is now managed by Prisma/PostgreSQL.
+--
+-- The current app uses Prisma ORM with PostgreSQL, so schema creation is
+-- handled through Prisma migrations or `prisma db push`.
+--
+-- To initialize the database schema, first ensure your PostgreSQL database
+-- exists and DATABASE_URL is configured correctly, then run:
+--
+--   npx prisma db push
+--   npx prisma generate
+--
+-- This file is retained for history only and should not be used for
+-- runtime initialization in the current Prisma/Postgres architecture.

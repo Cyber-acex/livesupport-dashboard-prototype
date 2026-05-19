@@ -1,4 +1,4 @@
-
+﻿
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,6 +11,7 @@
   <title>LiveSupport - Tickets</title>
   <link rel="stylesheet" href="./css/style.css">
   <link rel="stylesheet" href="./css/sidebar.css">
+  <link rel="stylesheet" href="./css/tailadmin.css">
   <script>
     // Apply theme from localStorage immediately to prevent flash
     (function applyThemeImmediately() {
@@ -152,8 +153,8 @@
               </div>
             </div>
             <div class="profile-actions">
-              <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙️</span> Settings</a>
-              <button id="logoutBtn" class="profile-action"><span class="profile-icon">🚪</span> Logout</button>
+              <a id="profileSettings" class="profile-action" href="settings.html">Settings</a>
+              <button id="logoutBtn" class="profile-action">Logout</button>
             </div>
           </div>
         </div>
@@ -855,7 +856,7 @@
               <div style="flex:1">
                 <div style="display:flex;align-items:center;gap:10px">
                   <div style="font-size:16px;font-weight:800">${subject}</div>
-                  <div style="font-size:12px;color:#374151">• #${t.id} — <span style="color:#6b7280;font-weight:500">${created}</span></div>
+                  <div style="font-size:12px;color:#374151">#${t.id} - <span style="color:#6b7280;font-weight:500">${created}</span></div>
                 </div>
                 <div style="margin-top:8px;font-size:13px;color:#374151">Customer: <strong>${customer}</strong> ${assignee}</div>
                 <div style="margin-top:8px">${tagsHtml}</div>
@@ -926,7 +927,7 @@
           const at = t.attachments ? (typeof t.attachments === 'string' ? JSON.parse(t.attachments) : t.attachments) : null;
           if(Array.isArray(at) && at.length>0){
             attachmentsField.style.display = 'block';
-            attachmentsContainer.innerHTML = at.map(a=>`<a href="/uploads/${encodeURIComponent(a.filename)}" target="_blank" class="attachment-item">📎 ${escapeHtml(a.originalname||a.filename)}</a>`).join('');
+            attachmentsContainer.innerHTML = at.map(a=>`<a href="/uploads/${encodeURIComponent(a.filename)}" target="_blank" class="attachment-item">${escapeHtml(a.originalname||a.filename)}</a>`).join('');
           } else {
             attachmentsField.style.display = 'none';
           }
@@ -1033,5 +1034,6 @@
 </script>
 </body>
 </html>
+
 
 

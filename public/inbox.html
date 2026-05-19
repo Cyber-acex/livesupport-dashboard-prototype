@@ -1,4 +1,4 @@
-
+﻿
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,6 +11,7 @@
     <title>LiveSupport Dashboard</title>
     <link rel="stylesheet" href="./css/style.css">
     <link rel="stylesheet" href="./css/sidebar.css">
+  <link rel="stylesheet" href="./css/tailadmin.css">
     <link rel="stylesheet" href="./css/timestamp.css">
     <script>
             // Apply theme from localStorage immediately to prevent flash
@@ -85,14 +86,14 @@
                   <div class="profile-session">
                     <div class="session-header">Session Info</div>
                     <div class="session-details">
-                      <div class="session-item"><span class="session-icon">🕐</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
-                      <div class="session-item"><span class="session-icon">⏱️</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
-                      <div class="session-item"><span class="session-icon">⚡</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
+                      <div class="session-item"><span class="session-icon">⏰</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
+                      <div class="session-item"><span class="session-icon">⏱</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
+                      <div class="session-item"><span class="session-icon">⏳</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
                     </div>
                   </div>
                   <div class="profile-actions">
-                    <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙️</span> Settings</a>
-                    <button id="logoutBtn" class="profile-action"><span class="profile-icon">🚪</span> Logout</button>
+                    <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙</span> Settings</a>
+                    <button id="logoutBtn" class="profile-action"><span class="profile-icon">⎋</span> Logout</button>
                   </div>
                 </div>
               </div>
@@ -115,12 +116,12 @@
                     <p>Route escalations, refunds, and priority chats.</p>
                 </div>
             </div>
-            <button class="filter active" data-filter="all"><span class="filter-icon">✨</span><span>New</span></button>
-            <button class="filter" data-filter="receipts"><span class="filter-icon">🧾</span><span>Receipts</span></button>
-            <button class="filter" data-filter="escalated"><span class="filter-icon">⚠️</span><span>Escalated</span></button>
-            <button class="filter" data-filter="resolved"><span class="filter-icon">✅</span><span>Resolved</span></button>
-            <button class="filter" data-filter="refunds"><span class="filter-icon">💸</span><span>Refunds</span></button>
-            <button class="filter" data-filter="delivery-issues"><span class="filter-icon">🚚</span><span>Delivery Issues</span></button>
+            <button class="filter active" data-filter="all"><span class="filter-icon"></span><span>New</span></button>
+            <button class="filter" data-filter="receipts"><span class="filter-icon"></span><span>Receipts</span></button>
+            <button class="filter" data-filter="escalated"><span class="filter-icon"></span><span>Escalated</span></button>
+            <button class="filter" data-filter="resolved"><span class="filter-icon"></span><span>Resolved</span></button>
+            <button class="filter" data-filter="refunds"><span class="filter-icon"></span><span>Refunds</span></button>
+            <button class="filter" data-filter="delivery-issues"><span class="filter-icon"></span><span>Delivery Issues</span></button>
         </div>
         <!-- CONVERSATION LIST -->
         <div class="conversation-list">
@@ -149,9 +150,9 @@
                     <div class="chat-title-text" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
                         <strong id="chatName">John Doe</strong>
                         <div id="chatNameControls" style="display:flex; align-items:center; gap:6px;">
-                            <button id="editChatNameBtn" class="icon-btn" type="button" title="Edit customer name" style="border:none;background:transparent;color:#4b5563;font-size:1rem;cursor:pointer;">✏️</button>
-                            <button id="saveChatNameBtn" class="icon-btn" type="button" title="Save customer name" style="display:none;border:none;background:transparent;color:#047857;font-size:1rem;cursor:pointer;">💾</button>
-                            <button id="cancelChatNameBtn" class="icon-btn" type="button" title="Cancel" style="display:none;border:none;background:transparent;color:#dc2626;font-size:1rem;cursor:pointer;">✕</button>
+                            <button id="editChatNameBtn" class="icon-btn" type="button" title="Edit customer name" style="border:none;background:transparent;color:#4b5563;font-size:1rem;cursor:pointer;">Edit</button>
+                            <button id="saveChatNameBtn" class="icon-btn" type="button" title="Save customer name" style="display:none;border:none;background:transparent;color:#047857;font-size:1rem;cursor:pointer;">Save</button>
+                            <button id="cancelChatNameBtn" class="icon-btn" type="button" title="Cancel" style="display:none;border:none;background:transparent;color:#dc2626;font-size:1rem;cursor:pointer;">Cancel</button>
                         </div>
                         <span class="chat-subtitle">Customer conversation</span>
                     </div>
@@ -167,10 +168,16 @@
                         border-radius:6px;
                         font-size:12px;
                     ">Escalated</span>
+                    <button id="deleteChatBtn" class="icon-btn delete-chat-btn" type="button" title="Delete this chat" style="border:none;background:transparent;color:#dc2626;font-size:1.2rem;cursor:pointer;padding:4px 8px;border-radius:4px;transition:background-color 0.2s;margin-left:8px;">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:20px;height:20px;display:inline;">
+                            <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
-<div style="text-align:right; margin-bottom:5px;">
+<div style="text-align:right; margin-bottom:5px; display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;">
     <button id="scroll-down-btn" class="ai-btn scroll-bottom-btn" type="button">Scroll to Bottom</button>
+    <button id="test-handoff-audio-btn" class="ai-btn" type="button">Test Handoff Audio</button>
 </div>
             <div class="messages" id="chat-messages">
                 <div class="message customer">
@@ -183,12 +190,12 @@
             <!-- AI SUGGESTION BOX -->
 <div class="ai-suggestion">
     <div class="ai-header">
-        🤖 AI Suggested Reply
+        AI Suggested Reply
         <span id="confidence-label" style="background:#10b981; color:white; padding:3px 8px; border-radius:6px; font-size:12px; margin-left:8px;">
         Confidence: 87%
         </span>
-        <button id="feedbackThumbsUp" title="Thumbs up" style="margin-left:8px;padding:6px;border-radius:6px;border:none;background:#10b981;color:white;">👍</button>
-        <button id="feedbackThumbsDown" title="Thumbs down" style="margin-left:6px;padding:6px;border-radius:6px;border:none;background:#ef4444;color:white;">👎</button>
+        <button id="feedbackThumbsUp" title="Thumbs up" style="margin-left:8px;padding:6px;border-radius:6px;border:none;background:#10b981;color:white;">Like</button>
+        <button id="feedbackThumbsDown" title="Thumbs down" style="margin-left:6px;padding:6px;border-radius:6px;border:none;background:#ef4444;color:white;">Dislike</button>
     </div>
     <textarea id="ai-text">
 Your order is currently out for delivery and should arrive within 15 minutes. Thank you for your patience!
@@ -200,7 +207,7 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
 </div>
             <div class="chat-input">
                 <input type="text" id="staff-input" placeholder="Type a reply..." />
-                <button id="voice-record-btn" class="voice-btn" title="Record voice message">🎤</button>
+                <button id="voice-record-btn" class="voice-btn" title="Record voice message">Record</button>
                 <button id="staff-send">Send</button>
                 <div class="internal-note-box">
                     <button id="add-file">+ Add file</button>
@@ -359,7 +366,7 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
               <input type="text" class="item-name-input" placeholder="Item name" value="Welcome Drink">
               <input type="number" class="item-qty-input" min="1" value="1">
               <input type="number" class="item-price-input" min="0" step="0.01" placeholder="0.00" value="500">
-              <span class="item-total-display">₦500.00</span>
+              <span class="item-total-display">NGN 500.00</span>
               <button class="remove-item-btn" title="Remove item">
                 <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                   <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -530,7 +537,7 @@ function addNewItem() {
     <input type="text" class="item-name-input" placeholder="Item name">
     <input type="number" class="item-qty-input" min="1" value="1">
     <input type="number" class="item-price-input" min="0" step="0.01" placeholder="0.00">
-    <span class="item-total-display">₦0.00</span>
+    <span class="item-total-display">NGN 0.00</span>
     <button class="remove-item-btn" title="Remove item">
       <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -556,7 +563,7 @@ function updateItemTotal(itemRow) {
   const price = parseFloat(itemRow.querySelector('.item-price-input').value) || 0;
   const total = qty * price;
 
-  itemRow.querySelector('.item-total-display').textContent = `₦${total.toFixed(2)}`;
+  itemRow.querySelector('.item-total-display').textContent = `NGN ${total.toFixed(2)}`;
 }
 
 // Handle item removal
@@ -670,23 +677,23 @@ function generateReceiptText() {
   items.forEach(item => {
     const name = item.name.padEnd(30, ' ');
     const qty = item.qty.toString().padStart(3, ' ');
-    const price = `₦${item.price.toFixed(2)}`.padStart(7, ' ');
-    const total = `₦${item.total.toFixed(2)}`.padStart(7, ' ');
+    const price = `NGN ${item.price.toFixed(2)}`.padStart(11, ' ');
+    const total = `NGN ${item.total.toFixed(2)}`.padStart(11, ' ');
     receipt += `${name}${qty}${price}${total}\n`;
   });
 
   receipt += '__________________________________________\n';
 
   // Totals
-  const subtotalStr = `₦${data.subtotal.toFixed(2)}`.padStart(7, ' ');
-  const taxStr = `₦${data.taxAmount.toFixed(2)}`.padStart(7, ' ');
-  const serviceStr = `₦${data.serviceChargeAmount.toFixed(2)}`.padStart(7, ' ');
+  const subtotalStr = `NGN ${data.subtotal.toFixed(2)}`.padStart(11, ' ');
+  const taxStr = `NGN ${data.taxAmount.toFixed(2)}`.padStart(11, ' ');
+  const serviceStr = `NGN ${data.serviceChargeAmount.toFixed(2)}`.padStart(11, ' ');
 
   receipt += `Subtotal:${' '.repeat(25)}${subtotalStr}\n`;
   receipt += `VAT (${data.taxRate}%):${' '.repeat(20)}${taxStr}\n`;
   receipt += `Service Charge (${data.serviceChargeRate}%):${' '.repeat(10)}${serviceStr}\n`;
   receipt += '__________________________________________\n';
-  receipt += `Total Amount:${' '.repeat(20)}₦${data.grandTotal.toFixed(2)}\n`;
+  receipt += `Total Amount:${' '.repeat(20)}NGN ${data.grandTotal.toFixed(2)}\n`;
   receipt += '__________________________________________\n';
 
   // Payment method
@@ -933,7 +940,7 @@ function renderEscalatedChats() {
         div.innerHTML = `
             <div class="name">${chat.name}</div>
             <div class="preview">Escalated</div>
-            <div class="meta">⏱ ${chat.time}</div>
+            <div class="meta">• ${chat.time}</div>
             <!-- Unescalate button -->
             <button class="unescalate-btn" title="Unescalate">×</button>
         `;
@@ -973,7 +980,7 @@ function renderResolvedChats() {
         div.innerHTML = `
             <div class="name">${chat.name}</div>
             <div class="preview">Resolved</div>
-            <div class="meta">✅ ${chat.time}</div>
+            <div class="meta">✓ ${chat.time}</div>
         `;
         // Clicking opens chat normally
         div.onclick = () => loadMessages(chat.id, chat.name);
@@ -1079,5 +1086,6 @@ window.addEventListener('focus', function() {
 </script> 
 </body>
 </html>
+
 
 

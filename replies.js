@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { config as dbConfig } from './db/database.js';
+import { config as dbConfig, prisma } from './db/database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -13,6 +13,19 @@ const FALLBACK_REPLY = "Thank you for your message. An agent will respond shortl
 
 let knowledgeBase = [];
 let db = null;
+
+function getInsertedId(result) {
+    if (!result) return null;
+    if (typeof result.insertId === 'number') return result.insertId;
+    if (result?.rows && Array.isArray(result.rows) && result.rows[0] && typeof result.rows[0].id !== 'undefined') {
+        return result.rows[0].id;
+    }
+    if (Array.isArray(result) && result[0] && typeof result[0].id !== 'undefined') {
+        return result[0].id;
+    }
+    if (typeof result.id !== 'undefined') return result.id;
+    return null;
+}
 
 // Initialize database connection
 function initDatabase(database) {
@@ -120,90 +133,50 @@ function normalizePhone(phone) {
     return phone.replace(/\D/g, '');
 }
 
-function getOrderHistory(phone) {
-    return new Promise((resolve) => {
-        if (!db || !phone) {
-            console.log("getOrderHistory: No DB or phone", { hasDb: !!db, phone });
-            resolve(null);
-            return;
+async function getOrderHistory(phone) {
+    if (!phone) {
+        console.log("getOrderHistory: No phone", { phone });
+        return null;
+    }
+
+    const normalizedPhone = normalizePhone(phone);
+    console.log("getOrderHistory: Querying for phone:", phone, "normalized:", normalizedPhone);
+
+    try {
+        const orders = await prisma.order.findMany({
+            where: { phone: { not: null } },
+            orderBy: { order_date: 'desc' },
+            take: 200
+        });
+
+        const matchNormalized = orders.filter(order => normalizePhone(order.phone || '') === normalizedPhone);
+        const results = matchNormalized.length > 0 ? matchNormalized : orders.filter(order => order.phone === phone);
+
+        if (results.length === 0) {
+            console.log("getOrderHistory: No orders found for phone:", phone);
+            const samples = orders.slice(0, 5).map(o => o.phone);
+            console.log("getOrderHistory: Sample phone formats in DB:", samples);
+            return null;
         }
-        
-        const normalizedPhone = normalizePhone(phone);
-        console.log("getOrderHistory: Querying for phone:", phone, "normalized:", normalizedPhone);
-        
-        // First try: exact normalized match
-        db.query(
-            'SELECT product, total_amount, order_date FROM orders WHERE REPLACE(REPLACE(REPLACE(phone, "+", ""), "-", ""), " ", "") = ? ORDER BY order_date DESC LIMIT 5',
-            [normalizedPhone],
-            (err, results) => {
-                if (err) {
-                    console.log("getOrderHistory: Database error on first query:", err);
-                    resolve(null);
-                    return;
-                }
-                
-                console.log("getOrderHistory: Results found (method 1):", results?.length || 0);
-                
-                if (results && results.length > 0) {
-                    const orderSummary = results.map(order => 
-                        `- ${order.product} ($${order.total_amount}) on ${new Date(order.order_date).toLocaleDateString()}`
-                    ).join('\n');
-                    
-                    const totalSpent = results.reduce((sum, order) => sum + parseFloat(order.total_amount || 0), 0);
-                    
-                    const response = {
-                        summary: orderSummary,
-                        totalSpent: totalSpent.toFixed(2),
-                        count: results.length
-                    };
-                    console.log("getOrderHistory: Resolved with:", response);
-                    resolve(response);
-                    return;
-                }
-                
-                // Fallback: try direct phone match
-                console.log("getOrderHistory: No results with normalization, trying exact match with:", phone);
-                db.query(
-                    'SELECT product, total_amount, order_date FROM orders WHERE phone = ? ORDER BY order_date DESC LIMIT 5',
-                    [phone],
-                    (err2, results2) => {
-                        if (err2) {
-                            console.log("getOrderHistory: Database error on fallback query:", err2);
-                            resolve(null);
-                            return;
-                        }
-                        
-                        console.log("getOrderHistory: Results found (method 2 - exact match):", results2?.length || 0);
-                        
-                        if (results2 && results2.length > 0) {
-                            const orderSummary = results2.map(order => 
-                                `- ${order.product} ($${order.total_amount}) on ${new Date(order.order_date).toLocaleDateString()}`
-                            ).join('\n');
-                            
-                            const totalSpent = results2.reduce((sum, order) => sum + parseFloat(order.total_amount || 0), 0);
-                            
-                            const response = {
-                                summary: orderSummary,
-                                totalSpent: totalSpent.toFixed(2),
-                                count: results2.length
-                            };
-                            console.log("getOrderHistory: Resolved with fallback:", response);
-                            resolve(response);
-                        } else {
-                            console.log("getOrderHistory: No orders found for phone:", phone);
-                            // Debug: show what phone formats exist in DB
-                            db.query('SELECT DISTINCT phone FROM orders LIMIT 5', [], (err3, samples) => {
-                                if (!err3 && samples) {
-                                    console.log("getOrderHistory: Sample phone formats in DB:", samples.map(s => s.phone));
-                                }
-                            });
-                            resolve(null);
-                        }
-                    }
-                );
-            }
-        );
-    });
+
+        const ordered = results.slice(0, 5);
+        const orderSummary = ordered.map(order =>
+            `- ${order.product} ($${order.total_amount ?? order.amount ?? 0}) on ${order.order_date ? new Date(order.order_date).toLocaleDateString() : 'unknown date'}`
+        ).join('\n');
+
+        const totalSpent = ordered.reduce((sum, order) => sum + parseFloat((order.total_amount ?? order.amount ?? 0).toString()), 0);
+
+        const response = {
+            summary: orderSummary,
+            totalSpent: totalSpent.toFixed(2),
+            count: ordered.length
+        };
+        console.log("getOrderHistory: Resolved with:", response);
+        return response;
+    } catch (err) {
+        console.log("getOrderHistory: Database error:", err);
+        return null;
+    }
 }
 
 let disableAICallback = null;
@@ -273,36 +246,33 @@ function isOrderStatusInquiry(message) {
     return orderStatusKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
-function getOrderById(orderId) {
-    return new Promise((resolve) => {
-        if (!db || !orderId) {
-            resolve(null);
-            return;
-        }
+async function getOrderById(orderId) {
+    if (!orderId) return null;
 
-        db.query(
-            `SELECT o.order_id, o.customer_name, o.items, COALESCE(o.total_amount, o.amount) AS total_amount,
-                    o.status AS order_status, o.order_date,
-                    d.delivery_status, d.rider_name, d.vehicle
-             FROM orders o
-             LEFT JOIN deliveries d ON o.id = d.order_id
-             WHERE o.order_id = ?
-             LIMIT 1`,
-            [orderId],
-            (err, results) => {
-                if (err) {
-                    console.log('getOrderById error:', err);
-                    resolve(null);
-                    return;
-                }
-                if (!results || results.length === 0) {
-                    resolve(null);
-                    return;
-                }
-                resolve(results[0]);
-            }
-        );
-    });
+    try {
+        const order = await prisma.order.findUnique({
+            where: { order_id: orderId },
+            include: { deliveries: true }
+        });
+
+        if (!order) return null;
+
+        const delivery = order.deliveries?.[0] || {};
+        return {
+            order_id: order.order_id,
+            customer_name: order.customer_name,
+            items: order.product,
+            total_amount: order.total_amount ?? order.amount,
+            order_status: order.status,
+            order_date: order.order_date,
+            delivery_status: delivery.delivery_status,
+            rider_name: delivery.rider_name,
+            vehicle: delivery.vehicle
+        };
+    } catch (err) {
+        console.log('getOrderById error:', err);
+        return null;
+    }
 }
 
 function formatOrderStatusResponse(order) {
@@ -646,67 +616,58 @@ function getTicketTypeByAssignee(assignee) {
     }
 }
 
-function getCustomerName(phone, conversationId) {
-    return new Promise((resolve) => {
-        if (!db) {
-            resolve('Unknown');
-            return;
-        }
-
+async function getCustomerName(phone, conversationId) {
+    try {
         if (conversationId) {
-            db.query('SELECT name FROM conversations WHERE id = ?', [conversationId], (err, results) => {
-                if (err || !results || results.length === 0) {
-                    resolve('Unknown');
-                } else {
-                    resolve(results[0].name || 'Unknown');
-                }
+            const conversation = await prisma.conversation.findUnique({
+                where: { id: Number(conversationId) },
+                select: { name: true }
             });
-            return;
+            return conversation?.name || 'Unknown';
         }
 
         if (phone) {
-            db.query('SELECT name FROM conversations WHERE phone = ? LIMIT 1', [phone], (err, results) => {
-                if (err || !results || results.length === 0) {
-                    resolve('Unknown');
-                } else {
-                    resolve(results[0].name || 'Unknown');
-                }
+            const conversation = await prisma.conversation.findFirst({
+                where: { phone },
+                select: { name: true }
             });
-            return;
+            return conversation?.name || 'Unknown';
         }
-
-        resolve('Unknown');
-    });
+    } catch (err) {
+        console.log('getCustomerName error:', err);
+    }
+    return 'Unknown';
 }
 
 async function getRecentConversationMessages(conversationId, limit = 8) {
-    return new Promise((resolve) => {
-        if (!db || !conversationId) {
-            resolve([]);
-            return;
-        }
+    if (!conversationId) return [];
 
-        db.query(
-            `SELECT sender, message, created_at FROM messages WHERE conversation_id = ? 
-             UNION ALL
-             SELECT sender, message, created_at FROM replies WHERE conversation_id = ? 
-             ORDER BY created_at DESC LIMIT ${Number(limit)}`,
-            [conversationId, conversationId],
-            (err, results) => {
-                if (err || !results) {
-                    console.log("getRecentConversationMessages error:", err);
-                    resolve([]);
-                    return;
-                }
-                resolve(results.reverse());
-            }
-        );
-    });
+    try {
+        const [messages, replies] = await Promise.all([
+            prisma.message.findMany({
+                where: { conversation_id: Number(conversationId) },
+                select: { sender: true, message: true, created_at: true }
+            }),
+            prisma.reply.findMany({
+                where: { conversation_id: Number(conversationId) },
+                select: { sender: true, message: true, created_at: true }
+            })
+        ]);
+
+        const merged = [...messages, ...replies]
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+            .slice(0, limit)
+            .reverse();
+
+        return merged;
+    } catch (err) {
+        console.log("getRecentConversationMessages error:", err);
+        return [];
+    }
 }
 
 async function createTicket(content, phone = null, conversationId = null, assignee = null, ticketType = null, priority = 'Medium', tags = []) {
     const customerName = await getCustomerName(phone, conversationId);
-    const submittedBy = 'AI';
     const now = new Date();
     const status = 'Open';
     const subject = ticketType || assignee || 'Support request';
@@ -714,26 +675,9 @@ async function createTicket(content, phone = null, conversationId = null, assign
     const tagsText = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
     const slaDue = new Date(now.getTime() + 2 * 60 * 60 * 1000); // 2 hour SLA for auto-created tickets by default
 
-    return new Promise((resolve) => {
-        if (!db) {
-            console.log("createTicket: No database connection available");
-            resolve(null);
-            return;
-        }
-
-        const insertSql = isPg
-            ? "INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, sla_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-            : "INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, sla_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        db.query(insertSql, [ticketTypeValue, subject, customerName, phone, assignee, priority, status, content, tagsText, slaDue], (err, result) => {
-            if (err) {
-                console.log("createTicket: Database error:", err);
-                resolve(null);
-                return;
-            }
-
-            const ticketId = result.insertId;
-            const ticket = {
-                id: ticketId,
+    try {
+        const ticket = await prisma.ticket.create({
+            data: {
                 ticket_type: ticketTypeValue,
                 subject,
                 customer_name: customerName,
@@ -741,97 +685,99 @@ async function createTicket(content, phone = null, conversationId = null, assign
                 assignee,
                 priority,
                 status,
-                content: content,
+                content,
                 tags: tagsText,
-                sla_due: slaDue.toISOString(),
-                escalated: 0,
-                created_at: now.toISOString()
-            };
-            resolve(ticket);
+                sla_due: slaDue
+            }
         });
-    });
+
+        return ticket;
+    } catch (err) {
+        console.log("createTicket: Database error:", err);
+        return null;
+    }
 }
 
 async function createOrderFromConversation(conversationId, phone) {
-    return new Promise(async (resolve) => {
-        if (!db || !conversationId) {
-            console.log("createOrderFromConversation: No DB or conversationId");
-            resolve(null);
-            return;
-        }
+    if (!conversationId) {
+        console.log("createOrderFromConversation: No conversationId");
+        return null;
+    }
 
-        // Get recent conversation messages to find the order details
-        const recentMessages = await getRecentConversationMessages(conversationId, 10);
-        
-        // Find the customer's order message and extract items
-        let orderDetails = null;
-        for (let i = recentMessages.length - 1; i >= 0; i--) {
-            const msg = recentMessages[i];
-            if (msg.sender === 'received' || msg.sender === 'customer') { // Customer message
-                const extracted = extractOrderItemsFromMessage(msg.message);
-                if (extracted.items && extracted.total > 0) {
-                    orderDetails = extracted;
-                    break;
-                }
+    // Get recent conversation messages to find the order details
+    const recentMessages = await getRecentConversationMessages(conversationId, 10);
+    
+    // Find the customer's order message and extract items
+    let orderDetails = null;
+    for (let i = recentMessages.length - 1; i >= 0; i--) {
+        const msg = recentMessages[i];
+        if (msg.sender === 'received' || msg.sender === 'customer') { // Customer message
+            const extracted = extractOrderItemsFromMessage(msg.message);
+            if (extracted.items && extracted.total > 0) {
+                orderDetails = extracted;
+                break;
             }
         }
+    }
 
-        if (!orderDetails) {
-            console.log("createOrderFromConversation: Could not find order details in conversation");
-            resolve(null);
-            return;
-        }
+    if (!orderDetails) {
+        console.log("createOrderFromConversation: Could not find order details in conversation");
+        return null;
+    }
 
-        // Get customer name
-        const customerName = await getCustomerName(phone, conversationId);
+    // Get customer name
+    const customerName = await getCustomerName(phone, conversationId);
 
-        // Generate order ID
-        const orderId = `ORD-${Date.now()}`;
+    // Generate order ID
+    const orderId = `ORD-${Date.now()}`;
 
-        const insertSql = isPg
-            ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)'
-            : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)';
-        db.query(
-            insertSql,
-            [orderId, customerName, phone || null, orderDetails.items, orderDetails.total, orderDetails.total, 'confirmed', conversationId],
-            (err, result) => {
-                if (err) {
-                    console.log("createOrderFromConversation: Database error:", err);
-                    resolve(null);
-                    return;
-                }
-
-                const order = {
-                    id: result.insertId,
-                    orderId: orderId,
-                    product: orderDetails.items,
-                    total: orderDetails.total,
-                    status: 'confirmed'
-                };
-                console.log("createOrderFromConversation: Order created:", order);
-
-                // Automatically start the delivery simulation using the server route
-                fetch('http://localhost:3000/api/delivery/start', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ order_id: order.orderId })
-                }).then((response) => {
-                    if (!response.ok) {
-                        throw new Error('Delivery start failed');
-                    }
-                    return response.json();
-                }).then((data) => {
-                    console.log('createOrderFromConversation: Auto delivery simulation started for order', order.orderId, data);
-                }).catch((deliveryErr) => {
-                    console.error('createOrderFromConversation: Failed to auto-start delivery:', deliveryErr);
-                }).finally(() => {
-                    resolve(order);
-                });
+    try {
+        const order = await prisma.order.create({
+            data: {
+                order_id: orderId,
+                customer_name: customerName,
+                phone: phone || null,
+                product: orderDetails.items,
+                amount: orderDetails.total,
+                total_amount: orderDetails.total,
+                status: 'confirmed',
+                order_date: new Date(),
+                conversation_id: Number(conversationId)
             }
-        );
-    });
+        });
+
+        const result = {
+            id: order.id,
+            orderId: order.order_id,
+            product: order.product,
+            total: order.total_amount ?? order.amount,
+            status: order.status
+        };
+        console.log("createOrderFromConversation: Order created:", result);
+
+        // Automatically start the delivery simulation using the server route
+        fetch('http://localhost:3000/api/delivery/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ order_id: result.orderId })
+        }).then((response) => {
+            if (!response.ok) {
+                throw new Error('Delivery start failed');
+            }
+            return response.json();
+        }).then((data) => {
+            console.log('createOrderFromConversation: Auto delivery simulation started for order', result.orderId, data);
+        }).catch((deliveryErr) => {
+            console.error('createOrderFromConversation: Failed to auto-start delivery:', deliveryErr);
+        });
+
+        return result;
+    } catch (err) {
+        console.log("createOrderFromConversation: Database error:", err);
+        return null;
+    }
 }
 
 async function getMistralReply(message, phone = null, conversationId = null) {

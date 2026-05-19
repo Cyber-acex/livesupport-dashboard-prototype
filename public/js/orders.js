@@ -6,6 +6,20 @@ let currentPage = 1;
 let ordersPerPage = 10;
 const selectedOrders = new Set();
 let currentSort = 'date_desc';
+
+function formatOrderTimestamp(value) {
+  if (!value) return 'Unknown';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
   loadStaffName();
@@ -32,7 +46,7 @@ function setupRealtimeUpdates() {
       product: payload.product || '',
       amount: Number(payload.amount || 0),
       status: payload.status || 'pending',
-      date: payload.date || new Date().toLocaleDateString()
+      date: payload.date || new Date().toISOString()
     };
     // Insert at top
     allOrders.unshift(order);
@@ -106,6 +120,22 @@ async function loadOrders() {
     showEmptyState();
   }
 }
+
+function updateOrderMetrics() {
+  const totalOrders = allOrders.length;
+  const transitStatuses = new Set(['processing', 'in transit', 'shipping', 'shipped', 'out for delivery', 'delivering', 'transit']);
+  const inTransitOrders = allOrders.filter(order => {
+    const status = (order.status || '').toString().toLowerCase();
+    return transitStatuses.has(status);
+  }).length;
+
+  const totalOrdersEl = document.getElementById('totalOrdersCount');
+  const transitOrdersEl = document.getElementById('ordersInTransitCount');
+
+  if (totalOrdersEl) totalOrdersEl.textContent = totalOrders.toLocaleString();
+  if (transitOrdersEl) transitOrdersEl.textContent = inTransitOrders.toLocaleString();
+}
+
 // Generate sample orders for demo
 function generateSampleOrders() {
   return [
@@ -159,6 +189,7 @@ function displayOrders() {
     tbody.innerHTML = '';
     emptyState.style.display = 'block';
     document.getElementById('pagination').innerHTML = '';
+    updateOrderMetrics();
     return;
   }
   emptyState.style.display = 'none';
@@ -173,7 +204,7 @@ function displayOrders() {
     const checked = selectedOrders.has(order.id) ? 'checked' : '';
     const statusLabel = (order.status || '').toString();
     const statusText = statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1);
-    const displayDate = (new Date(order.date)).toLocaleString();
+    const displayDate = formatOrderTimestamp(order.date);
     return `
     <tr data-order-id="${order.id}">
       <td><input type="checkbox" class="row-select" ${checked} onchange="toggleSelectRow(event, '${order.id}')"></td>
@@ -202,6 +233,7 @@ function displayOrders() {
     </tr>
     `;
   }).join('');
+  updateOrderMetrics();
   // Build pagination
   const paginationDiv = document.getElementById('pagination');
   paginationDiv.innerHTML = '';
@@ -339,7 +371,7 @@ function openOrderModal(orderId) {
   document.getElementById('view_product').value = order.product || '';
   document.getElementById('view_amount').value = Number(order.amount || 0).toFixed(2);
   document.getElementById('view_status').value = order.status || 'pending';
-  document.getElementById('view_date').value = new Date(order.date).toLocaleString();
+  document.getElementById('view_date').value = formatOrderTimestamp(order.date);
   document.getElementById('orderViewModal').style.display = 'flex';
 }
 
@@ -389,30 +421,62 @@ function copyOrderId(event, orderId) {
     return showNotification('Order ID not available');
   }
   const textToCopy = String(orderId);
-  const writeText = () => {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(textToCopy);
+
+  const tryClipboardApi = async () => {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      throw new Error('Clipboard API unavailable');
     }
-    const textarea = document.createElement('textarea');
-    textarea.value = textToCopy;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    const successful = document.execCommand('copy');
-    document.body.removeChild(textarea);
-    return successful ? Promise.resolve() : Promise.reject(new Error('Fallback copy failed'));
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        const permission = await navigator.permissions.query({ name: 'clipboard-write' });
+        if (permission.state === 'denied') {
+          throw new Error('Clipboard permission denied');
+        }
+      } catch (_err) {
+        // Permission query may not be supported in all browsers; continue.
+      }
+    }
+    return navigator.clipboard.writeText(textToCopy);
   };
-  writeText()
+
+  const tryExecCommandFallback = () => {
+    return new Promise((resolve, reject) => {
+      const textarea = document.createElement('textarea');
+      textarea.value = textToCopy;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      let successful = false;
+      try {
+        successful = document.execCommand('copy');
+      } catch (err) {
+        successful = false;
+      }
+      document.body.removeChild(textarea);
+      window.getSelection().removeAllRanges();
+      if (successful) resolve();
+      else reject(new Error('Fallback copy failed'));
+    });
+  };
+
+  Promise.resolve()
+    .then(() => tryClipboardApi())
+    .catch(() => tryExecCommandFallback())
     .then(() => {
       showNotification(`Copied ${orderId} to clipboard.`);
     })
     .catch(error => {
       console.error('Copy failed:', error);
-      alert('Unable to copy order ID.');
+      showNotification('Automatic copy failed. Please try again in a secure browser context.');
     });
 }
+
 // Toggle select all
 function toggleSelectAll(checkbox) {
   const rows = document.querySelectorAll('.row-select');

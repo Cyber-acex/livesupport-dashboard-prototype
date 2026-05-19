@@ -213,6 +213,7 @@ body {
         display: flex;
         min-height: 100vh;
         height: 100%;
+        padding-top: 60px;
 }
 
 /* Force white/light backgrounds when user chooses light theme */
@@ -903,7 +904,11 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 
 /* TOPBAR */
 .topbar {
-    position: relative;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
     height: 60px;
     background: linear-gradient(90deg, #111827 0%, #0b1121 100%);
     color: #e2e8f0;
@@ -911,7 +916,10 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     justify-content: space-between;
     align-items: center;
     padding: 0 20px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
+    border-bottom: none;
+    z-index: 1000;
+    box-sizing: border-box;
+    zoom: 1;
 }
 .top-left,
 .top-right {
@@ -928,6 +936,7 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 .content {
     flex: 1;
     padding: 20px;
+    padding-top: 100px;
     overflow: auto;
     display: flex;
     flex-direction: column;
@@ -2949,6 +2958,7 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 /* Remove that big space at top */
 .content {
     padding: 20px;
+    padding-top: 100px;
     margin: 0;
 }
 
@@ -3035,6 +3045,7 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 /* Remove excessive spacing */
 .content {
     padding: 20px !important;
+    padding-top: 100px !important;
 }
 
 /* Ticket list */

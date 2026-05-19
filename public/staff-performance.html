@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <link rel="icon" href="/favicon.png" type="image/png">
@@ -10,6 +10,7 @@
     <title>Staff Performance - LiveSupport</title>
     <link rel="stylesheet" href="./css/style.css" />
     <link rel="stylesheet" href="./css/sidebar.css" />
+    <link rel="stylesheet" href="./css/tailadmin.css" />
     <link rel="stylesheet" href="./css/timestamp.css" />
         <link rel="stylesheet" href="./css/staff-performance.css" />
     <script>
@@ -130,7 +131,7 @@
     <!-- Modal for staff details -->
     <div id="staffModal" class="modal" aria-hidden="true">
         <div class="modal-panel">
-            <button id="modalClose" class="modal-close">×</button>
+                <button id="modalClose" class="modal-close">×</button>
             <h2 id="modalName">Staff Name</h2>
             <div id="modalBody">Loading...</div>
         </div>
@@ -139,8 +140,10 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="./js/staff-performance.js"></script>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="./js/notification-sound.js"></script>
     <script src="./js/sidebar.js" defer></script>
 </body>
 </html>
+
 
 

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <link rel="icon" href="/favicon.png" type="image/png">
@@ -8,6 +8,7 @@
     <title>Livesupport - Analytics</title>
     <link rel="stylesheet" href="./css/style.css">
     <link rel="stylesheet" href="./css/sidebar.css">
+  <link rel="stylesheet" href="./css/tailadmin.css">
     <script>document.documentElement.classList.add('ls-js');</script>
     <style>
       body { background: white !important; }
@@ -144,6 +145,7 @@ fetch("/api/user")
 </script>
 <!---->
 <script src="/socket.io/socket.io.js"></script>
+<script src="./js/notification-sound.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="./js/analytics.js"></script>
 <script src="./js/sidebar.js" defer></script>
@@ -270,32 +272,32 @@ fetch("/api/user")
 <div class="kpi-row">
   <div class="kpi-card">
     <h4>Total Tickets</h4>
-    <p id="kpi-totalTickets">—</p>
+            <p id="kpi-totalTickets">—</p>
     <div class="kpi-small">Created in selected range</div>
   </div>
   <div class="kpi-card">
     <h4>Avg Response (s)</h4>
-    <p id="kpi-avgResponse">—</p>
+      <p id="kpi-avgResponse">—</p>
     <div class="kpi-small">Average first response time</div>
   </div>
   <div class="kpi-card">
     <h4>Resolution Rate</h4>
-    <p id="kpi-resolutionRate">—</p>
+      <p id="kpi-resolutionRate">—</p>
     <div class="kpi-small">% resolved within SLA</div>
   </div>
   <div class="kpi-card">
     <h4>Active Chats</h4>
-    <p id="kpi-activeChats">—</p>
+      <p id="kpi-activeChats">—</p>
     <div class="kpi-small">Currently live</div>
   </div>
   <div class="kpi-card">
     <h4>AI Feedback Avg</h4>
-    <p id="kpi-aiFeedbackAvg">—</p>
+      <p id="kpi-aiFeedbackAvg">—</p>
     <div class="kpi-small">Average rating from staff/customers</div>
   </div>
   <div class="kpi-card">
     <h4>Feedback Count</h4>
-    <p id="kpi-aiFeedbackCount">—</p>
+            <p id="kpi-aiFeedbackCount">—</p>
     <div class="kpi-small">Total feedback entries</div>
   </div>
 </div>
@@ -323,5 +325,6 @@ fetch("/api/user")
 </div> <!-- .dashboard -->
 </body>
 </html>
+
 
 

@@ -1,5 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
+﻿<!DOCTYPE html>
+<html lang="en" class="no-zoom ls-js">
 <head>
   <link rel="icon" href="/favicon.png" type="image/png">
   <link rel="shortcut icon" href="/favicon.png">
@@ -11,12 +11,24 @@
   <link rel="stylesheet" href="./css/style.css">
   <link rel="stylesheet" href="./css/sidebar.css">
   <style>
-    body {
-    background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 20%),
-                radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.14), transparent 18%),
-                linear-gradient(180deg, #070b16 0%, #0f1220 48%, #111827 100%);
-    color: #e2e8f0;
-    min-height: 100vh;
+    html, body {
+      width: 100%;
+      min-height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+      background: radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 20%),
+                  radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.14), transparent 18%),
+                  linear-gradient(180deg, #070b16 0%, #0f1220 48%, #111827 100%);
+      color: #e2e8f0;
+    }
+
+.dashboard {
+      width: 100%;
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
 }
 
 .settings-container {
@@ -308,7 +320,7 @@ input:checked + .slider {
       box-sizing: border-box;
     }
     .settings-sidebar {
-      width: 220px;
+      width: 320px;
       background: #2c3e50;
       color: white;
       padding: 20px;
@@ -405,7 +417,7 @@ input:checked + .slider {
     }
   </style>
 </head>
-<body>
+<body class="no-zoom">
 
 <div class="dashboard">
   <!-- SIDEBAR -->
@@ -636,11 +648,37 @@ input:checked + .slider {
 
 <script>
   // Switch sections
-  function showSection(id) {
+  function setActiveSection(id) {
+    const section = document.getElementById(id);
+    if (!section) return;
     document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
-    document.getElementById(id).classList.add('active');
+    section.classList.add('active');
+  }
+
+  function showSection(id) {
+    setActiveSection(id);
+    try {
+      if (history.replaceState) {
+        history.replaceState(null, '', '#' + id);
+      } else {
+        window.location.hash = id;
+      }
+    } catch (e) {
+      window.location.hash = id;
+    }
+    localStorage.setItem('settingsSection', id);
+
     // If admin users section shown, fetch users (function provided by admin-users.js)
     try { if (id === 'adminUsers' && typeof fetchUsers === 'function') fetchUsers(); } catch (e) {}
+  }
+
+  function initSettingsSection() {
+    const hashId = window.location.hash.slice(1);
+    const storedId = localStorage.getItem('settingsSection');
+    const sectionId = hashId && document.getElementById(hashId)
+      ? hashId
+      : (storedId && document.getElementById(storedId) ? storedId : 'account');
+    showSection(sectionId);
   }
 
   // Apply theme with full color inversion
@@ -861,9 +899,13 @@ input:checked + .slider {
     .catch(err => console.log("User fetch error", err));
 
   // Populate settings on page load
-  window.addEventListener('DOMContentLoaded', loadSettings);
+  window.addEventListener('DOMContentLoaded', () => {
+    loadSettings();
+    initSettingsSection();
+  });
 </script>
 <script src="./js/settings.js" defer></script>
+<script src="./js/notification-sound.js"></script>
 <script src="./js/sidebar.js" defer></script>
 </body>
 </html>

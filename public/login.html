@@ -1,13 +1,14 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 
 <head>
         <link rel="icon" href="/favicon.png" type="image/png">
         <link rel="shortcut icon" href="/favicon.png">
         <link rel="stylesheet" href="./css/style.css">
+        <link rel="stylesheet" href="./css/tailadmin.css">
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>LiveSupport — Secure Login</title>
+        <title>LiveSupport - Secure Login</title>
         <script>
             (function applyThemeImmediately() {
                 const theme = localStorage.getItem('theme') || 'Light';
@@ -37,12 +38,12 @@
                 </defs>
             </svg>
             <h1 class="title">LiveSupport</h1>
-            <p class="tag">Real-time support dashboard — secure access</p>
+            <p class="tag">Real-time support dashboard - secure access</p>
         </div>
         <ul class="features">
-            <li>• Multi-channel inbox</li>
-            <li>• AI suggestions</li>
-            <li>• Real-time performance</li>
+            <li>- Multi-channel inbox</li>
+            <li>- AI suggestions</li>
+            <li>- Real-time performance</li>
         </ul>
     </div>
 
@@ -65,7 +66,7 @@
                 <span class="label-text">Password</span>
                 <div class="password-wrap">
                     <input id="password" type="password" name="password" placeholder="Enter password" required>
-                    <button type="button" class="pw-toggle" aria-label="Show password" title="Show password">👁</button>
+                    <button type="button" class="pw-toggle" aria-label="Show password" title="Show password">Show</button>
                 </div>
             </label>
 
@@ -115,11 +116,8 @@
     document.addEventListener('click', e => {
         if (e.target.matches('.pw-toggle')) {
             const inp = document.getElementById('password');
-            if (inp.type === 'password') { inp.type = 'text'; e.target.textContent = '🔒'; }
-            else { inp.type = 'password'; e.target.textContent = '👁'; }
-        }
-    });
-
+            if (inp.type === 'password') { inp.type = 'text'; e.target.textContent = 'Hide'; e.target.setAttribute('aria-label', 'Hide password'); }
+            else { inp.type = 'password'; e.target.textContent = 'Show'; e.target.setAttribute('aria-label', 'Show password'); }
     // Theme toggle
     const themeToggle = document.querySelector('.theme-toggle');
     if (themeToggle) {
@@ -144,7 +142,7 @@
         const params = new URLSearchParams(window.location.search);
         const errorBox = document.getElementById('errorBox');
         if (params.get('error') === 'invalid') {
-            errorBox.textContent = '🚫 Invalid credentials — please try again.';
+            errorBox.textContent = 'Invalid credentials - please try again.';
             errorBox.classList.remove('hidden');
             errorBox.classList.add('show');
             setTimeout(()=> errorBox.classList.remove('show'), 6000);
@@ -238,4 +236,5 @@
 </body>
 
 </html>
+
 

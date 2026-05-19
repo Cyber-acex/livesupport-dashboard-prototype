@@ -17,8 +17,9 @@
     const btn = document.getElementById('themeToggle');
     if(!btn) return;
     const isDark = current() === 'Dark';
-    btn.textContent = isDark ? 'Light' : 'Dark';
     btn.setAttribute('aria-pressed', String(isDark));
+    btn.setAttribute('aria-label', isDark ? 'Switch to Light mode' : 'Switch to Dark mode');
+    btn.title = isDark ? 'Switch to Light mode' : 'Switch to Dark mode';
   }
   // Expose to window for programmatic toggles
   window.livesupportTheme = { applyTheme, toggleTheme, current };

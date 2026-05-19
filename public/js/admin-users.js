@@ -35,7 +35,7 @@ function renderUsers(users) {
     const saveBtn = document.createElement('button'); saveBtn.textContent = 'Save';
     saveBtn.onclick = async () => {
       const role = tr.querySelector('.roleSel').value;
-      const disabled = tr.querySelector('.disabledChk').checked ? 1 : 0;
+      const disabled = tr.querySelector('.disabledChk').checked;
       await fetch(_base + '/api/admin/users/' + u.id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ role, disabled }) });
       fetchUsers();
     };
