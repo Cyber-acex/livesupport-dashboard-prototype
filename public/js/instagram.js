@@ -1,18 +1,19 @@
 // Simple Instagram-like inbox demo
 const sampleConversations = [
-  { id: 'c1', name: 'alice', last: 'Hey, is my order ready?', unread: 2, avatar: '' , messages: [
+  { id: 'c1', name: 'Kaiya George', subtitle: 'Project Manager', time: '15 mins', last: 'Hey, is my order ready?', unread: 2, avatar: '' , messages: [
     {from: 'alice', text: 'Hey, is my order ready?', time: '10:01'},
     {from: 'me', text: 'Working on it — will update soon.', time: '10:02'}
   ]},
-  { id: 'c2', name: 'brand_official', last: 'Thanks for your message!', unread: 0, avatar: '' , messages: [
-    {from: 'brand_official', text: 'Thanks for your message!', time: 'Yesterday'}
+  { id: 'c2', name: 'Lindsey Curtis', subtitle: 'Designer', time: '30 mins', last: 'I want more detailed information.', unread: 0, avatar: '' , messages: [
+    {from: 'lindsey', text: 'I want more detailed information.', time: '08:52'}
   ]},
-  { id: 'c3', name: 'bob', last: 'Can I change the address?', unread: 1, avatar: '' , messages: [
+  { id: 'c3', name: 'Zain Geidt', subtitle: 'Content Writer', time: '45 mins', last: 'Can I change the address?', unread: 1, avatar: '' , messages: [
     {from: 'bob', text: 'Can I change the address?', time: '08:22'}
   ]}
 ];
 
 let activeConversationId = null;
+let pendingAttachment = null;
 let conversations = sampleConversations.slice();
 // Socket.IO client (initialized on load)
 let socket = null;
@@ -29,12 +30,15 @@ function renderConversations(list = conversations) {
     el.className = 'conversation-item';
     el.dataset.id = conv.id;
     if(String(activeConversationId) === String(conv.id)) el.classList.add('active');
-    // avatar: image or initials
     const avatarHtml = conv.avatar ? `<div class="conv-avatar"><img src="${conv.avatar}" alt="${conv.name}"/></div>` : `<div class="conv-avatar"><div class="initials">${getInitials(conv.name)}</div></div>`;
     el.innerHTML = `
       ${avatarHtml}
       <div class="conv-meta">
-        <div class="conv-name"><span class="name-text">${conv.name}</span><span class="conv-time">${conv.created_at? formatTime(conv.created_at): ''}</span></div>
+        <div class="conv-top">
+          <div class="conv-name">${conv.name}</div>
+          <div class="conv-time">${conv.time || ''}</div>
+        </div>
+        <div class="conv-subtitle">${conv.subtitle || 'Instagram User'}</div>
         <div class="conv-last">${conv.last || ''}</div>
       </div>
       <div class="conv-right">
@@ -59,9 +63,19 @@ async function loadConversationsFromServer(){
     if(!res.ok) throw new Error('no convs');
     const data = await res.json();
     if(!data || data.length===0) return;
-    conversations = data.map(c => ({ id: c.id, name: c.ig_username || c.name || c.phone, last: c.last_message || '', unread: c.unread_count || 0, avatar: '', phone: c.phone }));
+    conversations = data.map(c => ({
+      id: c.id,
+      name: c.ig_username || c.name || c.phone || `Instagram ${c.ig_id || ''}`,
+      subtitle: c.platform ? c.platform.charAt(0).toUpperCase() + c.platform.slice(1) : 'Instagram User',
+      time: c.last_activity_at || c.created_at || '',
+      last: c.last_message || '',
+      unread: c.unread_count || 0,
+      avatar: '',
+      phone: c.phone || c.ig_id,
+      ig_id: c.ig_id,
+      ig_username: c.ig_username
+    }));
     renderConversations(conversations);
-    // Auto-select the newest conversation if none selected
     if(conversations.length>0 && !activeConversationId){
       selectConversation(conversations[0].id);
     }
@@ -76,7 +90,9 @@ async function selectConversation(id) {
   activeConversationId = id;
   const conv = conversations.find(c=>c.id==id) || sampleConversations.find(c=>c.id==id);
   if(!conv) return;
-  document.getElementById('chatHeader').textContent = conv.name;
+  document.getElementById('chatName').textContent = conv.name;
+  document.getElementById('chatAvatar').textContent = getInitials(conv.name);
+  document.getElementById('chatStatus').textContent = conv.subtitle || 'Instagram User';
   conv.unread = 0;
   renderConversations();
   // try loading messages from backend
@@ -176,7 +192,7 @@ function renderMessages(messages) {
     }
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
-    meta.textContent = m.time ? formatTime(m.time) : '';
+    meta.textContent = m.time ? formatTime(m.time) || m.time : '';
     bubble.appendChild(meta);
     wrap.appendChild(bubble);
     area.appendChild(wrap);
@@ -200,6 +216,7 @@ function sendMessage() {
   if((!text && !pendingAttachment) || !activeConversationId) return;
   const conv = conversations.find(c=>c.id==activeConversationId) || sampleConversations.find(c=>c.id==activeConversationId);
   const lastLabel = text || (pendingAttachment ? '[Attachment]' : '');
+  const attachmentForSend = pendingAttachment;
   pendingAttachment = null;
   conv.last = lastLabel;
   renderConversations();
@@ -210,8 +227,10 @@ function sendMessage() {
 
   (async ()=>{
     try{
-      const payload = { recipient: conv.phone || conv.id, message: text };
-      if(window.pendingAttachment) payload.attachment = window.pendingAttachment;
+      const payload = { recipient: conv.phone || conv.ig_id || conv.id, message: text };
+      if(attachmentForSend) {
+        payload.attachment = attachmentForSend;
+      }
       const resp = await fetch('/api/instagram/send', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
       const data = await resp.json();
       showTypingIndicator(false);
@@ -243,7 +262,6 @@ window.addEventListener('load', () => {
     if(!conversations || conversations.length===0) renderConversations();
   });
   // wire attach button and file input
-  window.pendingAttachment = null;
   window.handleFileAttach = function(e){
     const f = e.target.files && e.target.files[0];
     if(!f) return;

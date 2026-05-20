@@ -1613,13 +1613,25 @@ app.get('/api/recent-tickets', (req, res) => {
 // New endpoint: Instagram conversations (joined info)
 app.get('/api/instagram/conversations', (req, res) => {
     const sql = `
-        SELECT ic.conversation_id AS id, ic.ig_id, ic.ig_username, c.phone, c.name,
-            (SELECT message FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_message,
+        SELECT ic.conversation_id AS id,
+            ic.ig_id,
+            ic.ig_username,
+            c.phone,
+            c.name,
+            c.platform,
+            COALESCE(
+                (SELECT message FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
+                (SELECT message FROM replies WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1)
+            ) AS last_message,
+            COALESCE(
+                (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
+                (SELECT created_at FROM replies WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1)
+            ) AS last_activity_at,
             (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id AND m2.sender <> 'sent') AS unread_count,
             c.created_at
         FROM instagram_conversations ic
         JOIN conversations c ON c.id = ic.conversation_id
-        ORDER BY c.created_at DESC
+        ORDER BY last_activity_at DESC, c.created_at DESC
     `;
     db.query(sql, (err, rows) => {
         if (err) {
@@ -1801,154 +1813,67 @@ app.post('/webhook/instagram', (req, res) => {
     if (body && body.object) {
         // Example structure: body.entry[].messaging[] or body.entry[].changes
         try {
+            const processInstagramMessage = (value, m) => {
+                const senderId = m.from?.id || m.from || m.sender?.id || m.sender || value?.sender_id || null;
+                const text = m.message?.text || m.message?.body || (m.text && m.text.body) || m.text || null;
+                if (!senderId) return;
+                const messageText = text || '[non-text]';
+                const timestamp = m.timestamp ? new Date(Number(m.timestamp) * (String(m.timestamp).length === 10 ? 1000 : 1)).toISOString() : new Date().toISOString();
+
+                const upsertInstagramLink = (convId) => {
+                    db.query('SELECT id FROM instagram_conversations WHERE conversation_id = ? LIMIT 1', [convId], (icErr, icRows) => {
+                        if (icErr) return console.error('instagram_conversations lookup error', icErr);
+                        if (!icRows || icRows.length === 0) {
+                            db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [convId, senderId, value?.from?.username || null], (insErr) => {
+                                if (insErr) console.error('Error inserting instagram_conversations link', insErr);
+                            });
+                        }
+                    });
+                };
+
+                const insertMessage = (conversationId) => {
+                    db.query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, ?)', [conversationId, 'instagram', messageText, timestamp], (iErr) => {
+                        if (iErr) return console.error('Error inserting IG message', iErr);
+                        io.emit('newMessage', { conversation_id: conversationId, sender: 'instagram', message: messageText, created_at: timestamp });
+                        checkAndCreateTicket(conversationId, senderId, text);
+                    });
+                };
+
+                db.query('SELECT id FROM conversations WHERE phone = ? OR name = ? LIMIT 1', [senderId, senderId], (err, rows) => {
+                    if (err) return console.error('Instagram webhook DB lookup error', err);
+                    if (rows && rows.length > 0) {
+                        const convId = rows[0].id;
+                        insertMessage(convId);
+                        upsertInstagramLink(convId);
+                    } else {
+                        const insertSql = isPg
+                            ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
+                            : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
+                        db.query(insertSql, [senderId, senderId, 'instagram'], (cErr, result) => {
+                            if (cErr) return console.error('Error creating IG conversation', cErr);
+                            const newId = isPg ? (result?.rows?.[0]?.id || result?.[0]?.id) : result.insertId;
+                            if (!newId) return console.error('Error determining new conversation id for IG conversation');
+                            insertMessage(newId);
+                            upsertInstagramLink(newId);
+                        });
+                    }
+                });
+            };
+
             const entries = body.entry || [];
             entries.forEach(entry => {
                 const changes = entry.changes || [];
-                // Newer IG events appear in changes array
-                if (changes.length) {
-                    changes.forEach(change => {
-                        const value = change.value || {};
-                        // messages may be under value.messages
-                        const messages = value.messages || [];
-                        messages.forEach(async (m) => {
-                            const senderId = m.from || m.sender || (value && value.sender_id) || null;
-                            const text = (m.text && m.text.body) || m.text || null;
-                            if (!senderId) return;
-
-                            // Upsert conversation by external id
-                            db.query('SELECT id FROM conversations WHERE phone = ? OR name = ? LIMIT 1', [senderId, senderId], (err, rows) => {
-                                if (err) return console.error('Instagram webhook DB lookup error', err);
-                                if (rows && rows.length > 0) {
-                                        const convId = rows[0].id;
-                                        db.query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'instagram', text || '[non-text]'], (iErr) => {
-                                            if (iErr) console.error('Error inserting IG message', iErr);
-                                            else {
-                                                io.emit('newMessage', { conversation_id: convId, sender: 'instagram', message: text, created_at: new Date().toISOString() });
-                                                // Check for automated ticket creation
-                                                checkAndCreateTicket(convId, senderId, text);
-                                            }
-                                        });
-                                        // ensure instagram_conversations has a record for this conv
-                                        db.query('SELECT id FROM instagram_conversations WHERE conversation_id = ? LIMIT 1', [convId], (icErr, icRows) => {
-                                            if (icErr) return console.error('instagram_conversations lookup error', icErr);
-                                            if (!icRows || icRows.length === 0) {
-                                                db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [convId, senderId, (value && value.from && value.from.username) || null], (insErr) => {
-                                                    if (insErr) console.error('Error inserting instagram_conversations link', insErr);
-                                                });
-                                            }
-                                        });
-                                    } else {
-                                        // create conversation
-                                        const insertSql = isPg
-                    ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
-                    : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
-                db.query(insertSql, [senderId, senderId, 'instagram'], (cErr, result) => {
-                    if (cErr) return console.error('Error creating IG conversation', cErr);
-                    const newId = result.insertId;
-                    db.query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [newId, 'instagram', text || '[non-text]'], (mErr) => {
-                        if (mErr) console.error('Error inserting IG message after create', mErr);
-                        else io.emit('newMessage', { conversation_id: newId, sender: 'instagram', message: text, created_at: new Date().toISOString() });
-                    });
-                    // create instagram_conversations link
-                    db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [newId, senderId, (value && value.from && value.from.username) || null], (insErr) => {
-                        if (insErr) console.error('Error inserting instagram_conversations after conv create', insErr);
-                    });
+                changes.forEach(change => {
+                    const value = change.value || {};
+                    const messages = value.messages || (value.message ? [value.message] : []);
+                    messages.forEach(m => processInstagramMessage(value, m));
                 });
-                                    }
-                            });
-                        });
-                    });
 
-                        if (!isPg) {
-                        // Create AI/staff split message tables (MySQL)
-                        db.query(`
-                            CREATE TABLE IF NOT EXISTS ai_messages (
-                                id INT AUTO_INCREMENT PRIMARY KEY,
-                                conversation_id INT,
-                                sender VARCHAR(255),
-                                message TEXT,
-                                user_id INT,
-                                created_at DATETIME DEFAULT NOW()
-                            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                        `, (err) => { if (err) console.error('Error creating ai_messages table:', err); else console.log('ai_messages table ensured'); });
-
-                        db.query(`
-                            CREATE TABLE IF NOT EXISTS staff_messages (
-                                id INT AUTO_INCREMENT PRIMARY KEY,
-                                conversation_id INT,
-                                sender VARCHAR(255),
-                                message TEXT,
-                                user_id INT,
-                                created_at DATETIME DEFAULT NOW()
-                            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                        `, (err) => { if (err) console.error('Error creating staff_messages table:', err); else console.log('staff_messages table ensured'); });
-                        // Create tables with spaces in their names as requested
-                        db.query(`
-                            CREATE TABLE IF NOT EXISTS \`ai replies\` (
-                                id INT AUTO_INCREMENT PRIMARY KEY,
-                                conversation_id INT,
-                                sender VARCHAR(255),
-                                message TEXT,
-                                user_id INT,
-                                created_at DATETIME DEFAULT NOW()
-                            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                        `, (err) => { if (err) console.error('Error creating ai replies table:', err); else console.log('`ai replies` table ensured'); });
-
-                        db.query(`
-                            CREATE TABLE IF NOT EXISTS \`staff replies\` (
-                                id INT AUTO_INCREMENT PRIMARY KEY,
-                                conversation_id INT,
-                                sender VARCHAR(255),
-                                message TEXT,
-                                user_id INT,
-                                created_at DATETIME DEFAULT NOW()
-                            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-                        `, (err) => { if (err) console.error('Error creating staff replies table:', err); else console.log('`staff replies` table ensured'); });
-                        }
-                }
-                // legacy messaging field handling
-                if (entry.messaging && entry.messaging.length) {
-                    entry.messaging.forEach(async (event) => {
-                        if (event.message) {
-                            const senderId = (event.sender && (event.sender.id || event.sender.user_id)) || event.from || null;
-                            const text = event.message.text || null;
-                            if (!senderId) return;
-                            db.query('SELECT id FROM conversations WHERE phone = ? OR name = ? LIMIT 1', [senderId, senderId], (err, rows) => {
-                                if (err) return console.error('Instagram webhook DB lookup error', err);
-                                if (rows && rows.length > 0) {
-                                    const convId = rows[0].id;
-                                    db.query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'instagram', text || '[non-text]'], (iErr) => {
-                                        if (iErr) console.error('Error inserting IG message', iErr);
-                                        else io.emit('newMessage', { conversation_id: convId, sender: 'instagram', message: text, created_at: new Date().toISOString() });
-                                    });
-                                    db.query('SELECT id FROM instagram_conversations WHERE conversation_id = ? LIMIT 1', [convId], (icErr, icRows) => {
-                                        if (icErr) return console.error('instagram_conversations lookup error', icErr);
-                                        if (!icRows || icRows.length === 0) {
-                                            db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [convId, senderId, (event && event.sender && event.sender.username) || null], (insErr) => {
-                                                if (insErr) console.error('Error inserting instagram_conversations link', insErr);
-                                            });
-                                        }
-                                    });
-                                } else {
-                                    const insertSql = isPg
-                                        ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
-                                        : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
-                                    db.query(insertSql, [senderId, senderId, 'instagram'], (cErr, result) => {
-                                        if (cErr) return console.error('Error creating IG conversation', cErr);
-                                        const newId = result.insertId;
-                                        db.query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [newId, 'instagram', text || '[non-text]'], (mErr) => {
-                                            if (mErr) console.error('Error inserting IG message after create', mErr);
-                                            else io.emit('newMessage', { conversation_id: newId, sender: 'instagram', message: text, created_at: new Date().toISOString() });
-                                        });
-                                        db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [newId, senderId, (event && event.sender && event.sender.username) || null], (insErr) => {
-                                            if (insErr) console.error('Error inserting instagram_conversations after conv create', insErr);
-                                        });
-                                    });
-                                }
-                            });
-                        }
-                    });
-                }
+                const messaging = entry.messaging || [];
+                messaging.forEach(item => {
+                    const msg = item.message || item;
+                    processInstagramMessage(item, msg);
+                });
             });
         } catch (err) {
             console.error('Instagram webhook processing error', err);
@@ -2039,20 +1964,36 @@ app.post('/api/instagram/send', isAuthenticated, async (req, res) => {
         // Store outgoing message in DB (map recipient -> conversation)
         db.query('SELECT id FROM conversations WHERE phone = ? OR name = ? LIMIT 1', [recipient, recipient], (err, rows) => {
             if (err) console.error('IG send DB lookup error', err);
+            const ensureInstagramLink = (convId) => {
+                db.query('SELECT id FROM instagram_conversations WHERE conversation_id = ? LIMIT 1', [convId], (icErr, icRows) => {
+                    if (icErr) return console.error('IG send instagram_conversations lookup error', icErr);
+                    if (!icRows || icRows.length === 0) {
+                        db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [convId, recipient, req.body.ig_username || null], (insErr) => {
+                            if (insErr) console.error('Error inserting instagram_conversations link for IG send', insErr);
+                        });
+                    }
+                });
+            };
             const doInsert = (convId) => {
+                ensureInstagramLink(convId);
                 db.query('INSERT INTO replies (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'sent', message || '[attachment]'], (iErr) => {
                     if (iErr) console.error('Error inserting IG outgoing reply', iErr);
                     else io.emit('newMessage', { conversation_id: convId, sender: 'sent', message: message || '[attachment]', created_at: new Date().toISOString() });
                 });
             };
-            if (rows && rows.length > 0) doInsert(rows[0].id);
-            else {
+            if (rows && rows.length > 0) {
+                doInsert(rows[0].id);
+            } else {
                 const insertSql = isPg
                     ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
                     : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
                 db.query(insertSql, [recipient, recipient, 'instagram'], (cErr, result) => {
-                    if (cErr) console.error('Error creating conv for IG send', cErr);
-                    else doInsert(result.insertId);
+                    if (cErr) {
+                        console.error('Error creating conv for IG send', cErr);
+                    } else {
+                        const newId = isPg ? (result?.rows?.[0]?.id || result?.[0]?.id) : result.insertId;
+                        if (newId) doInsert(newId);
+                    }
                 });
             }
         });
@@ -4160,40 +4101,40 @@ setHandoffCallback((conversationId) => {
 // Add endpoint to fetch analytics data
 app.get('/api/analytics', isAuthenticated, async (req, res) => {
     try {
-        // Number of chats
-        const [chats] = await db.promise().query('SELECT COUNT(*) AS count FROM conversations');
-        // Number of tickets
-        const [tickets] = await db.promise().query('SELECT COUNT(*) AS count FROM tickets');
-        // Number of escalated tickets
-        const [escalatedTickets] = await db.promise().query('SELECT COUNT(*) AS count FROM tickets WHERE escalated = 1');
-        // Number of receipts
-        const [receipts] = await db.promise().query('SELECT COUNT(*) AS count FROM receipts');
-        // Number of escalated receipts
-        const [escalatedReceipts] = await db.promise().query('SELECT COUNT(*) AS count FROM receipts WHERE escalated = 1');
-        // Number of escalated chats
-        const [escalatedChats] = await db.promise().query('SELECT COUNT(*) AS count FROM escalations');
-        // Number of resolved chats
-        const [resolvedChats] = await db.promise().query('SELECT COUNT(*) AS count FROM resolved');
+        const [counts] = await db.promise().query(`
+            SELECT
+                (SELECT COUNT(*) FROM conversations) AS chats,
+                (SELECT COUNT(*) FROM tickets) AS tickets,
+                (SELECT COUNT(*) FROM tickets WHERE escalated = 1) AS escalatedTickets,
+                (SELECT COUNT(*) FROM receipts) AS receipts,
+                (SELECT COUNT(*) FROM receipts WHERE escalated = 1) AS escalatedReceipts,
+                (SELECT COUNT(*) FROM escalations) AS escalatedChats,
+                (SELECT COUNT(*) FROM resolved) AS resolvedChats
+        `);
 
-        // AI feedback aggregates
-        const [fbCountRow] = await db.promise().query('SELECT COUNT(*) AS count FROM ai_feedback');
-        const [fbAvgRow] = await db.promise().query('SELECT AVG(rating) AS avg_rating FROM ai_feedback WHERE rating IS NOT NULL');
-        const [fbPositiveRow] = await db.promise().query('SELECT SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) AS positive FROM ai_feedback WHERE rating IS NOT NULL');
-        const aiFeedbackCount = (fbCountRow && fbCountRow[0] && fbCountRow[0].count) ? Number(fbCountRow[0].count) : 0;
-        const aiFeedbackAvg = (fbAvgRow && fbAvgRow[0] && fbAvgRow[0].avg_rating) ? Number(fbAvgRow[0].avg_rating) : null;
-        const aiFeedbackPositive = (fbPositiveRow && fbPositiveRow[0] && fbPositiveRow[0].positive) ? Number(fbPositiveRow[0].positive) : 0;
+        const [feedback] = await db.promise().query(`
+            SELECT
+                COUNT(*) AS count,
+                AVG(rating) AS avg_rating,
+                SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) AS positive
+            FROM ai_feedback
+            WHERE rating IS NOT NULL
+        `);
+
+        const summary = counts[0] || {};
+        const fb = feedback[0] || {};
 
         res.json({
-            numChats: chats[0].count,
-            numTickets: tickets[0].count,
-            numEscalatedTickets: escalatedTickets[0].count,
-            numReceipts: receipts[0].count,
-            numEscalatedReceipts: escalatedReceipts[0].count,
-            numEscalatedChats: escalatedChats[0].count,
-            numResolvedChats: resolvedChats[0].count,
-            aiFeedbackCount,
-            aiFeedbackAvg,
-            aiFeedbackPositive
+            numChats: Number(summary.chats) || 0,
+            numTickets: Number(summary.tickets) || 0,
+            numEscalatedTickets: Number(summary.escalatedTickets) || 0,
+            numReceipts: Number(summary.receipts) || 0,
+            numEscalatedReceipts: Number(summary.escalatedReceipts) || 0,
+            numEscalatedChats: Number(summary.escalatedChats) || 0,
+            numResolvedChats: Number(summary.resolvedChats) || 0,
+            aiFeedbackCount: Number(fb.count) || 0,
+            aiFeedbackAvg: fb.avg_rating !== null ? Number(fb.avg_rating) : null,
+            aiFeedbackPositive: Number(fb.positive) || 0
         });
     } catch (error) {
         console.error('Error fetching analytics data:', error);
@@ -4234,37 +4175,25 @@ app.get('/api/tickets-by-period', async (req, res) => {
 // API endpoint for message counts by time period (received messages only)
 app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
     try {
-        const [dailyMessages] = await db.promise().query(isPg
-            ? `SELECT COUNT(*) AS count FROM messages WHERE sender <> 'sent' AND created_at::date = CURRENT_DATE`
-            : `SELECT COUNT(*) AS count FROM messages WHERE sender <> 'sent' AND DATE(created_at) = CURDATE()`
-        );
+        const messageCountsSql = isPg
+            ? `SELECT
+                    SUM(CASE WHEN sender <> 'sent' AND created_at::date = CURRENT_DATE THEN 1 ELSE 0 END) AS daily,
+                    SUM(CASE WHEN sender <> 'sent' AND DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE) THEN 1 ELSE 0 END) AS weekly,
+                    SUM(CASE WHEN sender <> 'sent' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END) AS monthly
+                FROM messages`
+            : `SELECT
+                    SUM(CASE WHEN sender <> 'sent' AND DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS daily,
+                    SUM(CASE WHEN sender <> 'sent' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) THEN 1 ELSE 0 END) AS weekly,
+                    SUM(CASE WHEN sender <> 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS monthly
+                FROM messages`;
 
-        const [weeklyMessages] = await db.promise().query(isPg
-            ? `SELECT COUNT(*) AS count FROM messages WHERE sender <> 'sent' AND DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE)`
-            : `SELECT COUNT(*) AS count FROM messages WHERE sender <> 'sent' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)`
-        );
-
-        const [monthlyMessages] = await db.promise().query(isPg
-            ? `SELECT COUNT(*) AS count FROM messages WHERE sender <> 'sent' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)`
-            : `SELECT COUNT(*) AS count FROM messages WHERE sender <> 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())`
-        );
-
-        const [totalMessages] = await db.promise().query(`
-            SELECT COUNT(*) AS count FROM messages
-            WHERE sender <> 'sent'
-        `);
-
-        console.log('Messages counts:', {
-            daily: dailyMessages[0].count,
-            weekly: weeklyMessages[0].count,
-            monthly: monthlyMessages[0].count,
-            total: totalMessages[0].count
-        });
+        const [rows] = await db.promise().query(messageCountsSql);
+        const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
 
         res.json({
-            daily: dailyMessages[0].count,
-            weekly: weeklyMessages[0].count,
-            monthly: monthlyMessages[0].count
+            daily: Number(counts.daily) || 0,
+            weekly: Number(counts.weekly) || 0,
+            monthly: Number(counts.monthly) || 0
         });
     } catch (error) {
         console.error('Error fetching messages by period:', error);

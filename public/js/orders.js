@@ -6,6 +6,11 @@ let currentPage = 1;
 let ordersPerPage = 10;
 const selectedOrders = new Set();
 let currentSort = 'date_desc';
+let menuItems = [];
+let filteredMenuItems = [];
+let currentMenuCategory = 'All';
+let currentMenuTag = 'All';
+let currentMenuSort = 'score_desc';
 
 function formatOrderTimestamp(value) {
   if (!value) return 'Unknown';
@@ -24,6 +29,7 @@ function formatOrderTimestamp(value) {
 document.addEventListener('DOMContentLoaded', () => {
   loadStaffName();
   loadOrders();
+  loadMenu();
   setupThemeToggle();
   setupRealtimeUpdates();
 });
@@ -566,6 +572,358 @@ function sortArray(arr, val) {
   else if (val === 'amount_desc') arr.sort((a,b)=> Number(b.amount) - Number(a.amount));
   else if (val === 'amount_asc') arr.sort((a,b)=> Number(a.amount) - Number(b.amount));
 }
+
+function switchPage(page) {
+  const ordersView = document.getElementById('ordersView');
+  const menuView = document.getElementById('menuView');
+  const orderTabs = document.querySelectorAll('.page-tab[data-page="orders"]');
+  const menuTabs = document.querySelectorAll('.page-tab[data-page="menu"]');
+  const pageTitle = document.getElementById('pageTitle');
+  const ordersAction = document.getElementById('ordersActionGroup');
+  const isMenu = page === 'menu';
+
+  if (isMenu) {
+    ordersView.style.display = 'none';
+    menuView.style.display = 'block';
+    pageTitle.textContent = 'Menu';
+    if (ordersAction) ordersAction.style.display = 'none';
+    refreshMenu();
+  } else {
+    ordersView.style.display = 'block';
+    menuView.style.display = 'none';
+    pageTitle.textContent = 'Orders';
+    if (ordersAction) ordersAction.style.display = 'flex';
+  }
+
+  orderTabs.forEach(btn => {
+    btn.classList.toggle('active', !isMenu);
+    btn.setAttribute('aria-selected', String(!isMenu));
+  });
+  menuTabs.forEach(btn => {
+    btn.classList.toggle('active', isMenu);
+    btn.setAttribute('aria-selected', String(isMenu));
+  });
+}
+
+function loadMenu() {
+  // Try to fetch menu from backend API; fallback to local sample
+  fetch('/api/menu')
+    .then(r => r.json())
+    .then(data => {
+      // API returns object grouped by category: { category: { key_name: { name, price, available, image_url } } }
+      const arr = [];
+      for (const cat of Object.keys(data || {})) {
+        const group = data[cat] || {};
+        for (const key of Object.keys(group)) {
+          const it = group[key];
+          arr.push({ id: key, key, name: it.name || key, category: cat, subtype: '', price: parseFloat(it.price || 0), available: !!it.available, stock: it.available || 0, tags: [], description: it.description || '', image_url: it.image_url || null });
+        }
+      }
+      if (arr.length === 0) {
+        // fallback sample
+        menuItems = [
+          { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured'], description: 'Tomato sauce, fresh mozzarella, basil' },
+          { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
+        ];
+      } else {
+        menuItems = arr;
+      }
+      filteredMenuItems = [...menuItems];
+      buildMenuChips();
+      renderMenu();
+    }).catch(err => {
+      console.warn('Failed to load /api/menu, using sample', err);
+      menuItems = [
+        { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured'], description: 'Tomato sauce, fresh mozzarella, basil' },
+        { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
+      ];
+      filteredMenuItems = [...menuItems];
+      buildMenuChips();
+      renderMenu();
+    });
+}
+
+function buildMenuChips() {
+  const categorySet = new Set(menuItems.map(i => i.category));
+  const categories = ['All', ...categorySet];
+  const tagSet = new Set(menuItems.flatMap(i => i.tags || []));
+  const tags = ['All', ...tagSet];
+
+  const catContainer = document.getElementById('menuCategoryChips');
+  const tagContainer = document.getElementById('menuTagChips');
+  if (catContainer) {
+    catContainer.innerHTML = categories.map(category => {
+      const activeClass = category === currentMenuCategory ? 'active' : '';
+      return `<button type="button" class="menu-chip ${activeClass}" onclick="setMenuCategory('${category}')">${category}</button>`;
+    }).join('');
+  }
+  if (tagContainer) {
+    tagContainer.innerHTML = tags.map(tag => {
+      const activeClass = tag === currentMenuTag ? 'active' : '';
+      return `<button type="button" class="menu-chip ${activeClass}" onclick="setMenuTag('${tag}')">${tag}</button>`;
+    }).join('');
+  }
+}
+
+function setMenuCategory(category) {
+  currentMenuCategory = category;
+  applyMenuFilters();
+  buildMenuChips();
+}
+
+function setMenuTag(tag) {
+  currentMenuTag = tag;
+  applyMenuFilters();
+  buildMenuChips();
+}
+
+function applyMenuFilters() {
+  const query = (document.getElementById('menuSearchInput')?.value || '').toLowerCase();
+  filteredMenuItems = menuItems.filter(item => {
+    const matchesCategory = currentMenuCategory === 'All' || item.category === currentMenuCategory;
+    const matchesTag = currentMenuTag === 'All' || (item.tags || []).includes(currentMenuTag);
+    const matchesSearch = item.name.toLowerCase().includes(query) || (item.description || '').toLowerCase().includes(query) || (item.tags || []).some(t => t.toLowerCase().includes(query));
+    return matchesCategory && matchesTag && matchesSearch;
+  });
+  sortMenuItems(currentMenuSort, false);
+  renderMenu();
+}
+
+function sortMenuItems(val, rerender = true) {
+  currentMenuSort = val;
+  if (val === 'price_asc') {
+    filteredMenuItems.sort((a,b) => a.price - b.price);
+  } else if (val === 'price_desc') {
+    filteredMenuItems.sort((a,b) => b.price - a.price);
+  } else if (val === 'stock_desc') {
+    filteredMenuItems.sort((a,b) => (b.stock || b.inventory || 0) - (a.stock || a.inventory || 0));
+  } else {
+    // Recommended: featured first, then available, then by price
+    filteredMenuItems.sort((a,b) => {
+      const af = (a.tags||[]).includes('Featured') ? 1 : 0;
+      const bf = (b.tags||[]).includes('Featured') ? 1 : 0;
+      if (af !== bf) return bf - af;
+      if ((a.available?1:0) !== (b.available?1:0)) return (b.available?1:0) - (a.available?1:0);
+      return a.price - b.price;
+    });
+  }
+  if (rerender) renderMenu();
+}
+
+function renderMenu() {
+  const grid = document.getElementById('menuGrid');
+  const body = document.getElementById('menuTableBody');
+  const totalEl = document.getElementById('totalMenuItems');
+  const itemCount = document.getElementById('menuItemCount');
+  const featuredCountEl = document.getElementById('menuTrendCount');
+  const previewCount = document.getElementById('menuPreviewCount');
+  const balance = document.getElementById('menuBalance');
+  const highConvert = document.getElementById('menuHighConvert');
+  const freshness = document.getElementById('menuFreshness');
+
+  if (!grid || !body) return;
+
+  grid.innerHTML = filteredMenuItems.map(item => {
+    const tags = (item.tags || []).map(tag => `<span class="menu-card-tag">${tag}</span>`).join(' ');
+    const avail = item.available ? `<span style="color:green;font-weight:700">Available</span>` : `<span style="color:#b91c1c;font-weight:700">Out</span>`;
+    return `
+      <article class="menu-card">
+        <div class="menu-card-content">
+          <h3>${item.name}</h3>
+          <p>${item.description || ''}</p>
+          <div class="menu-card-meta">
+            <span><strong>Price</strong><strong>$${item.price.toFixed(2)}</strong></span>
+            <span><strong>Category</strong><strong>${item.category}</strong></span>
+            <span><strong>Stock</strong><strong>${item.stock || item.inventory || 0}</strong></span>
+          </div>
+          <div style="margin-top: 12px; display:flex; gap:8px; align-items:center;">
+            ${tags}
+            <div style="margin-left:auto">${avail}</div>
+          </div>
+          <div style="margin-top:12px; display:flex; gap:8px;">
+            <button class="filter-btn" onclick="openMenuItemModal('${item.id}')">Edit</button>
+            <button class="filter-btn" style="background:#dc3545" onclick="deleteMenuItem('${item.id}')">Delete</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join('');
+
+  body.innerHTML = filteredMenuItems.map(item => `
+    <tr>
+      <td>${item.name}</td>
+      <td>${item.category}${item.subtype?(' / '+item.subtype):''}</td>
+      <td>$${item.price.toFixed(2)}</td>
+      <td>${item.available ? 'Yes' : 'No'}</td>
+      <td>${item.stock || item.inventory || 0}</td>
+      <td>${(item.tags||[]).join(', ')}</td>
+      <td>
+        <button class="filter-btn" onclick="openMenuItemModal('${item.id}')">Edit</button>
+        <button class="filter-btn" style="background:#dc3545" onclick="deleteMenuItem('${item.id}')">Delete</button>
+      </td>
+    </tr>
+  `).join('');
+
+  if (totalEl) totalEl.textContent = String(menuItems.length);
+  if (itemCount) itemCount.textContent = String(filteredMenuItems.filter(i=>i.available).length);
+  if (featuredCountEl) featuredCountEl.textContent = String(filteredMenuItems.filter(i=> (i.tags||[]).includes('Featured')).length);
+  if (previewCount) previewCount.textContent = String(filteredMenuItems.length);
+  if (balance) balance.textContent = `${Math.min(100, 60 + filteredMenuItems.length * 3)}%`;
+  if (highConvert) highConvert.textContent = filteredMenuItems.filter(i=> (i.tags||[]).includes('Featured')).length;
+  if (freshness) freshness.textContent = `${Math.min(100, 85 + filteredMenuItems.length)}%`;
+}
+
+function refreshMenu() {
+  applyMenuFilters();
+  showNotification('Menu intelligence refreshed');
+}
+
+function toggleMenuMode() {
+  const btn = document.getElementById('menuModeBtn');
+  if (!btn) return;
+  const active = btn.classList.toggle('active');
+  btn.textContent = active ? 'Adaptive Mode On' : 'Adaptive Mode';
+  showNotification(active ? 'Adaptive menu optimization engaged' : 'Adaptive mode paused');
+}
+
+function showLaunchpad() {
+  showNotification('Launchpad enabled — draft new menu concepts instantly');
+}
+
+function bulkGenerateMenuReport() {
+  showNotification('Menu analytics report generated');
+}
+
+// Menu item modal handlers
+function openMenuItemModal(id) {
+  const modal = document.getElementById('menuItemModal');
+  const title = document.getElementById('menuItemModalTitle');
+  const delBtn = document.getElementById('menuItemDeleteBtn');
+  const form = document.getElementById('menuItemForm');
+  form.reset();
+  document.getElementById('menuItemId').value = '';
+  if (!id) {
+    title.textContent = 'Add Menu Item';
+    if (delBtn) delBtn.style.display = 'none';
+  } else {
+    const item = menuItems.find(i => i.id === id);
+    if (item) {
+      title.textContent = 'Edit Menu Item';
+      document.getElementById('menuItemId').value = item.id;
+      document.getElementById('menuItemName').value = item.name || '';
+      document.getElementById('menuItemCategory').value = item.category || '';
+      document.getElementById('menuItemSubtype').value = item.subtype || '';
+      document.getElementById('menuItemPrice').value = item.price || 0;
+      document.getElementById('menuItemStock').value = item.stock || item.inventory || 0;
+      document.getElementById('menuItemTags').value = (item.tags||[]).join(',');
+      document.getElementById('menuItemDesc').value = item.description || '';
+      document.getElementById('menuItemAvailable').checked = !!item.available;
+      if (delBtn) delBtn.style.display = 'inline-block';
+    }
+  }
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeMenuItemModal() {
+  const modal = document.getElementById('menuItemModal');
+  const form = document.getElementById('menuItemForm');
+  if (form) form.reset();
+  if (modal) modal.style.display = 'none';
+}
+
+function handleMenuItemSave(event) {
+  event.preventDefault();
+  const id = document.getElementById('menuItemId').value;
+  const name = document.getElementById('menuItemName').value.trim();
+  const category = document.getElementById('menuItemCategory').value.trim() || 'Uncategorized';
+  const subtype = document.getElementById('menuItemSubtype').value.trim();
+  const price = parseFloat(document.getElementById('menuItemPrice').value) || 0;
+  const stock = parseInt(document.getElementById('menuItemStock').value) || 0;
+  const tags = (document.getElementById('menuItemTags').value || '').split(',').map(t=>t.trim()).filter(Boolean);
+  const description = document.getElementById('menuItemDesc').value || '';
+  const available = !!document.getElementById('menuItemAvailable').checked;
+
+  // Prepare payload for backend
+  const keyFromName = name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'');
+  const key = (id && !id.startsWith('m')) ? id : keyFromName;
+  const payload = { category, key, name, price, available: stock, image_url: null };
+
+  fetch('/api/menu/item', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.success) {
+        // update local cache
+        const idx = menuItems.findIndex(i=>i.id===id || i.id===key);
+        const entry = { id: key, key, name, category, subtype, price, stock, tags, description, available };
+        if (idx !== -1) menuItems[idx] = entry;
+        else menuItems.push(entry);
+        buildMenuChips();
+        applyMenuFilters();
+        closeMenuItemModal();
+        showNotification('Menu item saved');
+      } else {
+        // fallback local update
+        const idx = menuItems.findIndex(i=>i.id===id);
+        if (idx !== -1) menuItems[idx] = { ...menuItems[idx], name, category, subtype, price, stock, tags, description, available };
+        else menuItems.push({ id: key, key, name, category, subtype, price, stock, tags, description, available });
+        buildMenuChips();
+        applyMenuFilters();
+        closeMenuItemModal();
+        showNotification('Menu item saved (offline)');
+      }
+    }).catch(err => {
+      console.warn('Save menu item failed', err);
+      // fallback local update
+      const idx = menuItems.findIndex(i=>i.id===id);
+      if (idx !== -1) menuItems[idx] = { ...menuItems[idx], name, category, subtype, price, stock, tags, description, available };
+      else menuItems.push({ id: key, key, name, category, subtype, price, stock, tags, description, available });
+      buildMenuChips();
+      applyMenuFilters();
+      closeMenuItemModal();
+      showNotification('Menu item saved (offline)');
+    });
+}
+
+function deleteMenuItem(id) {
+  if (!confirm('Delete this menu item?')) return;
+  const item = menuItems.find(i=>i.id===id);
+  if (!item) return showNotification('Item not found');
+  const category = item.category || 'other';
+  const key = item.key || item.id;
+  fetch(`/api/menu/item/${encodeURIComponent(category)}/${encodeURIComponent(key)}`, { method: 'DELETE' })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.success) {
+        const idx = menuItems.findIndex(i=>i.id===id);
+        if (idx !== -1) menuItems.splice(idx,1);
+        buildMenuChips();
+        applyMenuFilters();
+        showNotification('Menu item deleted');
+      } else {
+        // fallback: local delete
+        const idx = menuItems.findIndex(i=>i.id===id);
+        if (idx !== -1) menuItems.splice(idx,1);
+        buildMenuChips();
+        applyMenuFilters();
+        showNotification('Menu item deleted (offline)');
+      }
+    }).catch(err => {
+      console.warn('Delete menu item failed', err);
+      const idx = menuItems.findIndex(i=>i.id===id);
+      if (idx !== -1) menuItems.splice(idx,1);
+      buildMenuChips();
+      applyMenuFilters();
+      showNotification('Menu item deleted (offline)');
+    });
+}
+
+function deleteMenuItemFromModal() {
+  const id = document.getElementById('menuItemId').value;
+  if (!id) return;
+  deleteMenuItem(id);
+  closeMenuItemModal();
+}
+
 // Mark order completed
 function editOrder(orderId) {
   const order = allOrders.find(o => o.id === orderId);

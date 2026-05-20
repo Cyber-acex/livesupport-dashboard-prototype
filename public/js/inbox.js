@@ -443,7 +443,15 @@ function createConversationElement(conv, filter = 'all') {
     const reportedInfo = conv.reported_at ? `<br><small>Reported: ${new Date(conv.reported_at).toLocaleString()}</small>` : '';
     const displayName = conv.name || conv.phone || 'Customer';
     const initials = getInitials(displayName);
-    const unreadCount = Number(conv.unread_count) || 0;
+    let unreadCount = Number(conv.unread_count) || 0;
+    try {
+        const viewed = JSON.parse(localStorage.getItem('viewedChats') || '[]');
+        if (Array.isArray(viewed) && viewed.map(String).includes(String(conv.id))) {
+            unreadCount = 0;
+        }
+    } catch (e) {
+        // ignore localStorage parse errors
+    }
     const unreadBadgeHtml = unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : '';
     div.innerHTML = `
         <div class="avatar">${initials}</div>
@@ -557,6 +565,16 @@ function createConversationElement(conv, filter = 'all') {
         window.currentConversation = conv.id;
         if (conv.unread_count) {
             conv.unread_count = 0;
+        }
+        try {
+            const viewed = JSON.parse(localStorage.getItem('viewedChats') || '[]');
+            if (!Array.isArray(viewed) || !viewed.map(String).includes(String(conv.id))) {
+                const newViewed = Array.isArray(viewed) ? viewed.slice() : [];
+                newViewed.push(conv.id);
+                localStorage.setItem('viewedChats', JSON.stringify(newViewed));
+            }
+        } catch (e) {
+            // ignore localStorage errors
         }
         clearConversationUnreadBadge(conv.id);
         markConversationViewed(conv.id);
@@ -1436,6 +1454,18 @@ function clearConversationUnreadBadge(conversationId) {
 }
 
 function updateConversationEntry(msg, isCurrentConversation) {
+    try {
+        if (msg && msg.conversation_id && msg.sender !== 'sent') {
+            const viewed = JSON.parse(localStorage.getItem('viewedChats') || '[]');
+            if (Array.isArray(viewed) && viewed.map(String).includes(String(msg.conversation_id))) {
+                // Remove from viewed list so new messages will show as unread
+                const newViewed = viewed.filter(id => String(id) !== String(msg.conversation_id));
+                localStorage.setItem('viewedChats', JSON.stringify(newViewed));
+            }
+        }
+    } catch (e) {
+        // ignore
+    }
     const previewText = msg.message ? (msg.message.length > 50 ? msg.message.slice(0, 47) + '...' : msg.message) : '';
     const convDiv = findConversationElement(msg.conversation_id);
     const unreadDiff = msg.sender !== 'sent' && !isCurrentConversation ? 1 : 0;

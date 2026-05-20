@@ -87,7 +87,8 @@ async function syncPostgresSerialSequences() {
 
   for (const table of tables) {
     try {
-      const seqResult = await pool.query('SELECT pg_get_serial_sequence($1, $2) AS seq', [table, 'id']);
+      const seqNameInput = table.includes(' ') || table.includes('"') ? `public."${table.replace(/"/g, '""')}"` : table;
+      const seqResult = await pool.query('SELECT pg_get_serial_sequence($1, $2) AS seq', [seqNameInput, 'id']);
       const seqName = seqResult.rows?.[0]?.seq;
       if (!seqName) continue;
       const quotedTable = '"' + table.replace(/"/g, '""') + '"';

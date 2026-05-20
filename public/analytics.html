@@ -49,7 +49,7 @@
     <nav class="menu">
         <a href="./dashboard.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 3H5c-1.1 0-2 .9-2 2v14l4-4h12c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg><span class="nav-label">Dashboard</span></a>
                 <a href="./tickets.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 7V4H4v3H2v10h18V7h-0zM6 6h12v2H6V6zm12 10H6v-6h12v6z"/></svg><span class="nav-label">Tickets</span></a>
-                <a href="./staff-performance.html" class=""><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M5 9h3v11H5zM10 4h3v16h-3zM15 13h3v7h-3z"/></svg><span class="nav-label">Staff Performance</span></a>
+                
                 <a href="./analytics.html" class="active"><svg  viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 17h2V9H3v8zm4 0h2V3H7v14zm4 0h2v-6h-2v6zm4 0h2v-9h-2v9z"/></svg><span class="nav-label">Analytics</span></a>
                 <a href="./knowledge.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L2 7v6c0 5 4 9 10 9s10-4 10-9V7l-10-5zM12 4.4L18.6 8 12 11.6 5.4 8 12 4.4z"/></svg><span class="nav-label">Knowledge Base</span></a>
                 
@@ -148,10 +148,10 @@ fetch("/api/user")
 <script src="./js/notification-sound.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="./js/analytics.js"></script>
+<script src="./js/staff-performance.js"></script>
 <script src="./js/sidebar.js" defer></script>
 <!-- Add canvas elements for the charts -->
   <script src="./js/user.js"></script>
-    </header>
     <div class="content">
 <style>
     /* Space background styling */
@@ -210,6 +210,371 @@ fetch("/api/user")
     @media (max-width: 640px) {
         .chart-container, .message-chart-container { width: 100%; margin: 8px 0; }
     }
+    .content {
+      padding-top: 72px;
+    }
+    .staff-panel {
+      padding: 0 0 56px;
+    }
+
+    .staff-header {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:24px;
+      flex-wrap:wrap;
+      margin-bottom:28px;
+      background: rgba(255,255,255,0.96);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+      padding: 18px 0;
+    }
+
+    .staff-header .eyebrow {
+      margin:0 0 10px;
+      color:#0ea5e9;
+      font-size:12px;
+      letter-spacing:0.24em;
+      text-transform:uppercase;
+    }
+
+    .staff-header h1 {
+      margin:0 0 12px;
+      font-size:32px;
+      line-height:1.05;
+      color:#111827;
+    }
+
+    .staff-header .section-text {
+      margin:0;
+      max-width:640px;
+      color:#475569;
+      font-size:15px;
+      line-height:1.75;
+    }
+
+    .staff-quick-actions {
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .field-input,
+    .field-select {
+      border:1px solid #d1d5db;
+      background:#fff;
+      color:#111827;
+      padding:10px 14px;
+      border-radius:12px;
+      min-width:180px;
+      outline:none;
+      transition:box-shadow .2s ease, border-color .2s ease;
+    }
+
+    .field-input:focus,
+    .field-select:focus {
+      border-color:#2563eb;
+      box-shadow:0 0 0 4px rgba(37,99,235,0.12);
+    }
+
+    .staff-kpi-grid {
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));
+      gap:16px;
+      margin-bottom:28px;
+    }
+
+    .metric-card {
+      position:relative;
+      background:#ffffff;
+      border:1px solid rgba(15,23,42,0.08);
+      border-radius:22px;
+      padding:22px 22px 18px;
+      box-shadow:0 18px 40px rgba(15,23,42,0.07);
+      overflow:hidden;
+      transition:transform .25s ease, box-shadow .25s ease;
+    }
+
+    .metric-card:hover {
+      transform:translateY(-3px);
+      box-shadow:0 26px 54px rgba(15,23,42,0.12);
+    }
+
+    .metric-card::before {
+      content:'';
+      position:absolute;
+      top:-20px;
+      right:-18px;
+      width:120px;
+      height:120px;
+      border-radius:50%;
+      background:rgba(14,165,233,0.14);
+      z-index:0;
+    }
+
+    .metric-card h3 {
+      margin:0;
+      position:relative;
+      z-index:1;
+      font-size:13px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:#475569;
+    }
+
+    .metric-card .metric-value {
+      position:relative;
+      z-index:1;
+      margin-top:14px;
+      font-size:32px;
+      font-weight:800;
+      color:#111827;
+    }
+
+    .metric-card .metric-note {
+      position:relative;
+      z-index:1;
+      margin-top:9px;
+      color:#64748b;
+      font-size:13px;
+      line-height:1.6;
+    }
+
+    .staff-main-grid {
+      display:grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap:20px;
+      align-items:flex-start;
+    }
+
+    @media (max-width: 980px) {
+      .staff-main-grid { grid-template-columns:1fr; }
+    }
+
+    .staff-summary-card {
+      display:flex;
+      flex-direction:column;
+      gap:18px;
+      background:linear-gradient(180deg,#f8fbff,#ffffff);
+    }
+
+    .summary-block {
+      border-radius:20px;
+      padding:20px;
+      background:#ffffff;
+      box-shadow:0 20px 40px rgba(15,23,42,0.06);
+    }
+
+    .summary-block h4 {
+      margin:0 0 10px;
+      color:#334155;
+      font-size:13px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+
+    .summary-block p {
+      margin:0;
+      font-size:32px;
+      font-weight:800;
+      color:#0f172a;
+    }
+
+    .summary-label {
+      margin-top:10px;
+      color:#64748b;
+      font-size:13px;
+    }
+
+    .summary-line {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:14px;
+    }
+
+    .performance-bar {
+      width:100%;
+      height:12px;
+      border-radius:999px;
+      background:#e2e8f0;
+      overflow:hidden;
+      margin-top:12px;
+    }
+
+    .performance-fill {
+      width:0%;
+      height:100%;
+      border-radius:999px;
+      background:linear-gradient(90deg,#0ea5e9,#2563eb);
+      transition:width .4s ease;
+    }
+
+    .summary-chart-wrapper {
+      min-height:220px;
+      background:#ffffff;
+      border-radius:20px;
+      padding:14px;
+      box-shadow:0 16px 32px rgba(15,23,42,0.06);
+    }
+
+    .staff-list-card {
+      background:linear-gradient(180deg,#ffffff,#f8fafc);
+    }
+
+    .staff-table-header,
+    .staff-row {
+      display:grid;
+      grid-template-columns: 1.7fr 0.85fr 0.85fr 0.85fr 1.05fr 0.8fr;
+      gap:12px;
+      align-items:center;
+      padding:14px 18px;
+    }
+
+    .staff-table-header {
+      color:#475569;
+      font-size:12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      font-weight:700;
+      border-bottom:1px solid #e2e8f0;
+      background:rgba(248,250,252,0.9);
+    }
+
+    .staff-row {
+      border-bottom:1px solid rgba(226,232,240,0.95);
+      transition:background .2s ease;
+    }
+
+    .staff-row:hover {
+      background:rgba(59,130,246,0.05);
+    }
+
+    .staff-row:last-child { border-bottom:none; }
+
+    .staff-identity {
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+
+    .staff-avatar {
+      width:40px;
+      height:40px;
+      border-radius:14px;
+      background:#eff6ff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:800;
+      color:#2563eb;
+      font-size:15px;
+    }
+
+    .staff-info {
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+
+    .staff-name {
+      font-weight:700;
+      color:#0f172a;
+    }
+
+    .staff-meta {
+      font-size:12px;
+      color:#64748b;
+    }
+
+    .staff-row span,
+    .staff-row strong {
+      display:block;
+      color:#0f172a;
+      font-size:15px;
+      font-weight:700;
+    }
+
+    .staff-row .label { font-size:12px; color:#475569; font-weight:600; }
+
+    .staff-progress-cell {
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+
+    .staff-button { justify-self:end; }
+
+    .staff-button button {
+      border:none;
+      border-radius:12px;
+      background:#2563eb;
+      color:#fff;
+      padding:10px 14px;
+      cursor:pointer;
+      font-weight:700;
+      transition:background .2s ease;
+    }
+
+    .staff-button button:hover { background:#1e40af; }
+
+    .activity-chart-wrapper {
+      margin-top:20px;
+      padding:18px;
+      background:#ffffff;
+      border-radius:24px;
+      box-shadow:0 20px 45px rgba(15,23,42,0.06);
+    }
+
+    .pagination-bar {
+      margin-top:18px;
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .modal {
+      display:none;
+      position:fixed;
+      inset:0;
+      background:rgba(15,23,42,0.45);
+      backdrop-filter:blur(2px);
+      justify-content:center;
+      align-items:center;
+      padding:24px;
+      z-index:10000;
+    }
+
+    .modal-panel {
+      width:100%;
+      max-width:560px;
+      padding:28px;
+      border-radius:26px;
+      background:#ffffff;
+      box-shadow:0 34px 90px rgba(15,23,42,0.18);
+      position:relative;
+    }
+
+    .modal-close {
+      position:absolute;
+      top:18px;
+      right:18px;
+      border:none;
+      background:#f8fafc;
+      width:40px;
+      height:40px;
+      border-radius:999px;
+      font-size:22px;
+      cursor:pointer;
+    }
+
+    @media (max-width: 720px) {
+      .staff-table-header,
+      .staff-row { grid-template-columns: 1.6fr 1fr; }
+      .staff-row .staff-button { grid-column: span 2; justify-self:start; }
+    }
+
     /* Top nav inside topbar */
     .topbar .topnav{
       display:flex;
@@ -230,6 +595,32 @@ fetch("/api/user")
       color: #ffffff;
       box-shadow: 0 6px 18px rgba(0,0,0,0.12);
     }
+    /* Page switcher styles (copied from orders page for exact match) */
+    .page-switcher {
+      display: inline-flex;
+      gap: 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      padding: 4px;
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      margin-bottom: 12px;
+    }
+    .page-tab {
+      border: none;
+      background: transparent;
+      color: #0f172a;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .page-tab.active {
+      background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+      color: white;
+      box-shadow: 0 12px 24px rgba(79, 70, 229, 0.18);
+    }
+    
     /* Controls and KPI cards */
     .controls {
       display:flex;
@@ -250,6 +641,11 @@ fetch("/api/user")
 <!-- Shiny Blue Stars -->
 
 <!-- Controls + KPI summary -->
+<div id="analyticsSwitcher" class="page-switcher" role="tablist" aria-label="Analytics and Staff tabs" style="margin-bottom:12px;">
+  <button class="page-tab active" data-page="analytics" onclick="switchAnalyticsPage('analytics')" role="tab" aria-selected="true">Analytics</button>
+  <button class="page-tab" data-page="staff" onclick="switchAnalyticsPage('staff')" role="tab" aria-selected="false">Staff Performance</button>
+</div>
+<div id="analyticsPanel">
 <div class="controls">
   <div class="field">
     <label for="startDate">From</label>
@@ -320,9 +716,156 @@ fetch("/api/user")
         <canvas id="messageBarChart" width="400" height="200"></canvas>
     </div>
 
-    </div> <!-- .content -->
+  </div>
+
+  </div>
+
+  </div> <!-- end analyticsPanel -->
+
+  <!-- Embedded Staff Performance panel -->
+  <div id="staffPanel" style="display:none;">
+    <section class="staff-panel">
+      <div class="staff-header">
+        <div>
+          <p class="eyebrow">Staff Performance</p>
+          <h1>Team performance with real-time clarity</h1>
+          <p class="section-text">Track agent efficiency, throughput, and service quality with a compact, engineering-style dashboard.</p>
+        </div>
+        <div class="staff-quick-actions">
+          <button id="refreshBtn" class="btn btn-primary">Refresh</button>
+          <select id="timeRange" class="field-select">
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button id="exportCsvStaff" class="btn">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="staff-kpi-grid">
+        <div class="metric-card">
+          <h3>Total handled</h3>
+          <div class="metric-value" id="kpi-totalHandled">—</div>
+          <div class="metric-note">Messages processed by the team.</div>
+        </div>
+        <div class="metric-card">
+          <h3>Avg response</h3>
+          <div class="metric-value" id="kpi-avgResponse">—</div>
+          <div class="metric-note">Average response time in seconds.</div>
+        </div>
+        <div class="metric-card">
+          <h3>Resolution health</h3>
+          <div class="metric-value" id="kpi-resolutionRate">—</div>
+          <div class="metric-note">Estimated fulfillment rate.</div>
+        </div>
+        <div class="metric-card">
+          <h3>Active chats</h3>
+          <div class="metric-value" id="kpi-activeChats">—</div>
+          <div class="metric-note">Conversations currently in progress.</div>
+        </div>
+        <div class="metric-card">
+          <h3>AI feedback</h3>
+          <div class="metric-value" id="kpi-aiFeedbackAvg">—</div>
+          <div class="metric-note">Average quality rating from feedback.</div>
+        </div>
+      </div>
+
+      <div class="staff-main-grid">
+        <aside class="staff-summary-card card">
+          <div class="summary-block">
+            <h4>Performance summary</h4>
+            <p id="summaryTotalHandled">—</p>
+            <div class="summary-label">Total messages handled</div>
+          </div>
+          <div class="summary-line">
+            <div class="summary-block">
+              <h4>Avg response</h4>
+              <p id="summaryAvgResp">—</p>
+              <div class="summary-label">Seconds per first reply</div>
+            </div>
+            <div class="summary-block">
+              <h4>Resolution rate</h4>
+              <p id="summaryResolutionRate">—</p>
+              <div class="summary-label">Team resolution health</div>
+            </div>
+          </div>
+          <div class="summary-block">
+            <h4>Team load</h4>
+            <div class="performance-bar">
+              <div id="summaryFlowFill" class="performance-fill" style="width:0%"></div>
+            </div>
+            <div class="summary-label" id="summaryFlowText">Live load gauge</div>
+          </div>
+          <div class="summary-chart-wrapper">
+            <canvas id="avgResponseChart" height="220"></canvas>
+          </div>
+        </aside>
+
+        <div class="staff-list-card card">
+          <div class="toolbar" style="display:flex; gap:12px; align-items:center; margin-bottom:14px;">
+            <input id="searchInput" placeholder="Search staff by name" class="field-input" />
+            <select id="sortBy" title="Sort by" class="field-select">
+              <option value="name">Name</option>
+              <option value="avg_response_time">Avg response (asc)</option>
+              <option value="-avg_response_time">Avg response (desc)</option>
+              <option value="messages_handled">Handled</option>
+            </select>
+          </div>
+          <div class="staff-table-header">
+            <span>Agent</span>
+            <span>Handled</span>
+            <span>Avg Resp</span>
+            <span>Resolution</span>
+            <span>Trend</span>
+            <span></span>
+          </div>
+          <div id="staffList">Loading...</div>
+          <div class="activity-chart-wrapper">
+            <canvas id="activityChart" height="200"></canvas>
+          </div>
+          <div id="pagination" class="pagination-bar"></div>
+        </div>
+      </div>
+
+      <div id="staffModal" class="modal" aria-hidden="true">
+        <div class="modal-panel">
+          <button id="modalClose" class="modal-close">×</button>
+          <h2 id="modalName">Staff Name</h2>
+          <div id="modalBody">Loading...</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  </div> <!-- .content -->
   </div> <!-- .main -->
 </div> <!-- .dashboard -->
+
+<script>
+// Tab switching between Analytics and Staff Performance panels
+function switchAnalyticsPage(page){
+  const analyticsPanel = document.getElementById('analyticsPanel');
+  const staffPanel = document.getElementById('staffPanel');
+  const analyticsSwitcher = document.getElementById('analyticsSwitcher');
+  const tabs = document.querySelectorAll('.page-switcher .page-tab');
+  if (!analyticsPanel || !staffPanel || !analyticsSwitcher) return;
+  tabs.forEach(t=>{ t.classList.remove('active'); t.setAttribute('aria-selected','false'); });
+  if (page === 'staff'){
+    document.querySelector('.page-switcher .page-tab[data-page="staff"]').classList.add('active');
+    document.querySelector('.page-switcher .page-tab[data-page="staff"]').setAttribute('aria-selected','true');
+    analyticsPanel.style.display='none';
+    staffPanel.style.display='block';
+    analyticsSwitcher.style.display='none';
+  } else {
+    document.querySelector('.page-switcher .page-tab[data-page="analytics"]').classList.add('active');
+    document.querySelector('.page-switcher .page-tab[data-page="analytics"]').setAttribute('aria-selected','true');
+    analyticsPanel.style.display='block';
+    staffPanel.style.display='none';
+    analyticsSwitcher.style.display='flex';
+  }
+}
+</script>
+
 </body>
 </html>
 

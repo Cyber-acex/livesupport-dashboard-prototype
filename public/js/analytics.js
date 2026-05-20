@@ -2,10 +2,14 @@
 document.addEventListener('DOMContentLoaded', () => {
     const ctx5 = document.getElementById('chart5').getContext('2d');
     const barCtx = document.getElementById('ticketBarChart').getContext('2d');
+    const messageCtx = document.getElementById('messageBarChart').getContext('2d');
     const gaugeRespCtx = document.getElementById('gaugeResponse') ? document.getElementById('gaugeResponse').getContext('2d') : null;
     const gaugeResRateCtx = document.getElementById('gaugeResolution') ? document.getElementById('gaugeResolution').getContext('2d') : null;
     let gaugeRespChart = null;
     let gaugeResRateChart = null;
+    let ticketChart = null;
+    let messageChart = null;
+    let analyticsChart = null;
     // Controls and KPI elements
     const startDateInput = document.getElementById('startDate');
     const endDateInput = document.getElementById('endDate');
@@ -26,7 +30,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Function to create bar chart for tickets by period
     function createTicketBarChart(ctx, data) {
-        new Chart(ctx, {
+        return new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: ['Today', 'This Week', 'This Month'],
@@ -67,6 +71,25 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    function updateTicketBarChart(chart, data) {
+        if (!chart || !data) return;
+        chart.data.datasets[0].data = [data.daily, data.weekly, data.monthly];
+        chart.update();
+    }
+
+    async function refreshTicketCountChart() {
+        try {
+            const data = await fetchTicketsByPeriod();
+            lastTicketsData = data;
+            updateTicketBarChart(ticketChart, data);
+            return data;
+        } catch (error) {
+            console.error('tickets-by-period fetch error:', error);
+            updateTicketBarChart(ticketChart, { daily: 0, weekly: 0, monthly: 0 });
+            return { daily: 0, weekly: 0, monthly: 0 };
+        }
+    }
+
     // Fetch data for bar chart
     function buildQueryParams() {
         const params = new URLSearchParams();
@@ -87,29 +110,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Fetch counts from server and render bar chart (fetchTicketsByPeriod already returns parsed JSON)
-    fetchTicketsByPeriod()
-        .then(data => {
-            if (!data || typeof data.daily !== 'number') {
-                throw new Error('tickets-by-period returned invalid data');
-            }
-            console.log('tickets-by-period data', data);
-            createTicketBarChart(barCtx, {
-                daily: data.daily || 0,
-                weekly: data.weekly || 0,
-                monthly: data.monthly || 0
-            });
-        })
-        .catch(error => {
-            console.error('tickets-by-period fetch error:', error);
-            createTicketBarChart(barCtx, {
-                daily: 0,
-                weekly: 0,
-                monthly: 0
-            });
-        });
+    ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
+    messageChart = null; // created later after the function definition
 
     const socket = io();
-    let analyticsChart = null;
 
     // Fetch live data and render the 3D pie chart
     function create3DPieChart(ctx, data) {
@@ -372,7 +376,31 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    refreshAnalyticsChart();
+    async function initializeAnalyticsPage() {
+        if (!analyticsChart && ctx5) {
+            analyticsChart = create3DPieChart(ctx5, {
+                numChats: 0,
+                numEscalatedChats: 0,
+                numTickets: 0,
+                numEscalatedTickets: 0,
+                numReceipts: 0,
+                numResolvedChats: 0
+            });
+        }
+
+        if (!messageChart && messageCtx) {
+            messageChart = createMessageBarChart(messageCtx, { daily: 0, weekly: 0, monthly: 0 });
+        }
+
+        await Promise.allSettled([
+            refreshAnalyticsChart(),
+            refreshMessageChart(),
+            refreshTicketCountChart()
+        ]);
+        loadKPIs();
+    }
+
+    initializeAnalyticsPage();
 
     // Function to create bar chart for message traffic
     function createMessageBarChart(ctx, data) {
@@ -436,12 +464,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             const data = await res.json();
             lastMessagesData = data;
-            console.log('messages-by-period data', data);
             if (!messageChart) {
                 messageChart = createMessageBarChart(messageCtx, data);
             } else {
                 updateMessageChart(messageChart, data);
             }
+            return data;
         } catch (error) {
             console.error('refreshMessageChart error', error);
             if (!messageChart) {
@@ -451,6 +479,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     monthly: 1200
                 });
             }
+            return { daily: 50, weekly: 300, monthly: 1200 };
         }
     }
 

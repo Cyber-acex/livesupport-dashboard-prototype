@@ -543,6 +543,213 @@
     .dark-theme .pagination button:hover:not(.active) {
       background: #3d3d3d;
     }
+    .page-switcher {
+      display: inline-flex;
+      gap: 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      padding: 4px;
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      margin-bottom: 12px;
+    }
+    .page-tab {
+      border: none;
+      background: transparent;
+      color: #0f172a;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .page-tab.active {
+      background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+      color: white;
+      box-shadow: 0 12px 24px rgba(79, 70, 229, 0.18);
+    }
+    .menu-intro-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #2563eb;
+      background: rgba(59, 130, 246, 0.1);
+      margin-bottom: 14px;
+    }
+    .menu-summary-cards .summary-card {
+      min-height: 140px;
+    }
+    .menu-filters {
+      gap: 12px;
+      align-items: center;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      margin-bottom: 22px;
+    }
+    .menu-chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 8px 0;
+    }
+    .menu-chip {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: #111827;
+      font-size: 0.9rem;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+    }
+    .menu-chip.active {
+      background: #4338ca;
+      color: white;
+      border-color: #4338ca;
+      transform: translateY(-1px);
+    }
+    .menu-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+    .menu-card {
+      border-radius: 26px;
+      padding: 22px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(249,250,251,0.95));
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      box-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
+      position: relative;
+      overflow: hidden;
+    }
+    .menu-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at top right, rgba(56, 189, 248, 0.16), transparent 28%);
+      pointer-events: none;
+    }
+    .menu-card-content {
+      position: relative;
+      z-index: 1;
+    }
+    .menu-card h3 {
+      margin: 0 0 10px;
+      font-size: 1.1rem;
+      letter-spacing: -0.02em;
+    }
+    .menu-card p {
+      margin: 0 0 14px;
+      color: #475569;
+      font-size: 0.95rem;
+    }
+    .menu-card-meta {
+      display: grid;
+      gap: 10px;
+      font-size: 0.9rem;
+      color: #334155;
+    }
+    .menu-card-meta span {
+      display: inline-flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .menu-card-tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 12px;
+      background: rgba(59, 130, 246, 0.08);
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: #1d4ed8;
+    }
+    .menu-insights-panel {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 18px;
+      margin-bottom: 24px;
+    }
+    .menu-insights-card {
+      padding: 24px;
+      border-radius: 24px;
+      background: white;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      box-shadow: 0 18px 32px rgba(15, 23, 42, 0.06);
+    }
+    .menu-insights-card h2 {
+      margin-top: 0;
+      font-size: 1.15rem;
+      margin-bottom: 12px;
+    }
+    .menu-insights-card p {
+      margin-bottom: 16px;
+      color: #475569;
+      line-height: 1.6;
+    }
+    .menu-insights-card ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 12px;
+    }
+    .menu-insights-card li {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: #334155;
+    }
+    .menu-summary-pill {
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+    .menu-table-section h2 {
+      margin-top: 0;
+      font-size: 1.2rem;
+      margin-bottom: 14px;
+    }
+    .menu-table-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .menu-table-wrap {
+      overflow-x: auto;
+      border-radius: 16px;
+      background: white;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
+    }
+    .orders-table th, .orders-table td {
+      white-space: nowrap;
+    }
+    .dark-theme .menu-card, .dark-theme .menu-insights-card, .dark-theme .menu-table-wrap {
+      background: #1f2937;
+      border-color: rgba(255,255,255,0.08);
+      color: #f8fafc;
+    }
+    .dark-theme .menu-card p, .dark-theme .menu-insights-card p, .dark-theme .menu-card-meta {
+      color: #d1d5db;
+    }
+    .dark-theme .menu-chip {
+      background: #111827;
+      color: #f8fafc;
+    }
+    .dark-theme .menu-chip.active {
+      background: #4338ca;
+      color: white;
+    }
   </style>
 </head>
 <body>
@@ -553,7 +760,7 @@
     <nav class="menu">
       <a href="./dashboard.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 3H5c-1.1 0-2 .9-2 2v14l4-4h12c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg><span class="nav-label">Dashboard</span></a>
                 <a href="./tickets.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 7V4H4v3H2v10h18V7h-0zM6 6h12v2H6V6zm12 10H6v-6h12v6z"/></svg><span class="nav-label">Tickets</span></a>
-                <a href="./staff-performance.html" class=""><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M5 9h3v11H5zM10 4h3v16h-3zM15 13h3v7h-3z"/></svg><span class="nav-label">Staff Performance</span></a>
+                
                 <a href="./analytics.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 17h2V9H3v8zm4 0h2V3H7v14zm4 0h2v-6h-2v6zm4 0h2v-9h-2v9z"/></svg><span class="nav-label">Analytics</span></a>
                 <a href="./knowledge.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L2 7v6c0 5 4 9 10 9s10-4 10-9V7l-10-5zM12 4.4L18.6 8 12 11.6 5.4 8 12 4.4z"/></svg><span class="nav-label">Knowledge Base</span></a>
                 
@@ -619,8 +826,14 @@
     <!-- ORDERS SECTION -->
     <div class="orders-container" id="ordersView">
       <div class="orders-header">
-        <h1>Orders</h1>
-        <div class="menu-action-group">
+        <div>
+          <div class="page-switcher" role="tablist" aria-label="Orders and Menu tabs">
+            <button class="page-tab active" data-page="orders" onclick="switchPage('orders')" role="tab" aria-selected="true">Orders</button>
+            <button class="page-tab" data-page="menu" onclick="switchPage('menu')" role="tab" aria-selected="false">Menu</button>
+          </div>
+          <h1 id="pageTitle">Orders</h1>
+        </div>
+        <div class="menu-action-group" id="ordersActionGroup">
           <button class="filter-btn" onclick="openNewOrderModal()">+ New Order</button>
         </div>
       </div>
@@ -718,6 +931,103 @@
       <!-- PAGINATION -->
       <div class="pagination" id="pagination"></div>
     </div>
+
+    <div class="orders-container" id="menuView" style="display:none;">
+      <div class="orders-header">
+        <div>
+          <div class="page-switcher" role="tablist" aria-label="Orders and Menu tabs">
+            <button class="page-tab" data-page="orders" onclick="switchPage('orders')" role="tab" aria-selected="false">Orders</button>
+            <button class="page-tab active" data-page="menu" onclick="switchPage('menu')" role="tab" aria-selected="true">Menu</button>
+          </div>
+          <div class="menu-intro-badge">Food Menu</div>
+          <h1>Menu</h1>
+        </div>
+        <div class="menu-action-group">
+            <button class="filter-btn" onclick="refreshMenu()">Refresh Insights</button>
+            <button class="filter-btn" onclick="openMenuItemModal()">+ Add Item</button>
+        </div>
+      </div>
+      <div class="orders-summary-cards menu-summary-cards">
+        <div class="summary-card">
+          <div class="summary-card-icon">🍽️</div>
+          <div class="summary-card-details">
+            <div class="summary-card-label">Total Menu Items</div>
+            <div class="summary-card-value" id="totalMenuItems">0</div>
+          </div>
+          <div class="summary-card-badge">Live</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-icon summary-card-icon-truck">✅</div>
+          <div class="summary-card-details">
+            <div class="summary-card-label">Available Now</div>
+            <div class="summary-card-value" id="menuItemCount">0</div>
+          </div>
+          <div class="summary-card-badge positive">Updated</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-icon">⭐</div>
+          <div class="summary-card-details">
+            <div class="summary-card-label">Featured Items</div>
+            <div class="summary-card-value" id="menuTrendCount">0</div>
+          </div>
+          <div class="summary-card-badge positive">Featured</div>
+        </div>
+      </div>
+      <div class="orders-filters menu-filters">
+        <input type="text" class="filter-input" id="menuSearchInput" placeholder="Search menu items, categories, tags..." oninput="applyMenuFilters()">
+        <div class="menu-chip-list" id="menuCategoryChips"></div>
+        <div class="menu-chip-list" id="menuTagChips" style="margin-left:6px"></div>
+        <select class="filter-input" id="menuSortSelect" onchange="sortMenuItems(this.value)">
+          <option value="score_desc">Recommended</option>
+          <option value="price_asc">Price Low → High</option>
+          <option value="price_desc">Price High → Low</option>
+          <option value="stock_desc">Stock</option>
+        </select>
+        <button id="menuModeBtn" class="filter-btn" onclick="toggleMenuMode()">Adaptive Mode</button>
+      </div>
+      <div class="menu-grid" id="menuGrid">
+        <!-- Menu cards inserted here -->
+      </div>
+      <div class="menu-insights-panel">
+        <div class="menu-insights-card">
+          <h2>Menu Health</h2>
+          <p>Dynamic category balance ensures your menu stays optimized for peak conversion. Smart signals highlight underperforming items.</p>
+          <ul>
+            <li><strong>Balanced categories:</strong> <span id="menuBalance">86%</span></li>
+            <li><strong>High-conversion items:</strong> <span id="menuHighConvert">6</span></li>
+            <li><strong>Menu freshness:</strong> <span id="menuFreshness">97%</span></li>
+          </ul>
+        </div>
+        <div class="menu-insights-card">
+          <h2>Launchpad</h2>
+          <p>Use the AI-powered launchpad to pilot new menu concepts with granular demand and inventory signals embedded.</p>
+          <button class="filter-btn" onclick="showLaunchpad()">Open Launchpad</button>
+        </div>
+      </div>
+      <div class="menu-table-section">
+        <h2>Menu Item Matrix</h2>
+        <div class="menu-table-toolbar">
+          <div class="menu-summary-pill">Selected: <span id="menuPreviewCount">0</span></div>
+          <button class="filter-btn" onclick="bulkGenerateMenuReport()">Generate Report</button>
+        </div>
+        <div class="menu-table-wrap">
+          <table class="orders-table" id="menuTable">
+            <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Category</th>
+                  <th>Price</th>
+                  <th>Available</th>
+                  <th>Stock</th>
+                  <th>Tags</th>
+                  <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="menuTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 <!-- NEW ORDER MODAL -->
@@ -769,6 +1079,59 @@
         <div>
           <h2 class="modal-title">Order Details</h2>
           <div class="modal-subtitle">Update the order with a polished, lightweight panel.</div>
+        <!-- MENU ITEM MODAL -->
+        <div id="menuItemModal" class="modal-backdrop">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div>
+                <h2 class="modal-title" id="menuItemModalTitle">Add Menu Item</h2>
+                <div class="modal-subtitle">Create or update food items and manage inventory.</div>
+              </div>
+              <button type="button" class="close-modal-btn" aria-label="Close modal" onclick="closeMenuItemModal()">×</button>
+            </div>
+            <form id="menuItemForm" class="modal-form" onsubmit="handleMenuItemSave(event)">
+              <input type="hidden" id="menuItemId">
+              <div class="modal-field">
+                <label for="menuItemName">Name</label>
+                <input id="menuItemName" required autocomplete="off" placeholder="e.g. Margherita">
+              </div>
+              <div class="modal-field">
+                <label for="menuItemCategory">Category</label>
+                <input id="menuItemCategory" required autocomplete="off" placeholder="e.g. Pizza">
+              </div>
+              <div class="modal-field">
+                <label for="menuItemSubtype">Subtype</label>
+                <input id="menuItemSubtype" autocomplete="off" placeholder="e.g. Classic / Veg">
+              </div>
+              <div class="modal-grid">
+                <div class="modal-field">
+                  <label for="menuItemPrice">Price</label>
+                  <input id="menuItemPrice" type="number" step="0.01" required placeholder="0.00">
+                </div>
+                <div class="modal-field">
+                  <label for="menuItemStock">Stock</label>
+                  <input id="menuItemStock" type="number" step="1" required placeholder="0">
+                </div>
+              </div>
+              <div class="modal-field">
+                <label for="menuItemTags">Tags (comma separated)</label>
+                <input id="menuItemTags" autocomplete="off" placeholder="Featured,Discount,Festive">
+              </div>
+              <div class="modal-field">
+                <label for="menuItemDesc">Description</label>
+                <textarea id="menuItemDesc" rows="3" placeholder="Short description"></textarea>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center;margin-top:8px;">
+                <label style="display:inline-flex;align-items:center;gap:8px;"><input type="checkbox" id="menuItemAvailable"> Available</label>
+              </div>
+              <div class="modal-actions">
+                <button type="submit" class="btn btn-primary">Save Item</button>
+                <button type="button" class="btn btn-secondary" onclick="closeMenuItemModal()">Cancel</button>
+                <button id="menuItemDeleteBtn" type="button" class="btn" style="background:#dc3545;color:#fff;display:none;" onclick="deleteMenuItemFromModal()">Delete</button>
+              </div>
+            </form>
+          </div>
+        </div>
         </div>
         <button type="button" class="close-modal-btn" aria-label="Close modal" onclick="closeOrderViewModal()">×</button>
       </div>

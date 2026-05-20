@@ -1,265 +1,177 @@
-document.getElementById('refreshBtn').addEventListener('click', loadAndRender);
-document.getElementById('timeRange').addEventListener('change', loadAndRender);
-
-// initial
 // staff-performance.js
-// Requires Chart.js (included via CDN in the HTML)
+(function(){
+  let staffData = [];
+  let messagesChart = null;
+  let avgRespChart = null;
 
-let avgResponseChart = null;
-let activityChart = null;
-let currentData = [];
-let filteredData = [];
-const pageSize = 6;
-let currentPage = 1;
+  const $staffList = () => document.getElementById('staffList');
+  const $activityCanvas = () => document.getElementById('activityChart');
+  const $avgRespCanvas = () => document.getElementById('avgResponseChart');
+  const $search = () => document.getElementById('searchInput');
+  const $sort = () => document.getElementById('sortBy');
+  const $refresh = () => document.getElementById('refreshBtn');
 
-async function fetchMetrics() {
-    try {
-        const days = document.getElementById('timeRange') ? document.getElementById('timeRange').value : '7';
-        const res = await fetch('/api/staff-metrics?days=' + encodeURIComponent(days));
-        if (!res.ok) throw new Error('Network error');
-        return await res.json();
-    } catch (err) {
-        console.error('Failed to load staff metrics', err);
-        return null;
-    }
-}
-
-function formatSeconds(sec) {
-    if (sec == null) return '-';
-    if (sec < 60) return sec + 's';
-    const mins = Math.floor(sec / 60);
-    const s = sec % 60;
-    return mins + 'm ' + s + 's';
-}
-
-function renderSummary(data) {
-    const summary = document.getElementById('summaryContent');
-    if (!data || data.length === 0) {
-        summary.innerHTML = '<em>No data</em>';
-        return;
-    }
-    const avgResp = Math.round(data.reduce((a,b)=>a+b.avg_response_time,0)/data.length);
-    const totalHandled = data.reduce((a,b)=>a+b.messages_handled,0);
-    const avgSatisfaction = (data.reduce((a,b)=>a+b.satisfaction,0)/data.length).toFixed(2);
-
-    summary.innerHTML = `
-        <div class="kpi">
-            <div class="kpi-item"><h4>Avg response</h4><p>${formatSeconds(avgResp)}</p></div>
-            <div class="kpi-item"><h4>Total handled</h4><p>${totalHandled}</p></div>
-            <div class="kpi-item"><h4>Avg satisfaction</h4><p>${avgSatisfaction} / 5</p></div>
-        </div>
-    `;
-}
-
-function createOrUpdateAvgChart(data) {
-    const canvas = document.getElementById('avgResponseChart');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const labels = data.map(s => s.name);
-    const values = data.map(s => s.avg_response_time);
-    if (avgResponseChart) {
-        avgResponseChart.data.labels = labels;
-        avgResponseChart.data.datasets[0].data = values;
-        avgResponseChart.update();
-        return;
-    }
-    avgResponseChart = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels,
-            datasets: [{
-                label: 'Avg response (s)',
-                data: values,
-                backgroundColor: labels.map((_,i)=>`rgba(${30+i*10%200},${120+i*20%200},${150+i*15%200},0.8)`)
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { y: { beginAtZero: true } }
-        }
+  function fetchMetrics(){
+    fetch('/api/staff-metrics').then(r=>r.json()).then(data=>{
+      staffData = Array.isArray(data) ? data : [];
+      renderStaffList();
+      renderOverviewCharts();
+      renderSummary();
+    }).catch(err=>{
+      console.error('Failed to load staff metrics', err);
+      if ($staffList()) $staffList().textContent = 'Failed to load staff metrics';
     });
-}
+  }
 
-function createOrUpdateActivityChart(staff) {
-    const canvas = document.getElementById('activityChart');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    const values = staff.last_week || [];
-    if (activityChart) {
-        activityChart.data.labels = labels.slice(0, values.length);
-        activityChart.data.datasets[0].data = values;
-        activityChart.options.plugins.title.text = staff.name + ' — Messages per day';
-        activityChart.update();
-        return;
-    }
-    activityChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels.slice(0, values.length),
-            datasets: [{
-                label: 'Messages',
-                data: values,
-                borderColor: 'rgba(59,130,246,0.9)',
-                backgroundColor: 'rgba(59,130,246,0.2)',
-                fill: true,
-                tension: 0.3
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { title: { display: true, text: staff.name + ' — Messages per day' } },
-            scales: { y: { beginAtZero: true } }
-        }
-    });
-}
-
-function renderStaffTable(pageData) {
-    const container = document.getElementById('staffList');
-    if (!container) return;
-    if (!pageData) return container.innerHTML = '<em>Failed to load</em>';
-    if (pageData.length === 0) return container.innerHTML = '<em>No staff data</em>';
-
-    const table = document.createElement('table');
-    table.className = 'metrics-table';
-    table.innerHTML = `
-        <thead><tr><th>Staff</th><th>Avg Response</th><th>Avg Resolution</th><th>Handled</th><th>Satisfaction</th></tr></thead>
-        <tbody></tbody>
-    `;
-    const tbody = table.querySelector('tbody');
-    pageData.forEach((s, idx) => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td><strong>${s.name}</strong><div style="font-size:12px;color:var(--muted)">${s.role||''}</div></td>
-            <td>${formatSeconds(s.avg_response_time)}</td>
-            <td>${formatSeconds(s.avg_resolution_time)}</td>
-            <td>${s.messages_handled}</td>
-            <td>${s.satisfaction} / 5</td>
-        `;
-        tr.addEventListener('click', () => {
-            table.querySelectorAll('tr').forEach(r => r.classList.remove('active'));
-            tr.classList.add('active');
-            createOrUpdateActivityChart(s);
-        });
-        tr.addEventListener('dblclick', () => showStaffModal(s));
-        tbody.appendChild(tr);
-    });
-    container.innerHTML = '';
-    container.appendChild(table);
-}
-
-function applyFiltersAndRender() {
-    const search = document.getElementById('searchInput') ? document.getElementById('searchInput').value.trim().toLowerCase() : '';
-    const sortVal = document.getElementById('sortBy') ? document.getElementById('sortBy').value : 'name';
-
-    filteredData = currentData.filter(s => !search || s.name.toLowerCase().includes(search));
-
-    const desc = sortVal.startsWith('-');
-    const key = desc ? sortVal.slice(1) : sortVal;
-    filteredData.sort((a,b)=>{
-        if (key === 'name') return a.name.localeCompare(b.name);
-        const av = a[key] || 0; const bv = b[key] || 0; return desc ? bv-av : av-bv;
-    });
-
-    // pagination
-    const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize));
-    if (currentPage > totalPages) currentPage = totalPages;
-    const start = (currentPage-1)*pageSize;
-    const pageData = filteredData.slice(start, start+pageSize);
-
-    renderStaffTable(pageData);
-    renderPagination(totalPages);
-    if (filteredData.length) createOrUpdateAvgChart(filteredData);
-    if (pageData[0]) createOrUpdateActivityChart(pageData[0]);
-}
-
-function renderPagination(totalPages) {
-    const el = document.getElementById('pagination');
+  function renderStaffList(){
+    const el = $staffList();
     if (!el) return;
+    const q = ($search() && $search().value || '').toLowerCase();
+    const sortVal = $sort() ? $sort().value : 'name';
+    let list = staffData.slice();
+    if (q) list = list.filter(s => (s.name||'').toLowerCase().includes(q));
+    // sorting
+    list.sort((a,b)=>{
+      if (sortVal === 'name') return (a.name||'').localeCompare(b.name||'');
+      if (sortVal === 'messages_handled') return (b.messages_handled||0) - (a.messages_handled||0);
+      if (sortVal === 'avg_response_time') return (a.avg_response_time||0) - (b.avg_response_time||0);
+      if (sortVal === '-avg_response_time') return (b.avg_response_time||0) - (a.avg_response_time||0);
+      return 0;
+    });
+
     el.innerHTML = '';
-    const prev = document.createElement('button'); prev.textContent = '<'; prev.disabled = currentPage<=1;
-    prev.addEventListener('click', ()=>{ if (currentPage>1) { currentPage--; applyFiltersAndRender(); } });
-    el.appendChild(prev);
-    for (let i=1;i<=totalPages;i++){
-        const btn = document.createElement('button'); btn.textContent = i; if (i===currentPage) btn.classList.add('active');
-        btn.addEventListener('click', ()=>{ currentPage=i; applyFiltersAndRender(); });
-        el.appendChild(btn);
+    if (list.length === 0) { el.textContent = 'No staff found'; return; }
+
+    list.forEach(s => {
+      const responseTime = s.avg_response_time != null ? `${s.avg_response_time}s` : '—';
+      const resolvedRate = s.resolution_rate != null ? `${Math.round(s.resolution_rate)}%` : '—';
+      const handled = s.messages_handled || 0;
+      const progressValue = s.resolution_rate != null ? Math.min(100, Math.max(12, Math.round(s.resolution_rate))) : Math.min(100, Math.max(12, 110 - (s.avg_response_time || 60)));
+      const tags = s.team ? `<span class="staff-meta">${escapeHtml(s.team)}</span>` : `<span class="staff-meta">Support</span>`;
+      const row = document.createElement('div');
+      row.className = 'staff-row';
+      row.innerHTML = `
+        <div class="staff-identity">
+          <span class="staff-avatar">${escapeHtml((s.name||'')[0]||'S')}</span>
+          <div class="staff-info">
+            <span class="staff-name">${escapeHtml(s.name||'—')}</span>
+            ${tags}
+          </div>
+        </div>
+        <div>
+          <span class="label">Handled</span>
+          <strong>${handled}</strong>
+        </div>
+        <div>
+          <span class="label">Avg Resp</span>
+          <strong>${escapeHtml(responseTime)}</strong>
+        </div>
+        <div>
+          <span class="label">Resolution</span>
+          <strong>${escapeHtml(resolvedRate)}</strong>
+        </div>
+        <div class="staff-progress-cell">
+          <span class="label">${progressValue}% efficiency</span>
+          <div class="performance-bar"><div class="performance-fill" style="width:${progressValue}%"></div></div>
+        </div>
+        <div class="staff-button">
+          <button type="button">Details</button>
+        </div>
+      `;
+
+      row.querySelector('button').onclick = () => openStaffModal(s);
+      el.appendChild(row);
+    });
+  }
+
+  function renderOverviewCharts(){
+    const labels = staffData.map(s=> s.name || '—');
+    const handled = staffData.map(s=> s.messages_handled || 0);
+    const avgResp = staffData.map(s=> s.avg_response_time != null ? s.avg_response_time : 0);
+
+    // Messages handled bar chart
+    const actCtx = $activityCanvas() && $activityCanvas().getContext ? $activityCanvas().getContext('2d') : null;
+    if (actCtx){
+      if (messagesChart) messagesChart.destroy();
+      messagesChart = new Chart(actCtx, {
+        type: 'bar',
+        data: { labels, datasets: [{ label: 'Messages handled', data: handled, backgroundColor: '#4f46e5' }] },
+        options: { responsive:true, maintainAspectRatio:false }
+      });
     }
-    const next = document.createElement('button'); next.textContent = '>'; next.disabled = currentPage>=totalPages;
-    next.addEventListener('click', ()=>{ if (currentPage<totalPages) { currentPage++; applyFiltersAndRender(); } });
-    el.appendChild(next);
-}
 
-function exportCsv() {
-    const rows = [ ['Name','AvgResponse(s)','AvgResolution(s)','Handled','Satisfaction'] ];
-    currentData.forEach(s=> rows.push([s.name,s.avg_response_time,s.avg_resolution_time,s.messages_handled,s.satisfaction]));
-    const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], {type:'text/csv'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = 'staff-performance.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-}
+    // Avg response small line/doughnut
+    const sumAvg = avgResp.filter(v=>v>0).length ? Math.round((avgResp.reduce((a,b)=>a+b,0) / (avgResp.filter(v=>v>0).length)) ) : 0;
+    const avgCtx = $avgRespCanvas() && $avgRespCanvas().getContext ? $avgRespCanvas().getContext('2d') : null;
+    if (avgCtx){
+      if (avgRespChart) avgRespChart.destroy();
+      avgRespChart = new Chart(avgCtx, {
+        type: 'doughnut',
+        data: { labels:['Avg response (s)','Remaining'], datasets:[{ data:[sumAvg, Math.max(0, Math.round(sumAvg*1.5))], backgroundColor:['#0ea5e9','#e6eef9'] }] },
+        options: { responsive:true, maintainAspectRatio:false, cutout: '60%' }
+      });
+    }
+  }
 
-function showStaffModal(s) {
+  function renderSummary(){
+    const totalHandled = staffData.reduce((acc,s)=> acc + (s.messages_handled||0), 0);
+    const avgRespValues = staffData.filter(s=>s.avg_response_time!=null).map(s=>s.avg_response_time);
+    const avgRespVal = avgRespValues.length ? Math.round(avgRespValues.reduce((a,b)=>a+b,0) / avgRespValues.length) : '—';
+    const resolutionValues = staffData.filter(s=>s.resolution_rate!=null).map(s=>s.resolution_rate);
+    const resolutionRate = resolutionValues.length ? Math.round(resolutionValues.reduce((a,b)=>a+b,0) / resolutionValues.length) : (avgRespVal !== '—' ? Math.max(54, Math.min(96, 110 - avgRespVal)) : '—');
+    const liveLoad = totalHandled ? Math.min(100, Math.round(Math.min(1, totalHandled / 420) * 100)) : 0;
+
+    const totalEl = document.getElementById('kpi-totalHandled');
+    const avgEl = document.getElementById('kpi-avgResponse');
+    const resolutionEl = document.getElementById('kpi-resolutionRate');
+    const summaryTotalEl = document.getElementById('summaryTotalHandled');
+    const summaryRespEl = document.getElementById('summaryAvgResp');
+    const summaryResolutionEl = document.getElementById('summaryResolutionRate');
+    const flowFill = document.getElementById('summaryFlowFill');
+    const flowText = document.getElementById('summaryFlowText');
+
+    if (totalEl) totalEl.textContent = totalHandled;
+    if (avgEl) avgEl.textContent = avgRespVal !== '—' ? `${avgRespVal}s` : '—';
+    if (resolutionEl) resolutionEl.textContent = resolutionRate !== '—' ? `${resolutionRate}%` : '—';
+    if (summaryTotalEl) summaryTotalEl.textContent = totalHandled;
+    if (summaryRespEl) summaryRespEl.textContent = avgRespVal !== '—' ? `${avgRespVal}s` : '—';
+    if (summaryResolutionEl) summaryResolutionEl.textContent = resolutionRate !== '—' ? `${resolutionRate}%` : '—';
+    if (flowFill) flowFill.style.width = `${liveLoad}%`;
+    if (flowText) flowText.textContent = `${liveLoad}% team utilization`;
+  }
+
+  function openStaffModal(s){
     const modal = document.getElementById('staffModal');
     if (!modal) return;
-    document.getElementById('modalName').textContent = s.name;
+    document.getElementById('modalName').textContent = s.name || 'Staff';
     const body = document.getElementById('modalBody');
-    body.innerHTML = `
-        <p><strong>Role:</strong> ${s.role||'—'}</p>
-        <p><strong>Avg response:</strong> ${formatSeconds(s.avg_response_time)}</p>
-        <p><strong>Avg resolution:</strong> ${formatSeconds(s.avg_resolution_time)}</p>
-        <p><strong>Handled:</strong> ${s.messages_handled}</p>
-        <p><strong>Satisfaction:</strong> ${s.satisfaction} / 5</p>
-        <h4>Improvement suggestions</h4>
-        <ul>
-            ${generateSuggestions(s).map(t=>`<li>${t}</li>`).join('')}
-        </ul>
-    `;
+    body.innerHTML = '';
+    const info = document.createElement('div');
+    info.innerHTML = `<p>Handled: <strong>${s.messages_handled||0}</strong></p><p>Avg response: <strong>${s.avg_response_time!=null? s.avg_response_time+'s' : '—'}</strong></p><p>Avg resolution: <strong>${s.avg_resolution_time!=null? s.avg_resolution_time+'s' : '—'}</strong></p>`;
+    body.appendChild(info);
+
+    const c = document.createElement('canvas');
+    c.style.width = '100%';
+    c.style.height = '160px';
+    body.appendChild(c);
+    // last_week chart
+    const ctx = c.getContext('2d');
+    const labels = (s.last_week && s.last_week.length) ? s.last_week.map((_,i)=>`-${6-i}d`) : [];
+    new Chart(ctx, { type:'line', data: { labels, datasets:[{ label:'Replies', data: s.last_week || [], borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,0.08)', tension:0.3 }] }, options:{responsive:true, maintainAspectRatio:false} });
+
     modal.setAttribute('aria-hidden','false');
-}
+    modal.style.display = 'block';
+    document.getElementById('modalClose').onclick = ()=> { modal.setAttribute('aria-hidden','true'); modal.style.display='none'; };
+  }
 
-function hideStaffModal() {
-    const modal = document.getElementById('staffModal'); if (!modal) return; modal.setAttribute('aria-hidden','true');
-}
+  function escapeHtml(str){ return String(str).replace(/[&<>\"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'})[m]; }); }
 
-function generateSuggestions(s) {
-    const list = [];
-    if (s.avg_response_time > 300) list.push('Consider improving first response time (aim < 2m).');
-    if (s.avg_resolution_time > 1800) list.push('Investigate long resolution cases and share best practices.');
-    if (s.satisfaction < 4) list.push('Provide coaching on customer empathy and follow-ups.');
-    if (s.messages_handled < 20) list.push('Encourage more proactive engagement during shifts.');
-    if (list.length===0) list.push('Performance looks good — keep it up!');
-    return list;
-}
+  // Wire events
+  document.addEventListener('DOMContentLoaded', ()=>{
+    if ($search()) $search().addEventListener('input', renderStaffList);
+    if ($sort()) $sort().addEventListener('change', renderStaffList);
+    if ($refresh()) $refresh().addEventListener('click', fetchMetrics);
+    fetchMetrics();
+  });
 
-async function loadAndRender() {
-    const data = await fetchMetrics();
-    if (!data) return;
-    // remove entries with role 'viewer' or 'staff' (case-insensitive)
-    currentData = data.filter(s=>{
-        const r = (s.role||'').toString().toLowerCase();
-        return r !== 'viewer' && r !== 'staff';
-    });
-    renderSummary(currentData);
-    currentPage = 1;
-    applyFiltersAndRender();
-}
-
-// event wiring
-document.getElementById('refreshBtn').addEventListener('click', loadAndRender);
-document.getElementById('timeRange').addEventListener('change', loadAndRender);
-document.getElementById('exportCsv').addEventListener('click', exportCsv);
-document.getElementById('sortBy').addEventListener('change', ()=>{ currentPage=1; applyFiltersAndRender(); });
-
-let searchTimer = null;
-document.getElementById('searchInput').addEventListener('input', ()=>{ clearTimeout(searchTimer); searchTimer = setTimeout(()=>{ currentPage=1; applyFiltersAndRender(); }, 250); });
-
-document.getElementById('modalClose').addEventListener('click', hideStaffModal);
-document.getElementById('staffModal').addEventListener('click', (e)=>{ if (e.target.id === 'staffModal') hideStaffModal(); });
-
-// initial
-fetch('/api/user').then(r=>r.json()).then(u=>{document.getElementById('staffName').textContent = u.name || u.role || 'Me';}).catch(()=>{});
-loadAndRender();
+})();
