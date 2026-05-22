@@ -100,9 +100,19 @@ document.addEventListener('DOMContentLoaded', () => {
         return params.toString() ? `?${params.toString()}` : '';
     }
 
+    function handleAuthRedirect(res) {
+        if (res.status === 401) {
+            console.warn('Session expired or not logged in. Redirecting to login.');
+            window.location.href = '/login.html';
+            return res;
+        }
+        return res;
+    }
+
     function fetchTicketsByPeriod() {
         const qp = buildQueryParams();
         return fetch('/api/tickets-by-period' + qp, { credentials: 'same-origin' })
+            .then(handleAuthRedirect)
             .then(res => {
                 if (!res.ok) return res.text().then(t => { throw new Error(t || 'tickets fetch failed'); });
                 return res.json();
@@ -112,6 +122,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Fetch counts from server and render bar chart (fetchTicketsByPeriod already returns parsed JSON)
     ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
     messageChart = null; // created later after the function definition
+    const aiStaffCtx = document.getElementById('aiStaffMonthlyChart') ? document.getElementById('aiStaffMonthlyChart').getContext('2d') : null;
+    let aiStaffChart = null;
 
     const socket = io();
 
@@ -348,6 +360,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function refreshAnalyticsChart() {
         const qp = buildQueryParams();
         return fetch('/api/analytics' + qp, { credentials: 'same-origin' })
+            .then(handleAuthRedirect)
             .then(res => {
                 if (!res.ok) return res.text().then(t => { throw new Error(t || 'analytics fetch failed'); });
                 return res.json();
@@ -391,11 +404,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!messageChart && messageCtx) {
             messageChart = createMessageBarChart(messageCtx, { daily: 0, weekly: 0, monthly: 0 });
         }
+        if (!aiStaffChart && aiStaffCtx) {
+            aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, [], [], []);
+        }
 
         await Promise.allSettled([
             refreshAnalyticsChart(),
             refreshMessageChart(),
-            refreshTicketCountChart()
+            refreshTicketCountChart(),
+            refreshAIStaffMonthlyChart()
         ]);
         loadKPIs();
     }
@@ -445,8 +462,141 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const messageCtx = document.getElementById('messageBarChart').getContext('2d');
-    let messageChart = null;
+    const lineChartHoverPlugin = {
+        id: 'lineChartHoverPlugin',
+        afterDraw: chart => {
+            const active = chart.tooltip && typeof chart.tooltip.getActiveElements === 'function'
+                ? chart.tooltip.getActiveElements()
+                : (typeof chart.getActiveElements === 'function' ? chart.getActiveElements() : []);
+            if (!active || !active.length) return;
+            const activeElement = active[0];
+            const x = activeElement.element ? activeElement.element.x : activeElement.x;
+            const yTop = chart.scales.y.top;
+            const yBottom = chart.scales.y.bottom;
+            if (typeof x !== 'number' || typeof yTop !== 'number' || typeof yBottom !== 'number') return;
+            const ctx = chart.ctx;
+            ctx.save();
+            ctx.beginPath();
+            ctx.setLineDash([6, 6]);
+            ctx.strokeStyle = 'rgba(148, 163, 184, 0.92)';
+            ctx.lineWidth = 1;
+            ctx.moveTo(x, yTop);
+            ctx.lineTo(x, yBottom);
+            ctx.stroke();
+            ctx.restore();
+        }
+    };
+
+    function createAIStaffMonthlyChart(ctx, labels, aiData, staffData) {
+        const gradientSales = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
+        gradientSales.addColorStop(0, 'rgba(59, 130, 246, 0.24)');
+        gradientSales.addColorStop(1, 'rgba(59, 130, 246, 0.04)');
+        const gradientRevenue = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
+        gradientRevenue.addColorStop(0, 'rgba(147, 197, 253, 0.22)');
+        gradientRevenue.addColorStop(1, 'rgba(147, 197, 253, 0.04)');
+
+        return new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Sales',
+                        data: aiData,
+                        borderColor: '#2563eb',
+                        backgroundColor: gradientSales,
+                        fill: true,
+                        tension: 0.38,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#2563eb',
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointHoverBorderWidth: 2,
+                        borderWidth: 3
+                    },
+                    {
+                        label: 'Revenue',
+                        data: staffData,
+                        borderColor: '#60a5fa',
+                        backgroundColor: gradientRevenue,
+                        fill: true,
+                        tension: 0.38,
+                        pointBackgroundColor: '#ffffff',
+                        pointBorderColor: '#60a5fa',
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointHoverBorderWidth: 2,
+                        borderWidth: 3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'top',
+                        labels: {
+                            color: '#475569',
+                            usePointStyle: true,
+                            pointStyle: 'circle',
+                            padding: 16
+                        }
+                    },
+                    tooltip: {
+                        enabled: true,
+                        mode: 'index',
+                        intersect: false,
+                        backgroundColor: '#ffffff',
+                        titleColor: '#0f172a',
+                        bodyColor: '#0f172a',
+                        borderColor: 'rgba(148, 163, 184, 0.3)',
+                        borderWidth: 1,
+                        padding: 12,
+                        displayColors: true,
+                        callbacks: {
+                            title: items => items && items.length ? items[0].label : '',
+                            label: context => `${context.dataset.label}: ${context.parsed.y}`
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'index',
+                    intersect: false
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            display: false,
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#475569'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(148, 163, 184, 0.16)',
+                            drawBorder: false
+                        },
+                        ticks: {
+                            color: '#475569'
+                        }
+                    }
+                }
+            },
+            plugins: [lineChartHoverPlugin]
+        });
+    }
+
+    function updateAIStaffMonthlyChart(chart, labels, aiData, staffData) {
+        if (!chart) return;
+        chart.data.labels = labels;
+        chart.data.datasets[0].data = aiData;
+        chart.data.datasets[1].data = staffData;
+        chart.update();
+    }
 
     function updateMessageChart(chart, data) {
         if (!chart) return;
@@ -457,6 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function refreshMessageChart() {
         try {
             const res = await fetch('/api/messages-by-period' + buildQueryParams(), { credentials: 'same-origin' });
+            handleAuthRedirect(res);
             if (!res.ok) {
                 const body = await res.text();
                 console.error('messages-by-period fetch failed', res.status, body);
@@ -480,6 +631,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
             }
             return { daily: 50, weekly: 300, monthly: 1200 };
+        }
+    }
+
+    async function refreshAIStaffMonthlyChart() {
+        try {
+            const res = await fetch('/api/messages-monthly', { credentials: 'same-origin' });
+            handleAuthRedirect(res);
+            if (!res.ok) {
+                const body = await res.text();
+                console.error('messages-monthly fetch failed', res.status, body);
+                throw new Error('Fetch failed');
+            }
+            const data = await res.json();
+            if (!aiStaffChart) {
+                aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, data.labels || [], data.ai || [], data.staff || []);
+            } else {
+                updateAIStaffMonthlyChart(aiStaffChart, data.labels || [], data.ai || [], data.staff || []);
+            }
+            return data;
+        } catch (error) {
+            console.error('refreshAIStaffMonthlyChart error', error);
+            const placeholderLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const placeholderAi = [10, 18, 22, 20, 25, 32, 28, 30, 35, 40, 42, 38];
+            const placeholderStaff = [25, 28, 32, 30, 34, 38, 40, 45, 50, 55, 52, 48];
+            if (!aiStaffChart) {
+                aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, placeholderLabels, placeholderAi, placeholderStaff);
+            }
+            return { labels: placeholderLabels, ai: placeholderAi, staff: placeholderStaff };
         }
     }
 

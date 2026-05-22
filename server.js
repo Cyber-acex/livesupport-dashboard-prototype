@@ -101,6 +101,18 @@ function shouldAIRespond(conversationId) {
     return should;
 }
 
+function emitNewMessageEvent(conversationId, messageData) {
+    const id = Number(conversationId);
+    db.query("SELECT phone, name FROM conversations WHERE id = ? LIMIT 1", [id], (err, rows) => {
+        const senderName = (!err && Array.isArray(rows) && rows.length > 0)
+            ? (rows[0].name || rows[0].phone || null)
+            : null;
+        const payload = Object.assign({}, messageData, { conversation_id: id });
+        if (senderName) payload.sender_name = senderName;
+        io.emit("newMessage", payload);
+    });
+}
+
 function isCustomerGreeting(text) {
     if (!text) return false;
     const normalized = text.toLowerCase().trim();
@@ -536,7 +548,7 @@ app.use(session({
 
 // Middleware to protect HTML pages
 app.use((req, res, next) => {
-    if (req.path.endsWith('.html') && req.path !== '/login.html' && req.path !== '/knowledge.html' && req.path !== '/orders.html') {
+    if (req.path.endsWith('.html') && req.path !== '/login.html' && req.path !== '/knowledge.html' && req.path !== '/orders.html' && req.path !== '/menu.html' && req.path !== '/tables.html') {
         if (!req.session.user) {
             return res.redirect('/login.html');
         }
@@ -1748,7 +1760,7 @@ async function sendAutoReply(phone, message) {
                         message,
                         created_at: new Date().toISOString()
                     };
-                    io.emit("newMessage", messageData);
+                    emitNewMessageEvent(conversation_id, messageData);
                 }
             }
         );
@@ -1812,11 +1824,16 @@ app.post('/webhook/instagram', (req, res) => {
     const body = req.body;
     if (body && body.object) {
         // Example structure: body.entry[].messaging[] or body.entry[].changes
+        console.log('📷 Instagram webhook received:', JSON.stringify(body, null, 2).substring(0, 500));
         try {
             const processInstagramMessage = (value, m) => {
                 const senderId = m.from?.id || m.from || m.sender?.id || m.sender || value?.sender_id || null;
                 const text = m.message?.text || m.message?.body || (m.text && m.text.body) || m.text || null;
-                if (!senderId) return;
+                if (!senderId) {
+                    console.log('⚠️ Instagram message skipped - no senderId. Message:', JSON.stringify(m).substring(0, 200));
+                    return;
+                }
+                console.log('✅ Processing Instagram message from', senderId, ':', text?.substring(0, 50));
                 const messageText = text || '[non-text]';
                 const timestamp = m.timestamp ? new Date(Number(m.timestamp) * (String(m.timestamp).length === 10 ? 1000 : 1)).toISOString() : new Date().toISOString();
 
@@ -1843,9 +1860,11 @@ app.post('/webhook/instagram', (req, res) => {
                     if (err) return console.error('Instagram webhook DB lookup error', err);
                     if (rows && rows.length > 0) {
                         const convId = rows[0].id;
+                        console.log('💬 Found existing Instagram conversation:', convId);
                         insertMessage(convId);
                         upsertInstagramLink(convId);
                     } else {
+                        console.log('📝 Creating new Instagram conversation for sender:', senderId);
                         const insertSql = isPg
                             ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
                             : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
@@ -1853,6 +1872,7 @@ app.post('/webhook/instagram', (req, res) => {
                             if (cErr) return console.error('Error creating IG conversation', cErr);
                             const newId = isPg ? (result?.rows?.[0]?.id || result?.[0]?.id) : result.insertId;
                             if (!newId) return console.error('Error determining new conversation id for IG conversation');
+                            console.log('✅ Created new Instagram conversation with ID:', newId);
                             insertMessage(newId);
                             upsertInstagramLink(newId);
                         });
@@ -1861,15 +1881,19 @@ app.post('/webhook/instagram', (req, res) => {
             };
 
             const entries = body.entry || [];
+            console.log('📋 Processing', entries.length, 'entries');
             entries.forEach(entry => {
                 const changes = entry.changes || [];
+                console.log('🔄 Entry has', changes.length, 'changes');
                 changes.forEach(change => {
                     const value = change.value || {};
                     const messages = value.messages || (value.message ? [value.message] : []);
+                    console.log('📨 Found', messages.length, 'messages in change.value');
                     messages.forEach(m => processInstagramMessage(value, m));
                 });
 
                 const messaging = entry.messaging || [];
+                console.log('💭 Entry has', messaging.length, 'messaging items (legacy format)');
                 messaging.forEach(item => {
                     const msg = item.message || item;
                     processInstagramMessage(item, msg);
@@ -2406,8 +2430,8 @@ app.post("/api/send-message", async (req, res) => {
                         created_at: new Date().toISOString()
                     };
 
-                    // Emit via Socket.IO
-                    io.emit("newMessage", messageData);
+                    // Emit via Socket.IO with sender name attached
+                    emitNewMessageEvent(conversation_id, messageData);
                     res.json({ success: true, message: messageData });
                 }
             );
@@ -2531,7 +2555,7 @@ app.post("/api/send-media", upload.single("file"), (req, res) => {
                         created_at: new Date().toISOString()
                     };
 
-                    io.emit("newMessage", messageData);
+                    emitNewMessageEvent(conversation_id, messageData);
                     res.json({ success: true, message: messageData });
                 }
             );
@@ -2624,8 +2648,7 @@ app.post("/webhook", async (req, res) => {
                     async (err) => {
                         if (err) console.log("MESSAGE INSERT ERROR:", err);
                         else {
-                            io.emit("newMessage", {
-                                conversation_id: convoId,
+                            emitNewMessageEvent(convoId, {
                                 sender: sender,
                                 message: text,
                                 created_at: new Date().toISOString()
@@ -2678,8 +2701,7 @@ app.post("/webhook", async (req, res) => {
                 async (err) => {
                     if (err) console.log("MESSAGE INSERT ERROR:", err);
                     else {
-                        io.emit("newMessage", {
-                            conversation_id: convoId,
+                        emitNewMessageEvent(convoId, {
                             sender: sender,
                             message: text,
                             created_at: new Date().toISOString()
@@ -2758,7 +2780,7 @@ app.post("/api/test-message", (req, res) => {
                             message: text,
                             created_at: new Date().toISOString()
                         };
-                        io.emit("newMessage", messageData);
+                        emitNewMessageEvent(convoId, messageData);
 
                         // Check if this is an order confirmation
                         const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
@@ -2790,7 +2812,7 @@ app.post("/api/test-message", (req, res) => {
                         message: text,
                         created_at: new Date().toISOString()
                     };
-                    io.emit("newMessage", messageData);
+                    emitNewMessageEvent(convoId, messageData);
 
                     if (isCustomerGreeting(text) && isStaffIdleForThreeMinutes(convoId)) {
                         enableAIForConversation(convoId);
@@ -3305,31 +3327,31 @@ app.get('/api/orders', (req, res) => {
 
 // Create new order
 app.post('/api/orders', (req, res) => {
-    const { items, total, table, server } = req.body;
+    const { customerName, product, menuItemId, quantity, amount, status } = req.body;
     
-    if (!items || !total) {
-        return res.status(400).json({ error: "Missing required fields" });
+    if (!customerName || !product || !amount) {
+        return res.status(400).json({ error: "Missing required fields: customerName, product, amount" });
     }
 
     // Generate order ID
     const orderId = `ORD-${Date.now()}`;
     
-    // Format items for storage
-    const productList = items.map(item => `${item.name} x${item.quantity}`).join(', ');
+    // Format product info
+    const productDisplay = quantity ? `${product} x${quantity}` : product;
     
     const insertSql = isPg
-        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id'
+        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id'
         : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)';
     db.query(
         insertSql,
-        [orderId, `Table ${table || 'Unknown'}`, server || 'POS', productList, total, total, 'confirmed'],
+        [orderId, customerName, null, productDisplay, amount, amount, status || 'pending'],
         (err, result) => {
             if (err) {
                 console.error('Error creating order:', err);
                 return res.status(500).json({ error: "Database error" });
             }
 
-            const responsePayload = { success: true, orderId, id: result.insertId };
+            const responsePayload = { success: true, orderId, id: result.insertId || result.rows?.[0]?.id };
 
             startDeliverySimulationForOrder(orderId, (deliveryErr) => {
                 if (deliveryErr) {
@@ -4198,6 +4220,82 @@ app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
     } catch (error) {
         console.error('Error fetching messages by period:', error);
         res.status(500).json({ error: 'Failed to fetch messages by period' });
+    }
+});
+
+app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
+    try {
+        const sql = isPg ? `
+            SELECT TO_CHAR(created_at, 'YYYY-MM') AS ym,
+                SUM(CASE WHEN LOWER(sender) ~ 'ai|bot|assistant' OR (user_id IS NULL AND LOWER(sender) = 'sent') THEN 1 ELSE 0 END) AS ai_count,
+                SUM(CASE WHEN user_id IS NOT NULL OR LOWER(sender) ~ 'agent|staff|sent_by_agent' THEN 1 ELSE 0 END) AS staff_count
+            FROM (
+                SELECT sender, created_at, NULL AS user_id FROM messages
+                UNION ALL
+                SELECT sender, created_at, user_id FROM replies
+                UNION ALL
+                SELECT sender, created_at, user_id FROM ai_messages
+                UNION ALL
+                SELECT sender, created_at, user_id FROM staff_messages
+                UNION ALL
+                SELECT sender, created_at, user_id FROM "ai replies"
+                UNION ALL
+                SELECT sender, created_at, user_id FROM "staff replies"
+            ) AS all_msgs
+            WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months'
+            GROUP BY ym
+            ORDER BY ym;
+        ` : `
+            SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym,
+                SUM(CASE WHEN LOWER(sender) REGEXP 'ai|bot|assistant' OR (user_id IS NULL AND LOWER(sender) = 'sent') THEN 1 ELSE 0 END) AS ai_count,
+                SUM(CASE WHEN user_id IS NOT NULL OR LOWER(sender) REGEXP 'agent|staff|sent_by_agent' THEN 1 ELSE 0 END) AS staff_count
+            FROM (
+                SELECT sender, created_at, NULL AS user_id FROM messages
+                UNION ALL
+                SELECT sender, created_at, user_id FROM replies
+                UNION ALL
+                SELECT sender, created_at, user_id FROM ai_messages
+                UNION ALL
+                SELECT sender, created_at, user_id FROM staff_messages
+                UNION ALL
+                SELECT sender, created_at, user_id FROM \`ai replies\`
+                UNION ALL
+                SELECT sender, created_at, user_id FROM \`staff replies\`
+            ) AS all_msgs
+            WHERE created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 11 MONTH)
+            GROUP BY ym
+            ORDER BY ym;
+        `;
+
+        db.query(sql, (err, rows) => {
+            if (err) {
+                console.error('/api/messages-monthly db error', err);
+                return res.status(500).json({ error: 'DB error' });
+            }
+
+            const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const now = new Date();
+            const rowMap = {};
+            (rows || []).forEach(r => { rowMap[String(r.ym)] = r; });
+
+            const labels = [];
+            const ai = [];
+            const staff = [];
+
+            for (let i = 11; i >= 0; i--) {
+                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                labels.push(monthNames[d.getMonth()]);
+                const row = rowMap[ym] || {};
+                ai.push(Number(row.ai_count || 0));
+                staff.push(Number(row.staff_count || 0));
+            }
+
+            res.json({ labels, ai, staff, data: labels.map((_, idx) => ai[idx] + staff[idx]) });
+        });
+    } catch (error) {
+        console.error('Error fetching monthly messages:', error);
+        res.status(500).json({ error: 'Failed to fetch monthly messages' });
     }
 });
 

@@ -40,8 +40,18 @@
                 document.documentElement.setAttribute('data-sidebar-width', sidebarWidth);
             })();
     </script>
+            <script>
+              // Disable global zoom rules for this page so layout isn't scaled
+              try {
+                document.documentElement.classList.add('no-zoom');
+              } catch (e) { /* ignore */ }
+              // Ensure body zoom is set to normal after DOM is ready (overrides stylesheet zoom)
+              document.addEventListener('DOMContentLoaded', function () {
+                try { document.body.style.zoom = '1'; } catch (e) { /* ignore */ }
+              });
+            </script>
 </head>
-<body>
+<body class="inbox-page">
 <div class="dashboard">
     <!-- SIDEBAR -->
     <aside class="sidebar">
@@ -106,8 +116,13 @@
         </div>
         <!-- CONTENT -->
 <section class="content">
-    <h1>Inbox</h1>
-    <div class="inbox-container">                                        
+    <div class="page-switcher" role="tablist" aria-label="Inbox and Instagram tabs">
+        <button class="page-tab active" data-page="inbox" type="button" onclick="switchInboxSection('inbox')" aria-selected="true">Inbox</button>
+        <button class="page-tab" data-page="instagram" type="button" onclick="switchInboxSection('instagram')" aria-selected="false">Instagram</button>
+    </div>
+    <h1 id="pageTitle">Inbox</h1>
+    <div id="inboxSection">
+        <div class="inbox-container">                                        
         <!-- FILTERS -->
         <div class="filters">
             <div class="filter-title">
@@ -117,6 +132,7 @@
                 </div>
             </div>
             <button class="filter active" data-filter="all"><span class="filter-icon"></span><span>New</span></button>
+            <button class="filter" data-filter="instagram"><span class="filter-icon">📷</span><span>Instagram</span></button>
             <button class="filter" data-filter="receipts"><span class="filter-icon"></span><span>Receipts</span></button>
             <button class="filter" data-filter="escalated"><span class="filter-icon"></span><span>Escalated</span></button>
             <button class="filter" data-filter="resolved"><span class="filter-icon"></span><span>Resolved</span></button>
@@ -241,6 +257,15 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
 </div>
     </div>
 </div>
+    <div id="instagramSection" style="display:none;">
+        <div class="iframe-wrapper">
+            <iframe id="instagramFrame" src="" title="Instagram Inbox" loading="lazy"></iframe>
+            <div class="iframe-fallback">
+                <p>Loading Instagram inbox...</p>
+                <p>If the iframe does not load, <a href="/instagram.html" target="_blank" rel="noopener">open Instagram page</a>.</p>
+            </div>
+        </div>
+    </div>
 </section>
     </div>
 </div>
@@ -1059,6 +1084,41 @@ if (quickEscalateBtn) quickEscalateBtn.onclick = escalateCurrentChat;
         Dismiss
     </div>
 </div>
+<script>
+function switchInboxSection(section) {
+    const inboxSection = document.getElementById('inboxSection');
+    const instagramSection = document.getElementById('instagramSection');
+    const pageTitle = document.getElementById('pageTitle');
+    const buttons = document.querySelectorAll('.page-switcher .page-tab');
+
+    buttons.forEach(btn => {
+        const isActive = btn.dataset.page === section;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    if (section === 'instagram') {
+        pageTitle.textContent = 'Instagram';
+        if (inboxSection) inboxSection.style.display = 'none';
+        if (instagramSection) {
+            instagramSection.style.display = 'block';
+            const frame = document.getElementById('instagramFrame');
+            if (frame && !frame.dataset.loaded) {
+                frame.src = '/instagram.html';
+                frame.dataset.loaded = 'true';
+            }
+        }
+    } else {
+        pageTitle.textContent = 'Inbox';
+        if (inboxSection) inboxSection.style.display = 'block';
+        if (instagramSection) instagramSection.style.display = 'none';
+    }
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+    switchInboxSection('inbox');
+});
+</script>
 <script src="/socket.io/socket.io.js"></script>
 <script src="./js/inbox.js"></script>
 <script src="./js/app.js"></script>

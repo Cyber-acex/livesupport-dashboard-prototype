@@ -198,8 +198,10 @@ fetch("/api/user")
     }
 
     .message-chart-container { width: 32%; }
+    .chart-container.chart-fullwidth { width: 98%; min-width: auto; }
 
     canvas { width: 100% !important; height: auto !important; max-height: 480px; }
+    .chart-item canvas { min-height: 300px; }
 
     /* On small screens stack charts */
     @media (max-width: 980px) {
@@ -718,6 +720,13 @@ fetch("/api/user")
 
   </div>
 
+  <div class="chart-container chart-fullwidth">
+    <div class="chart-item">
+        <h3>Line Chart 1</h3>
+        <canvas id="aiStaffMonthlyChart" width="800" height="300"></canvas>
+    </div>
+  </div>
+
   </div>
 
   </div> <!-- end analyticsPanel -->
@@ -864,6 +873,14 @@ function switchAnalyticsPage(page){
     analyticsSwitcher.style.display='flex';
   }
 }
+
+function applyAnalyticsPageHash() {
+  if (window.location.hash === '#staff') {
+    switchAnalyticsPage('staff');
+  }
+}
+window.addEventListener('DOMContentLoaded', applyAnalyticsPageHash);
+window.addEventListener('hashchange', applyAnalyticsPageHash);
 </script>
 
 </body>

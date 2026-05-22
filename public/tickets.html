@@ -661,8 +661,13 @@
     return `<span class="${className}">${label}</span>`;
   }
 
-  // reuse existing notification functions if present
-  const notify = window.showTicketNotification || function(msg){
+  // use the shared main notification bar if it exists
+  const notify = (msg) => {
+    const sharedNotify = window.showNotification || window.showTicketNotification;
+    if (typeof sharedNotify === 'function') {
+      sharedNotify(msg);
+      return;
+    }
     const bar = document.getElementById('ticketNotificationBar');
     const text = document.getElementById('ticketNotificationText');
     if(bar && text){ text.textContent = msg; bar.style.display = 'block'; setTimeout(()=>bar.style.display='none',4000); }

@@ -443,6 +443,9 @@ function createConversationElement(conv, filter = 'all') {
     const reportedInfo = conv.reported_at ? `<br><small>Reported: ${new Date(conv.reported_at).toLocaleString()}</small>` : '';
     const displayName = conv.name || conv.phone || 'Customer';
     const initials = getInitials(displayName);
+    const platform = String(conv.platform || 'whatsapp').toLowerCase();
+    const platformLabel = platform.charAt(0).toUpperCase() + platform.slice(1);
+    const platformBadgeHtml = `<span class="platform-badge platform-${platform}">${platformLabel}</span>`;
     let unreadCount = Number(conv.unread_count) || 0;
     try {
         const viewed = JSON.parse(localStorage.getItem('viewedChats') || '[]');
@@ -453,15 +456,17 @@ function createConversationElement(conv, filter = 'all') {
         // ignore localStorage parse errors
     }
     const unreadBadgeHtml = unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : '';
+    div.classList.add(`platform-${platform}`);
     div.innerHTML = `
         <div class="avatar">${initials}</div>
         <div class="conv-meta">
             <div class="name-row">
                 <div class="name">${displayName}</div>
+                ${platformBadgeHtml}
                 ${unreadBadgeHtml}
             </div>
             <div class="preview">Click to open</div>
-            <div class="meta">${conv.platform ? conv.platform.charAt(0).toUpperCase() + conv.platform.slice(1) : 'WhatsApp'}${escalatedInfo}${resolvedInfo}${refundedInfo}${reportedInfo}</div>
+            <div class="meta">${platformLabel}${escalatedInfo}${resolvedInfo}${refundedInfo}${reportedInfo}</div>
         </div>
     `;
 
@@ -698,6 +703,12 @@ async function loadConversations(filter = 'all') {
             created_at: item.created_at,
             reported_at: item.reported_at
         }));
+    } else if (filter === 'instagram') {
+        const res = await fetch('/api/conversations');
+        const allData = await res.json();
+        data = Array.isArray(allData)
+            ? allData.filter(conv => String(conv.platform || '').toLowerCase() === 'instagram')
+            : [];
     } else {
         const res = await fetch("/api/conversations");
         data = await res.json();
@@ -1536,6 +1547,9 @@ filterButtons.forEach(btn => {
             case 'delivery-issues':
             case 'delivery issues':
                 loadConversations('delivery-issues');
+                break;
+            case 'instagram':
+                loadConversations('instagram');
                 break;
             default:
                 loadConversations('all');

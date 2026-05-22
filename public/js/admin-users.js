@@ -1,5 +1,6 @@
+const _base = (typeof window !== 'undefined' && window.BACKEND_URL) ? String(window.BACKEND_URL).replace(/\/$/, '') : '';
+
 async function fetchUsers() {
-  const _base = (typeof window !== 'undefined' && window.BACKEND_URL) ? String(window.BACKEND_URL).replace(/\/$/, '') : '';
   const res = await fetch(_base + '/api/admin/users');
   if (res.status === 401) return location.href = '/login.html';
   if (res.status === 403) return document.body.innerHTML = '<h2>Access denied</h2>';
@@ -56,8 +57,13 @@ function renderUsers(users) {
     const delBtn = document.createElement('button'); delBtn.textContent = 'Delete';
     delBtn.onclick = async () => {
       if (!confirm('Delete user ' + u.name + '?')) return;
-      await fetch(_base + '/api/admin/users/' + u.id, { method: 'DELETE' });
-      fetchUsers();
+      const r = await fetch(_base + '/api/admin/users/' + u.id, { method: 'DELETE' });
+      if (r.ok) {
+        fetchUsers();
+      } else {
+        const err = await r.json().catch(() => ({}));
+        alert('Delete failed: ' + (err.message || err.error || r.statusText || r.status));
+      }
     };
 
     actionsTd.appendChild(saveBtn);

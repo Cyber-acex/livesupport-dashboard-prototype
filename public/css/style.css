@@ -1,4 +1,9 @@
-﻿/* DARK THEME SUPPORT - Modern & Cutting-Edge */
+﻿/* Page zoom reduction for most app pages, excluding settings.html */
+html:not(.no-zoom) {
+    zoom: 0.92;
+}
+
+/* DARK THEME SUPPORT - Modern & Cutting-Edge */
 .dark-theme, .dark-theme body {
     background: linear-gradient(135deg, #0f0f1e 0%, #1a1530 100%) !important;
     color: #e0e7ff !important;
@@ -200,9 +205,24 @@ img, video {
 }
 
 html, body {
-        height: 100%;
+    height: 100%;
         margin: 0;
-        overflow: auto;
+        overflow-x: hidden;
+        overflow-y: auto;
+}
+
+/* Force root and layout to match viewport height so fixed sidebar fills it */
+html, body, .dashboard {
+  height: 100vh !important;
+}
+
+.sidebar {
+  /* ensure fixed sidebar stretches from top to bottom of the viewport */
+  position: fixed !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  height: auto !important;
+  min-height: 100vh !important;
 }
 
 body {
@@ -705,6 +725,7 @@ html, body {
 
 body {
     background: #f3f4f6;
+    padding-left: 8px;
 }
 
 .dashboard {
@@ -727,8 +748,10 @@ body {
     border-right: 1px solid rgba(255,255,255,0.08);
     position: fixed;
     top: 0;
+  bottom: 0;
     left: 0;
     height: 100vh;
+  min-height: 100vh;
     overflow-y: auto;
     z-index: 10;
 }
@@ -857,7 +880,7 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     border: 1px solid transparent;
 }
 
-.menu a .nav-icon { width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 10px; fill: currentColor; }
+.menu a .nav-icon, .menu a svg { width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 10px; fill: currentColor; }
 .menu a .nav-label { vertical-align: middle; }
 
 @keyframes buttonPulse {
@@ -941,6 +964,18 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     display: flex;
     flex-direction: column;
     min-height: 0;
+}
+
+.inbox-page {
+    zoom: 0.88;
+}
+
+.inbox-page .content {
+    padding-top: 56px;
+}
+
+.inbox-page .inbox-container {
+    margin-top: 8px;
 }
 
 .inbox-placeholder {
@@ -1123,6 +1158,24 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     gap: 8px;
     flex-wrap: wrap;
 }
+.conversation .platform-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffffff;
+    background: #6d28d9;
+    text-transform: uppercase;
+}
+.conversation .platform-whatsapp {
+    background: #22c55e;
+}
+.conversation .platform-instagram {
+    background: linear-gradient(135deg, #f43f5e, #fb7185);
+}
 .conversation .unread-badge {
     min-width: 20px;
     height: 20px;
@@ -1135,6 +1188,10 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     display: inline-flex;
     align-items: center;
     justify-content: center;
+}
+.conversation.platform-instagram {
+    border-left: 4px solid #ec4899;
+    background: #fff1f2;
 }
 .conversation .conv-meta .name { font-weight: 700; }
 .conversation .conv-meta .preview { color: #4b5563; font-size: 13px; line-height: 1.3; }

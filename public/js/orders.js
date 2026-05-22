@@ -10,7 +10,10 @@ let menuItems = [];
 let filteredMenuItems = [];
 let currentMenuCategory = 'All';
 let currentMenuTag = 'All';
+let currentMenuSpecialCategory = 'All';
 let currentMenuSort = 'score_desc';
+let currentMenuSection = 'items';
+let tableLayout = [];
 
 function formatOrderTimestamp(value) {
   if (!value) return 'Unknown';
@@ -25,14 +28,26 @@ function formatOrderTimestamp(value) {
   });
 }
 
+function applyOrderPageHash() {
+  const hash = window.location.hash;
+  if (hash === '#menu') {
+    switchPage('menu');
+  }
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
   loadStaffName();
   loadOrders();
   loadMenu();
+  generateTableLayout();
+  applyOrderPageHash();
   setupThemeToggle();
   setupRealtimeUpdates();
+  setInterval(updateTableStatuses, 30000);
 });
+
+window.addEventListener('hashchange', applyOrderPageHash);
 let socket = null;
 function setupRealtimeUpdates() {
   try {
@@ -211,6 +226,7 @@ function displayOrders() {
     const statusLabel = (order.status || '').toString();
     const statusText = statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1);
     const displayDate = formatOrderTimestamp(order.date);
+    const quantityText = order.quantity ? ` x${order.quantity}` : '';
     return `
     <tr data-order-id="${order.id}">
       <td><input type="checkbox" class="row-select" ${checked} onchange="toggleSelectRow(event, '${order.id}')"></td>
@@ -221,7 +237,7 @@ function displayOrders() {
         </div>
       </td>
       <td>${order.customerName || ''}</td>
-      <td>${order.product || ''}</td>
+      <td>${order.product || ''}${quantityText}</td>
       <td>$${Number(order.amount || 0).toLocaleString('en-US')}</td>
       <td>
         <span class="status-badge status-${statusLabel}">
@@ -232,8 +248,8 @@ function displayOrders() {
       <td>
         <div class="order-actions">
           <button class="action-btn view-btn" onclick="viewOrderDetails('${order.id}')">View</button>
-          <button class="action-btn edit-btn" onclick="editOrder('${order.id}')">Completed</button>
-          <button class="action-btn cancel-btn" onclick="cancelOrder('${order.id}')">Cancel</button>
+          <button class="action-btn edit-btn" onclick="editOrder('${order.id}')" ${order.status === 'completed' ? 'disabled' : ''}>Completed</button>
+          <button class="action-btn cancel-btn" onclick="cancelOrder('${order.id}')" ${order.status === 'cancelled' ? 'disabled' : ''}>Cancel</button>
         </div>
       </td>
     </tr>
@@ -322,7 +338,33 @@ function clearFilters() {
 }
 // Open new order modal
 function openNewOrderModal() {
+  // Populate menu items dropdown
+  const select = document.getElementById('menuItemSelect');
+  select.innerHTML = '<option value="">-- Select a menu item --</option>';
+  menuItems.filter(item => item.available && item.stock > 0).forEach(item => {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = `${item.name} - $${item.price.toFixed(2)} (Stock: ${item.stock})`;
+    select.appendChild(option);
+  });
   document.getElementById('orderModal').style.display = 'flex';
+}
+
+function updateOrderAmount() {
+  const select = document.getElementById('menuItemSelect');
+  const quantity = parseInt(document.getElementById('orderQuantity').value) || 1;
+  const amountInput = document.getElementById('amount');
+  
+  if (!select.value) {
+    amountInput.value = '';
+    return;
+  }
+  
+  const item = menuItems.find(i => i.id === select.value);
+  if (item) {
+    const total = (item.price * quantity).toFixed(2);
+    amountInput.value = total;
+  }
 }
 // Close order modal
 function closeOrderModal() {
@@ -333,9 +375,27 @@ function closeOrderModal() {
 async function handleCreateOrder(event) {
   event.preventDefault();
   const customerName = document.getElementById('customerName').value;
-  const product = document.getElementById('product').value;
+  const menuItemId = document.getElementById('menuItemSelect').value;
+  const quantity = parseInt(document.getElementById('orderQuantity').value) || 1;
   const amount = parseFloat(document.getElementById('amount').value);
   const status = document.getElementById('orderStatus').value;
+  
+  if (!menuItemId) {
+    alert('Please select a menu item');
+    return;
+  }
+  
+  const item = menuItems.find(i => i.id === menuItemId);
+  if (!item) {
+    alert('Menu item not found');
+    return;
+  }
+  
+  if (quantity > item.stock) {
+    alert(`Insufficient stock. Available: ${item.stock}`);
+    return;
+  }
+  
   try {
     const response = await fetch('/api/orders', {
       method: 'POST',
@@ -344,13 +404,19 @@ async function handleCreateOrder(event) {
       },
       body: JSON.stringify({
         customerName,
-        product,
+        product: item.name,
+        menuItemId,
+        quantity,
         amount,
         status
       })
     });
     if (response.ok) {
       const data = await response.json();
+      // Decrease stock locally
+      item.stock -= quantity;
+      applyMenuFilters();
+      renderMenu();
       showNotification('Order created successfully!');
       closeOrderModal();
       loadOrders(); // Reload orders from database
@@ -374,7 +440,8 @@ function openOrderModal(orderId) {
   if (!order) return showNotification('Order not found');
   document.getElementById('view_order_id').value = order.id;
   document.getElementById('view_customerName').value = order.customerName || '';
-  document.getElementById('view_product').value = order.product || '';
+  const productDisplay = order.quantity ? `${order.product} x${order.quantity}` : order.product;
+  document.getElementById('view_product').value = productDisplay || '';
   document.getElementById('view_amount').value = Number(order.amount || 0).toFixed(2);
   document.getElementById('view_status').value = order.status || 'pending';
   document.getElementById('view_date').value = formatOrderTimestamp(order.date);
@@ -390,23 +457,34 @@ async function saveOrderChanges(event) {
   event.preventDefault();
   const id = document.getElementById('view_order_id').value;
   const customerName = document.getElementById('view_customerName').value;
-  const product = document.getElementById('view_product').value;
   const amount = parseFloat(document.getElementById('view_amount').value) || 0;
-  const status = document.getElementById('view_status').value;
+  const newStatus = document.getElementById('view_status').value;
+  const order = allOrders.find(o => o.id === id);
+  
   try {
+    // If status is changing to cancelled, restore stock
+    if (order && order.status !== 'cancelled' && newStatus === 'cancelled') {
+      if (order.menuItemId) {
+        const item = menuItems.find(i => i.id === order.menuItemId);
+        if (item) {
+          item.stock += (order.quantity || 1);
+          applyMenuFilters();
+          renderMenu();
+        }
+      }
+    }
+    
     const res = await fetch(`/api/orders/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ customerName, product, amount, status })
+      body: JSON.stringify({ customerName, amount, status: newStatus })
     });
     if (res.ok) {
       // update local copy
-      const order = allOrders.find(o => o.id === id);
       if (order) {
         order.customerName = customerName;
-        order.product = product;
         order.amount = amount;
-        order.status = status;
+        order.status = newStatus;
       }
       showNotification('Order updated');
       closeOrderViewModal();
@@ -605,6 +683,207 @@ function switchPage(page) {
   });
 }
 
+function switchMenuSection(view) {
+  currentMenuSection = view;
+  const menuItems = document.getElementById('menuItemsView');
+  const tableFloor = document.getElementById('tableFloorView');
+  const buttons = document.querySelectorAll('.menu-view-switcher .page-tab');
+  const showItems = view === 'items';
+  if (menuItems) menuItems.style.display = showItems ? 'block' : 'none';
+  if (tableFloor) tableFloor.style.display = showItems ? 'none' : 'block';
+  buttons.forEach(btn => {
+    const isItems = btn.getAttribute('data-menu-view') === 'items';
+    btn.classList.toggle('active', showItems ? isItems : !isItems);
+    btn.setAttribute('aria-selected', String(showItems ? isItems : !isItems));
+  });
+  if (!showItems && tableLayout.length === 0) {
+    generateTableLayout();
+  }
+}
+
+function getRandomTableStatus() {
+  const pool = ['vacant','vacant','vacant','vacant','vacant','reserved','reserved','occupied','occupied','occupied'];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function generateTableLayout() {
+  tableLayout = [];
+  for (let i = 1; i <= 40; i += 1) {
+    tableLayout.push({ number: i, label: `Table ${i}`, status: getRandomTableStatus() });
+  }
+  renderTableLayout();
+}
+
+function renderTableLayout() {
+  const grid = document.getElementById('tableGrid');
+  const total = tableLayout.length;
+  const vacantCount = tableLayout.filter(t => t.status === 'vacant').length;
+  const reservedCount = tableLayout.filter(t => t.status === 'reserved').length;
+  const occupiedCount = tableLayout.filter(t => t.status === 'occupied').length;
+  if (grid) {
+    grid.innerHTML = tableLayout.map(table => {
+      const reservationLabel = getTableReservationLabel(table);
+      const statusText = table.status === 'vacant' ? 'Vacant' : table.status === 'reserved' ? 'Reserved' : 'Occupied';
+      return `
+      <div class="table-card ${table.status}">
+        <button type="button" class="table-action-trigger" onclick="event.stopPropagation(); toggleTableActionMenu(${table.number})">⋮</button>
+        <div class="table-action-menu" id="tableActionMenu-${table.number}">
+          <button type="button" class="table-action-item" onclick="event.stopPropagation(); openTableActionModal(${table.number}, 'reserve')">Reserve</button>
+          <button type="button" class="table-action-item" onclick="event.stopPropagation(); markTableVacant(${table.number})">Mark as Vacant</button>
+          <button type="button" class="table-action-item" onclick="event.stopPropagation(); openTableActionModal(${table.number}, 'book')">Book</button>
+        </div>
+        <div class="table-label">${table.label}</div>
+        <div class="table-status">${statusText}</div>
+        <div class="table-detail">${reservationLabel || 'Tap the menu to manage this table.'}</div>
+      </div>
+    `;
+    }).join('');
+  }
+  const totalEl = document.getElementById('totalTablesCount');
+  const vacantEl = document.getElementById('vacantTablesCount');
+  const reservedEl = document.getElementById('reservedTablesCount');
+  const occupiedEl = document.getElementById('occupiedTablesCount');
+  if (totalEl) totalEl.textContent = String(total);
+  if (vacantEl) vacantEl.textContent = String(vacantCount);
+  if (reservedEl) reservedEl.textContent = String(reservedCount);
+  if (occupiedEl) occupiedEl.textContent = String(occupiedCount);
+}
+
+function refreshTableLayout() {
+  generateTableLayout();
+  showNotification('Table statuses refreshed');
+}
+
+function closeAllTableActionMenus() {
+  document.querySelectorAll('.table-action-menu.open').forEach(menu => menu.classList.remove('open'));
+}
+
+function toggleTableActionMenu(tableNumber) {
+  const menu = document.getElementById(`tableActionMenu-${tableNumber}`);
+  if (!menu) return;
+  const isOpen = menu.classList.contains('open');
+  closeAllTableActionMenus();
+  if (!isOpen) menu.classList.add('open');
+}
+
+function getTableReservationLabel(table) {
+  if (!table.customerName || !table.reservedUntil) return '';
+  const date = new Date(table.reservedUntil);
+  if (isNaN(date)) return '';
+  if (table.isBooking) {
+    return `Booked for ${table.customerName} on ${date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return `Reserved for ${table.customerName} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+}
+
+function openTableActionModal(tableNumber, action) {
+  closeAllTableActionMenus();
+  const modal = document.getElementById('tableActionModal');
+  const title = document.getElementById('tableActionModalTitle');
+  const subtitle = document.getElementById('tableActionModalSubtitle');
+  const typeInput = document.getElementById('tableActionType');
+  const tableInput = document.getElementById('tableActionTableNumber');
+  const dateField = document.getElementById('tableDateField');
+  const timeField = document.getElementById('tableTimeField');
+  const dateInput = document.getElementById('tableCustomerDate');
+  const timeInput = document.getElementById('tableCustomerTime');
+  const customerInput = document.getElementById('tableCustomerName');
+
+  customerInput.value = '';
+  timeInput.value = '';
+  dateInput.value = '';
+  typeInput.value = action;
+  tableInput.value = String(tableNumber);
+
+  if (action === 'reserve') {
+    title.textContent = `Reserve ${tableLayout[tableNumber-1]?.label || 'Table'}`;
+    subtitle.textContent = 'Reserve by time only; it becomes occupied when the time arrives.';
+    dateField.style.display = 'none';
+    timeField.style.display = 'block';
+  } else {
+    title.textContent = `Book ${tableLayout[tableNumber-1]?.label || 'Table'}`;
+    subtitle.textContent = 'Book by date and time using the calendar.';
+    dateField.style.display = 'block';
+    timeField.style.display = 'block';
+  }
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeTableActionModal() {
+  const modal = document.getElementById('tableActionModal');
+  if (modal) modal.style.display = 'none';
+  closeAllTableActionMenus();
+}
+
+function handleTableActionSave(event) {
+  event.preventDefault();
+  const type = document.getElementById('tableActionType').value;
+  const number = Number(document.getElementById('tableActionTableNumber').value);
+  const customerName = document.getElementById('tableCustomerName').value.trim();
+  const timeValue = document.getElementById('tableCustomerTime').value;
+  const dateValue = document.getElementById('tableCustomerDate').value;
+  if (!customerName || !timeValue || (type === 'book' && !dateValue)) {
+    return alert('Please fill in all required fields.');
+  }
+  if (type === 'reserve') {
+    reserveTable(number, customerName, timeValue);
+  } else if (type === 'book') {
+    bookTable(number, customerName, dateValue, timeValue);
+  }
+  closeTableActionModal();
+  renderTableLayout();
+}
+
+function reserveTable(tableNumber, customerName, timeValue) {
+  const table = tableLayout.find(t => t.number === tableNumber);
+  if (!table) return;
+  const [hours, minutes] = timeValue.split(':').map(Number);
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(hours, minutes, 0, 0);
+  if (target <= now) target.setDate(target.getDate() + 1);
+  table.status = 'reserved';
+  table.customerName = customerName;
+  table.reservedUntil = target.toISOString();
+  table.isBooking = false;
+}
+
+function bookTable(tableNumber, customerName, dateValue, timeValue) {
+  const table = tableLayout.find(t => t.number === tableNumber);
+  if (!table) return;
+  const target = new Date(`${dateValue}T${timeValue}`);
+  if (isNaN(target.getTime())) return alert('Invalid date or time selected.');
+  table.status = 'reserved';
+  table.customerName = customerName;
+  table.reservedUntil = target.toISOString();
+  table.isBooking = true;
+}
+
+function markTableVacant(tableNumber) {
+  const table = tableLayout.find(t => t.number === tableNumber);
+  if (!table) return;
+  table.status = 'vacant';
+  table.customerName = undefined;
+  table.reservedUntil = undefined;
+  table.isBooking = false;
+  renderTableLayout();
+}
+
+function updateTableStatuses() {
+  const now = new Date();
+  let changed = false;
+  tableLayout.forEach(table => {
+    if (table.status === 'reserved' && table.reservedUntil) {
+      const target = new Date(table.reservedUntil);
+      if (!isNaN(target.getTime()) && now >= target) {
+        table.status = 'occupied';
+        changed = true;
+      }
+    }
+  });
+  if (changed) renderTableLayout();
+}
+
 function loadMenu() {
   // Try to fetch menu from backend API; fallback to local sample
   fetch('/api/menu')
@@ -622,8 +901,11 @@ function loadMenu() {
       if (arr.length === 0) {
         // fallback sample
         menuItems = [
-          { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured'], description: 'Tomato sauce, fresh mozzarella, basil' },
+          { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured', 'Premium'], description: 'Tomato sauce, fresh mozzarella, basil' },
           { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
+          { id: 'm3', name: 'Festive Roast', category: 'Specials', subtype: 'Holiday', price: 14.99, available: true, stock: 12, tags: ['Festive'], description: 'Maple glazed chicken with seasonal vegetables' },
+          { id: 'm4', name: 'Truffle Burger', category: 'Premium', subtype: 'Gourmet', price: 18.50, available: true, stock: 8, tags: ['Premium'], description: 'Wagyu beef patty, truffle aioli, aged cheddar' },
+          { id: 'm5', name: 'Winter Salad', category: 'Salads', subtype: 'Fresh', price: 10.50, available: true, stock: 20, tags: ['Festive', 'Discount'], description: 'Cranberry, pear and feta with citrus dressing' },
         ];
       } else {
         menuItems = arr;
@@ -636,6 +918,9 @@ function loadMenu() {
       menuItems = [
         { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured'], description: 'Tomato sauce, fresh mozzarella, basil' },
         { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
+        { id: 'm3', name: 'Festive Roast', category: 'Specials', subtype: 'Holiday', price: 14.99, available: true, stock: 12, tags: ['Festive'], description: 'Maple glazed chicken with seasonal vegetables' },
+        { id: 'm4', name: 'Truffle Burger', category: 'Premium', subtype: 'Gourmet', price: 18.50, available: true, stock: 8, tags: ['Premium'], description: 'Wagyu beef patty, truffle aioli, aged cheddar' },
+        { id: 'm5', name: 'Winter Salad', category: 'Salads', subtype: 'Fresh', price: 10.50, available: true, stock: 20, tags: ['Festive', 'Discount'], description: 'Cranberry, pear and feta with citrus dressing' },
       ];
       filteredMenuItems = [...menuItems];
       buildMenuChips();
@@ -649,8 +934,16 @@ function buildMenuChips() {
   const tagSet = new Set(menuItems.flatMap(i => i.tags || []));
   const tags = ['All', ...tagSet];
 
+  const specialContainer = document.getElementById('menuSpecialChips');
   const catContainer = document.getElementById('menuCategoryChips');
   const tagContainer = document.getElementById('menuTagChips');
+  const specials = ['All', 'Premium', 'Festive', 'Discount'];
+  if (specialContainer) {
+    specialContainer.innerHTML = specials.map(special => {
+      const activeClass = special === currentMenuSpecialCategory ? 'active' : '';
+      return `<button type="button" class="menu-chip ${activeClass}" onclick="setMenuSpecialCategory('${special}')">${special}</button>`;
+    }).join('');
+  }
   if (catContainer) {
     catContainer.innerHTML = categories.map(category => {
       const activeClass = category === currentMenuCategory ? 'active' : '';
@@ -677,13 +970,20 @@ function setMenuTag(tag) {
   buildMenuChips();
 }
 
+function setMenuSpecialCategory(category) {
+  currentMenuSpecialCategory = category;
+  applyMenuFilters();
+  buildMenuChips();
+}
+
 function applyMenuFilters() {
   const query = (document.getElementById('menuSearchInput')?.value || '').toLowerCase();
   filteredMenuItems = menuItems.filter(item => {
     const matchesCategory = currentMenuCategory === 'All' || item.category === currentMenuCategory;
     const matchesTag = currentMenuTag === 'All' || (item.tags || []).includes(currentMenuTag);
+    const matchesSpecial = currentMenuSpecialCategory === 'All' || (item.tags || []).includes(currentMenuSpecialCategory) || item.category === currentMenuSpecialCategory;
     const matchesSearch = item.name.toLowerCase().includes(query) || (item.description || '').toLowerCase().includes(query) || (item.tags || []).some(t => t.toLowerCase().includes(query));
-    return matchesCategory && matchesTag && matchesSearch;
+    return matchesCategory && matchesTag && matchesSpecial && matchesSearch;
   });
   sortMenuItems(currentMenuSort, false);
   renderMenu();
@@ -957,6 +1257,16 @@ function cancelOrder(orderId) {
   if (confirm('Are you sure you want to cancel this order?')) {
     const order = allOrders.find(o => o.id === orderId);
     if (order) {
+      // Restore stock if menu item was used
+      if (order.menuItemId) {
+        const item = menuItems.find(i => i.id === order.menuItemId);
+        if (item) {
+          item.stock += (order.quantity || 1);
+          applyMenuFilters();
+          renderMenu();
+        }
+      }
+      
       // Update status on server
       fetch(`/api/orders/${orderId}`, {
         method: 'PUT',
@@ -1006,11 +1316,18 @@ function setupThemeToggle() {
   }
 }
 
-// Close modal when clicking outside
+// Close modals and action menus when clicking outside
 document.addEventListener('click', (e) => {
-  const modal = document.getElementById('orderModal');
-  if (e.target === modal) {
+  const orderModal = document.getElementById('orderModal');
+  const tableModal = document.getElementById('tableActionModal');
+  if (e.target === orderModal) {
     closeOrderModal();
+  }
+  if (e.target === tableModal) {
+    closeTableActionModal();
+  }
+  if (!e.target.closest('.table-action-menu') && !e.target.closest('.table-action-trigger')) {
+    closeAllTableActionMenus();
   }
 });
 // Search on Enter key

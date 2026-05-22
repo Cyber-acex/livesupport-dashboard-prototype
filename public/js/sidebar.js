@@ -11,6 +11,26 @@
       icon: a.querySelector('svg') ? a.querySelector('svg').outerHTML : ''
     }));
 
+    const submenuMap = {
+      './dashboard.html': [
+        { href: './inbox.html', label: 'Inbox' }
+      ],
+      './orders.html': [
+        { href: './orders.html#menu', label: 'Menu' }
+      ],
+      './analytics.html': [
+        { href: './analytics.html#staff', label: 'Staff Performance' }
+      ]
+    };
+
+    function normalizeHref(href) {
+      if (!href) return '';
+      const link = document.createElement('a');
+      link.href = href;
+      const path = link.pathname.split('/').pop() || 'dashboard.html';
+      return path + (link.hash || '');
+    }
+
     // Build enhanced sidebar
     const collapsed = localStorage.getItem('ls_sidebar_collapsed') === 'true';
     sidebar.classList.add('ls-sidebar');
@@ -18,27 +38,120 @@
 
     sidebar.innerHTML = `
       <div class="ls-top">
-        <h2 class="logo">LiveSupport</h2>
+        <span class="logo">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 15h2V9H6v6zm4 4h2V5h-2v14zm4-8h2V9h-2v2zm4 6h2V7h-2v10z"/></svg>
+        </span>
+        <div class="brand">
+          <span class="brand-name">LiveSupport</span>
+        </div>
         <button class="ls-toggle" aria-label="Toggle sidebar">☰</button>
       </div>
-      <div class="ls-search"><input placeholder="Search menu..." type="search" aria-label="Search menu"></div>
+      <div class="ls-menu-title">MENU</div>
       <nav class="ls-menu" role="navigation" aria-label="Main navigation"></nav>
     `;
 
     const menu = sidebar.querySelector('.ls-menu');
-    existing.forEach(item=>{
+
+    function createMenuLink(href, label, icon = '', isSub = false) {
       const a = document.createElement('a');
-      a.href = item.href || '#';
-      a.className = 'ls-link';
-      a.innerHTML = `${item.icon}<span class="ls-label">${item.label}</span>`;
-      menu.appendChild(a);
+      a.href = href || '#';
+      a.className = isSub ? 'ls-sublink' : 'ls-link';
+      if (isSub) {
+        a.innerHTML = `<span class="ls-subdot"></span><span class="ls-label">${label}</span>`;
+      } else {
+        a.innerHTML = `${icon}<span class="ls-label">${label}</span>`;
+      }
+      return a;
+    }
+
+    existing.forEach(item => {
+      const children = submenuMap[item.href] || [];
+      if (!children.length) {
+        menu.appendChild(createMenuLink(item.href, item.label, item.icon));
+        return;
+      }
+
+      const group = document.createElement('div');
+      group.className = 'ls-menu-group';
+
+      const header = document.createElement('div');
+      header.className = 'ls-group-header';
+
+      const link = createMenuLink(item.href, item.label, item.icon);
+      const toggleBtn = document.createElement('button');
+      toggleBtn.type = 'button';
+      toggleBtn.className = 'ls-group-toggle';
+      toggleBtn.setAttribute('aria-label', `Toggle ${item.label} submenu`);
+      toggleBtn.setAttribute('aria-expanded', 'false');
+      toggleBtn.innerHTML = '<span class="group-arrow"></span>';
+
+      // Insert toggle inside the link
+      link.appendChild(toggleBtn);
+      
+      header.appendChild(link);
+      group.appendChild(header);
+
+      const submenu = document.createElement('div');
+      submenu.className = 'ls-submenu';
+      children.forEach(child => {
+        submenu.appendChild(createMenuLink(child.href, child.label, '', true));
+      });
+      group.appendChild(submenu);
+
+      const savedOpen = localStorage.getItem(`ls_sidebar_group_${item.href}`);
+      if (savedOpen === 'true') {
+        group.classList.add('open');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+      }
+
+      toggleBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const isOpen = group.classList.toggle('open');
+        toggleBtn.setAttribute('aria-expanded', String(isOpen));
+        localStorage.setItem(`ls_sidebar_group_${item.href}`, String(isOpen));
+      });
+
+      // Only prevent navigation when the submenu toggle is clicked.
+      // Clicking the header link itself should still navigate to the page.
+      link.addEventListener('click', (event) => {
+        if (event.target.closest('.ls-group-toggle')) {
+          event.preventDefault();
+        }
+      });
+
+      menu.appendChild(group);
     });
 
     // Active highlighting
     function highlightActive(){
       const path = window.location.pathname.split('/').pop() || 'dashboard.html';
-      Array.from(menu.querySelectorAll('a')).forEach(a=>{
-        a.classList.toggle('active', a.getAttribute('href') === path || (a.getAttribute('href') === './' && path===''));
+      const hash = window.location.hash || '';
+      const currentFull = path + hash;
+
+      Array.from(menu.querySelectorAll('.ls-menu-group')).forEach(group => {
+        const headerLink = group.querySelector('.ls-link');
+        const sublinks = Array.from(group.querySelectorAll('.ls-sublink'));
+        const isHeaderActive = normalizeHref(headerLink.href) === currentFull;
+        let childActive = false;
+        sublinks.forEach(sublink => {
+          const active = normalizeHref(sublink.href) === currentFull;
+          sublink.classList.toggle('active', active);
+          if (active) childActive = true;
+        });
+        const isActive = isHeaderActive || childActive;
+        headerLink.classList.toggle('active', isActive);
+        if (isActive) {
+          group.classList.add('open');
+        }
+        const toggleBtn = group.querySelector('.ls-group-toggle');
+        if (toggleBtn) toggleBtn.setAttribute('aria-expanded', String(group.classList.contains('open')));
+      });
+
+      Array.from(menu.querySelectorAll('.ls-link')).forEach(link => {
+        if (link.closest('.ls-menu-group')) return;
+        const active = normalizeHref(link.href) === currentFull;
+        link.classList.toggle('active', active);
       });
     }
     highlightActive();
@@ -102,9 +215,37 @@
     const input = sidebar.querySelector('.ls-search input');
     input.addEventListener('input', ()=>{
       const q = input.value.trim().toLowerCase();
-      Array.from(menu.querySelectorAll('a')).forEach(a=>{
-        const label = a.querySelector('.ls-label')?.textContent?.toLowerCase() || '';
-        a.style.display = label.includes(q) ? '' : 'none';
+
+      Array.from(menu.querySelectorAll('.ls-menu-group')).forEach(group => {
+        const headerLink = group.querySelector('.ls-group-header .ls-link');
+        const headerText = headerLink.querySelector('.ls-label')?.textContent?.toLowerCase() || '';
+        let anyChildVisible = false;
+
+        Array.from(group.querySelectorAll('.ls-sublink')).forEach(sublink => {
+          const label = sublink.querySelector('.ls-label')?.textContent?.toLowerCase() || '';
+          const visible = label.includes(q);
+          sublink.style.display = visible ? '' : 'none';
+          if (visible) anyChildVisible = true;
+        });
+
+        const headerVisible = headerText.includes(q);
+        group.querySelector('.ls-group-header').style.display = headerVisible || anyChildVisible ? '' : 'none';
+
+        if (anyChildVisible) {
+          group.classList.add('open');
+          const toggleBtn = group.querySelector('.ls-group-toggle');
+          if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'true');
+        } else if (!headerVisible) {
+          group.classList.remove('open');
+          const toggleBtn = group.querySelector('.ls-group-toggle');
+          if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+        }
+      });
+
+      Array.from(menu.querySelectorAll('a.ls-link')).forEach(link => {
+        if (link.closest('.ls-menu-group')) return;
+        const label = link.querySelector('.ls-label')?.textContent?.toLowerCase() || '';
+        link.style.display = label.includes(q) ? '' : 'none';
       });
     });
 

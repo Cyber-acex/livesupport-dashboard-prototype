@@ -230,16 +230,26 @@ function startSimulation() {
     return;
   }
 
-  // Start simulation for first unstarted delivery
+  // Start simulation for first active delivery that is not already delivered
   for (let delivery of deliveries) {
+    if (delivery.delivery_status === 'delivered') {
+      continue;
+    }
+
     if (!deliverySimulations.has(delivery.id)) {
       simulateDeliveryMovement(delivery.id);
-      alert(`Simulating delivery: ${delivery.order_id}`);
+      alert(`Tracking order ${delivery.order_id}`);
       return;
     }
   }
 
-  alert('All deliveries are already simulating!');
+  const hasUndelivered = deliveries.some(d => d.delivery_status !== 'delivered');
+  if (!hasUndelivered) {
+    alert('Order has already been delivered');
+    return;
+  }
+
+  alert('All non-delivered orders are already simulating!');
 }
 
 // Stop all simulations

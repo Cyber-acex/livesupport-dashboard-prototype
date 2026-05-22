@@ -174,11 +174,27 @@ html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,Arial
 
 @media (max-width:1100px){
   .sidebar{display:none}
-  .dash-header{padding-left:24px}
+  .dash-header{padding-left:20px; padding-right:20px;}
+  .dash-wrap{flex-direction:column; min-height:100vh;}
+  .main-area{padding-left:20px; padding-right:20px;}
+  .dash-header-left{flex:1; min-width:0;}
+  .dash-header-right{flex-wrap:wrap; justify-content:flex-end; gap:10px;}
+  .overview,
+  .secondary { flex-direction:column; }
+  .dash-main { gap:16px; }
+  .card { width:100%; }
 }
 @media (max-width:900px){
   .secondary{flex-direction:column}
   .dash-wrap{padding:12px}
+  .dash-header{padding-left:16px; padding-right:16px;}
+  .main-area{padding-top:100px;}
+  .dash-header{min-height:68px;}
+  .dash-header-right{gap:8px;}
+  .icon-btn, .notification-btn, .profile-btn { width:42px; height:42px; }
+  .notif-popup { right: 10px; left: auto; width: min(92vw, 340px); }
+  .orders-display-table th,
+  .orders-display-table td { padding: 10px 12px; }
 }
 
 /* Messages chart styling */

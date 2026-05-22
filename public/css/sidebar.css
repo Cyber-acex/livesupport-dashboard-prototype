@@ -1,35 +1,79 @@
-.ls-sidebar{display:flex !important;flex-direction:column;min-width:220px;background:#fff;border-right:1px solid #eee;padding:12px 8px;box-sizing:border-box;height:100vh;position:fixed;left:0;top:0;z-index:2000}
+.ls-sidebar{display:flex !important;flex-direction:column;width:260px;min-width:260px;background:#ffffff;border-right:1px solid #e5e7eb;padding:20px 16px 18px;box-sizing:border-box;height:100vh;position:fixed;left:0;top:0;z-index:2000;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#111}
 
 /* Prevent flash of original sidebar before JS runs: hide default sidebar until html.ls-js is added by inline script */
 .sidebar{visibility:hidden;opacity:0;transition:opacity .12s linear}
 html.ls-js .sidebar{visibility:visible;opacity:1}
 .ls-sidebar.collapsed{min-width:56px}
-.ls-top{display:flex;align-items:center;justify-content:space-between;padding:6px 8px}
-.ls-top .logo{font-size:18px;margin:0;color:#a41010}
-.ls-toggle{background:transparent;border:0;font-size:18px;cursor:pointer}
-.ls-search{padding:8px}
-.ls-search input{width:100%;padding:8px;border-radius:8px;border:1px solid #ddd}
-.ls-menu{display:flex;flex-direction:column;gap:6px;padding:8px}
-.ls-menu a{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;text-decoration:none;color:#222}
-.ls-menu a svg{width:20px;height:20px;flex:0 0 20px;fill:currentColor}
-.ls-menu a:hover{background:rgba(0,0,0,0.04)}
-.ls-menu a.active{background:#f3f7ff;border-left:3px solid #0066cc;color:#0066cc}
-.ls-label{white-space:nowrap}
+.ls-top{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:22px}
+.ls-top .logo{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:14px;background:#eff6ff;color:#2563eb;box-shadow:0 12px 30px rgba(37,99,235,0.12)}
+.ls-top .logo svg{width:20px;height:20px;fill:currentColor}
+.ls-toggle{margin-left:auto;background:transparent;border:0;color:#475569;font-size:20px;cursor:pointer}
+.ls-search{padding-bottom:18px}
+.ls-search input{width:100%;padding:10px 12px;border-radius:14px;border:1px solid #d1d5db;background:#f8fafc;color:#0f172a}
+.ls-menu-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.24em;color:#64748b;margin:0 0 12px 4px}
+.ls-menu{display:flex;flex-direction:column;gap:10px}
+.ls-menu-group{display:flex;flex-direction:column;gap:6px}
+.ls-group-header{display:flex;align-items:center;justify-content:space-between;gap:0}
+.ls-group-header .ls-link{flex:1;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:16px;color:#334155;text-decoration:none;background:#ffffff;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.04);transition:background .2s ease,box-shadow .2s ease,color .2s ease;font-size:14px;line-height:20px;font-weight:500;flex-wrap:wrap}
+.ls-group-header .ls-link svg{order:1}
+.ls-group-header .ls-link .ls-label{order:2}
+.ls-group-header .ls-link:hover{background:#eff6ff;color:#1d4ed8;box-shadow:inset 0 0 0 1px rgba(59,130,246,0.16)}
+.ls-menu-group.open > .ls-group-header .ls-link,
+.ls-menu-group .ls-link.active{background:#eff6ff;color:#1d4ed8;box-shadow:inset 0 0 0 1px rgba(59,130,246,0.16);border-left:4px solid #2563eb}
+.ls-group-toggle{display:inline-flex;align-items:center;justify-content:center;width:auto;height:auto;background:transparent;border-radius:0;border:none;color:currentColor;cursor:pointer;transition:transform .2s ease;margin-left:auto;padding:0}
+.ls-group-toggle:hover{background:transparent;color:inherit}
+.ls-group-toggle .group-arrow{display:inline-block;width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid currentColor;transition:transform .2s ease}
+.ls-menu-group.open .group-arrow{transform:rotate(180deg)}
+.ls-submenu{display:flex;flex-direction:column;gap:0;max-height:0;overflow:hidden;opacity:0;transform:translateY(-8px);transition:max-height .24s ease,opacity .24s ease,transform .24s ease;padding-left:12px;border-left:1px solid rgba(148,163,184,0.24);margin-top:6px}
+.ls-menu-group.open > .ls-submenu{max-height:999px;opacity:1;transform:translateY(0)}
+.ls-menu > .ls-link{flex:1;display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:16px;color:#475569;text-decoration:none;background:#ffffff;box-shadow:inset 0 0 0 1px rgba(15,23,42,0.04);transition:background .2s ease,box-shadow .2s ease,color .2s ease;font-size:14px;line-height:20px;font-weight:500}
+.ls-menu > .ls-link svg,
+.ls-menu-group .ls-link svg{width:20px!important;height:20px!important;min-width:20px;min-height:20px;display:block;flex:0 0 20px;fill:currentColor;vertical-align:middle;order:1}
+.ls-menu > .ls-link .ls-label,
+.ls-menu-group .ls-link .ls-label{order:2}
+.ls-menu > .ls-link .ls-group-toggle,
+.ls-menu-group .ls-link .ls-group-toggle{order:3}
+.ls-menu > .ls-link:hover{background:#eff6ff;color:#1d4ed8;box-shadow:inset 0 0 0 1px rgba(59,130,246,0.16)}
+.ls-menu > .ls-link.active{background:#eff6ff;border-left:4px solid #2563eb;color:#2563eb;box-shadow:inset 0 0 0 1px rgba(59,130,246,0.12)}
+.ls-sublink{display:flex;align-items:center;gap:10px;padding:10px 14px;margin-left:0;border-radius:12px;color:#475569;text-decoration:none;background:transparent;transition:background .2s ease,color .2s ease,transform .2s ease;font-size:14px;line-height:20px;font-weight:500;border:none;box-shadow:none}
+.ls-sublink .ls-subdot{width:6px;height:6px;border-radius:999px;background:currentColor;display:inline-block;flex:0 0 auto;margin-right:12px;vertical-align:middle}
+.ls-sublink:hover{background:rgba(59,130,246,0.08);color:#1d4ed8;transform:translateX(1px)}
+.ls-sublink.active{background:rgba(59,130,246,0.16);color:#1d4ed8}
+.ls-sublink.active .ls-subdot{background:#1d4ed8}
+.ls-label{white-space:nowrap;font-size:14px;line-height:20px;font-weight:500}
 .ls-sidebar.collapsed .ls-label,.ls-sidebar.collapsed .ls-search{display:none}
 .ls-sidebar.collapsed{overflow-x:visible}
-/* When fully collapsed, hide most sidebar elements and show a small fixed toggle */
+/* When fully collapsed, show icon-only sidebar and expand on hover */
 .ls-sidebar.collapsed{
-  width:0 !important;
-  min-width:0 !important;
-  padding:0 !important;
-  background:transparent !important;
-  border-right:0 !important;
+  width:46px !important;
+  min-width:46px !important;
+  padding:12px 4px !important;
+  background:#ffffff !important;
+  border-right:1px solid #e5e7eb !important;
   box-shadow:none !important;
 }
-.ls-sidebar.collapsed .ls-menu,
+.ls-sidebar.collapsed .brand,
+.ls-sidebar.collapsed .ls-menu-title,
 .ls-sidebar.collapsed .ls-search,
-.ls-sidebar.collapsed .ls-top .logo,
-.ls-sidebar.collapsed .ls-inpage-slot{ display:none !important }
+.ls-sidebar.collapsed .ls-group-toggle,
+.ls-sidebar.collapsed .ls-sublink{display:none !important}
+.ls-sidebar.collapsed .ls-label{display:none !important}
+.ls-sidebar.collapsed .ls-menu > .ls-link,
+.ls-sidebar.collapsed .ls-group-header{justify-content:center}
+.ls-sidebar.collapsed .ls-menu > .ls-link{padding-left:12px;padding-right:12px}
+.ls-sidebar.collapsed .ls-link{gap:0}
+.ls-sidebar.collapsed .ls-link svg{margin:0 auto}
+.ls-sidebar.collapsed:hover,
+.ls-sidebar.collapsed:hover .ls-search,
+.ls-sidebar.collapsed:hover .ls-menu-title,
+.ls-sidebar.collapsed:hover .ls-label{width:auto;min-width:auto;display:initial !important}
+.ls-sidebar.collapsed:hover .ls-group-toggle{display:flex !important}
+.ls-sidebar.collapsed:hover .ls-sublink{display:flex !important}
+.ls-sidebar.collapsed:hover .brand{display:flex !important}
+.ls-sidebar.collapsed:hover{width:260px !important;min-width:260px !important;padding:20px 16px 18px !important}
+.ls-sidebar.collapsed:hover .ls-menu > .ls-link{padding-left:14px;padding-right:14px}
+.ls-sidebar.collapsed:hover .ls-link{gap:12px}
+.ls-sidebar.collapsed:hover .ls-link svg{margin:0}
 .ls-sidebar.collapsed .ls-toggle{
   display:block !important;
   position:fixed !important;
@@ -42,22 +86,22 @@ html.ls-js .sidebar{visibility:visible;opacity:1}
   box-shadow:0 6px 18px rgba(0,0,0,0.12) !important;
 }
 .ls-top .logo{font-size:18px;margin:0;color:#a41010}
-.ls-sidebar.collapsed .ls-top .logo{display:none}
 .ls-toggle{font-size:20px}
 
 /* Small screens: collapse into a top drawer */
-/* Ensure the original aside.sidebar layout matches our enhanced component and remove excess padding that caused gaps */
-.sidebar{padding:8px !important; width:220px !important}
+.sidebar{padding:8px !important; width:260px !important}
 
 /* Keep main content aligned with sidebar width */
-.main{margin-left:220px !important}
+.main{margin-left:260px !important}
 .ls-sidebar.collapsed + .main, .sidebar.collapsed ~ .main { margin-left:0 !important }
 
 @media (max-width:900px){
   /* small screens: show sidebar as an overlay drawer */
-  .ls-sidebar{position:fixed;left:0;top:0;height:100vh;z-index:2000;transform:translateX(-110%);transition:transform .2s ease;box-shadow:0 6px 24px rgba(0,0,0,0.12)}
+  .ls-sidebar{position:fixed;left:0;top:0;height:100vh;z-index:2000;transform:translateX(-110%);transition:transform .2s ease;box-shadow:0 6px 24px rgba(0,0,0,0.12);width:min(320px,100vw);max-width:320px;border-radius:0 20px 20px 0;}
   .ls-sidebar.open{transform:translateX(0)}
-  .ls-sidebar.collapsed{min-width:220px}
+  .ls-sidebar.collapsed{min-width:220px;width:220px}
+  .ls-toggle{position:fixed !important;left:14px !important;top:14px !important;z-index:3001 !important;}
+  .ls-top{align-items:center;}
   .main{margin-left:0 !important}
 }
 
@@ -68,7 +112,3 @@ html.ls-js .sidebar{visibility:visible;opacity:1}
 
 /* Smooth main margin transitions when sidebar toggles */
 .main{transition:margin-left .18s ease}
-
-/* Ensure small collapsed width used consistently */
-.ls-sidebar{width:220px}
-.ls-sidebar.collapsed{width:0}
