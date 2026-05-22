@@ -623,6 +623,17 @@ input:checked + .slider {
             <small style="color:#94a3b8; display:block; margin-top:6px;">Compact (90%), Normal (100%), Large (110%), Extra Large (120%)</small>
           </div>
 
+          <div class="form-group">
+            <label for="pageZoom">Page Zoom</label>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <button id="zoomOutBtn" onclick="adjustZoom(-0.05)" style="padding:8px 12px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#e2e8f0; cursor:pointer; hover:background-color: rgba(255,255,255,0.2);">−</button>
+              <input type="range" id="pageZoomRange" min="25" max="150" step="5" value="100" oninput="setZoom(this.value)">
+              <button id="zoomInBtn" onclick="adjustZoom(0.05)" style="padding:8px 12px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:8px; color:#e2e8f0; cursor:pointer; hover:background-color: rgba(255,255,255,0.2);">+</button>
+              <span id="zoomLabel" style="min-width:60px; text-align:right; color:#cbd5e1;">100%</span>
+            </div>
+            <small style="color:#94a3b8; display:block; margin-top:6px;">Zoom between 25% and 150%</small>
+          </div>
+
           <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:16px; padding:16px; margin:16px 0; font-size:13px; color:#cbd5e1;">
             <strong>Preview:</strong> Sidebar position and width changes apply immediately. Refresh the page or navigate to see full effect.
           </div>

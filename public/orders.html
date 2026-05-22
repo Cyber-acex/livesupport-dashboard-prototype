@@ -25,7 +25,9 @@
   </script>
   <style>
     .orders-container {
-      padding: 20px;
+      padding: 0;
+      width: 100%;
+      min-height: 100vh;
     }
     
     .orders-header {
@@ -326,8 +328,27 @@
       box-shadow: 0 36px 80px rgba(0, 0, 0, 0.18);
       padding: 28px;
       position: relative;
-      overflow: hidden;
+      overflow-y: auto;
+      max-height: 90vh;
       backdrop-filter: saturate(180%) blur(18px);
+    }
+    
+    .modal-card::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    .modal-card::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.05);
+      border-radius: 10px;
+    }
+    
+    .modal-card::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+    }
+    
+    .modal-card::-webkit-scrollbar-thumb:hover {
+      background: rgba(0, 0, 0, 0.3);
     }
     .modal-card::before {
       content: '';
@@ -473,6 +494,60 @@
     
     .cancel-btn:hover {
       background: #c82333;
+    }
+    
+    #addOrderItemBtn {
+      width: 100%;
+      padding: 12px 16px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(79, 70, 229, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%);
+      color: #4f46e5;
+      border: 2px solid #4f46e5;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    #addOrderItemBtn:hover {
+      background: linear-gradient(135deg, rgba(79, 70, 229, 0.2) 0%, rgba(59, 130, 246, 0.2) 100%);
+      border-color: #3b82f6;
+      color: #3b82f6;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 16px rgba(79, 70, 229, 0.2);
+    }
+    
+    #addOrderItemBtn:active {
+      transform: translateY(0px);
+    }
+    
+    .order-item-row .btn-secondary {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(220, 38, 38, 0.1) 100%);
+      color: #ef4444;
+      border: 2px solid #ef4444;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      white-space: nowrap;
+    }
+    
+    .order-item-row .btn-secondary:hover {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.2) 100%);
+      border-color: #dc2626;
+      color: #dc2626;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(239, 68, 68, 0.2);
+    }
+    
+    .order-item-row .btn-secondary:active {
+      transform: translateY(0px);
     }
     
     .empty-state {
@@ -1167,21 +1242,33 @@
           <label for="customerName">Customer Name</label>
           <input id="customerName" required autocomplete="off" placeholder="Enter customer name">
         </div>
-        <div class="modal-field">
-          <label for="menuItemSelect">Menu Item</label>
-          <select id="menuItemSelect" required onchange="updateOrderAmount()">
-            <option value="">-- Select a menu item --</option>
-          </select>
+        <div id="orderItemsContainer">
+          <div class="modal-grid order-item-row">
+            <div class="modal-field">
+              <label>Menu Item</label>
+              <select class="menuItemSelect" required onchange="updateOrderAmount()">
+                <option value="">-- Select a menu item --</option>
+              </select>
+            </div>
+            <div class="modal-field">
+              <label>Quantity</label>
+              <input class="orderQuantity" type="number" step="1" min="1" value="1" required onchange="updateOrderAmount()">
+            </div>
+            <div class="modal-field">
+              <label>Item Amount</label>
+              <input class="itemAmount" type="number" step="0.01" readonly placeholder="0.00">
+            </div>
+            <div class="modal-field" style="align-self:center;">
+              <button type="button" class="btn btn-secondary" onclick="removeOrderItemRow(this)" style="height:36px;">Remove</button>
+            </div>
+          </div>
         </div>
-        <div class="modal-grid">
-          <div class="modal-field">
-            <label for="orderQuantity">Quantity</label>
-            <input id="orderQuantity" type="number" step="1" min="1" value="1" required onchange="updateOrderAmount()">
-          </div>
-          <div class="modal-field">
-            <label for="amount">Total Amount</label>
-            <input id="amount" type="number" step="0.01" readonly placeholder="0.00">
-          </div>
+        <div style="margin:8px 0;">
+          <button type="button" class="btn" id="addOrderItemBtn" onclick="addOrderItemRow()">+ Add another product</button>
+        </div>
+        <div class="modal-field">
+          <label for="amount">Total Amount</label>
+          <input id="amount" type="number" step="0.01" readonly placeholder="0.00">
         </div>
         <div class="modal-grid">
           <div class="modal-field">

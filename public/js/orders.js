@@ -15,16 +15,42 @@ let currentMenuSort = 'score_desc';
 let currentMenuSection = 'items';
 let tableLayout = [];
 
+function normalizeDate(value) {
+  if (!value) return new Date().toISOString();
+  // Numbers may be seconds (unix) or milliseconds. Treat small numbers as seconds.
+  if (typeof value === 'number') {
+    return value < 1e10 ? new Date(value * 1000).toISOString() : new Date(value).toISOString();
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const n = Number(value);
+    return n < 1e10 ? new Date(n * 1000).toISOString() : new Date(n).toISOString();
+  }
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toISOString();
+}
+
 function formatOrderTimestamp(value) {
   if (!value) return 'Unknown';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString([], {
+  // Accept either ISO strings or numeric epochs (seconds/ms)
+  let dateObj;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    dateObj = new Date(value);
+  } else if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const n = Number(value);
+    dateObj = n < 1e10 ? new Date(n * 1000) : new Date(n);
+  } else if (typeof value === 'number') {
+    dateObj = value < 1e10 ? new Date(value * 1000) : new Date(value);
+  } else {
+    dateObj = new Date(value);
+  }
+  if (Number.isNaN(dateObj.getTime())) return String(value);
+  return dateObj.toLocaleString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    hour12: true
   });
 }
 
@@ -67,7 +93,7 @@ function setupRealtimeUpdates() {
       product: payload.product || '',
       amount: Number(payload.amount || 0),
       status: payload.status || 'pending',
-      date: payload.date || new Date().toISOString()
+      date: normalizeDate(payload.date || new Date().toISOString())
     };
     // Insert at top
     allOrders.unshift(order);
@@ -126,11 +152,12 @@ async function loadOrders() {
     if (response.ok) {
       allOrders = await response.json();
       // normalize amount and date fields for safety
-      allOrders = allOrders.map(o => ({
-        ...o,
-        amount: Number(o.amount || o.total || 0),
-        date: o.date || (o.created_at || o.createdAt) || new Date().toISOString()
-      }));
+      allOrders = allOrders.map(o => {
+        const amount = Number(o.amount || o.total || 0);
+        const rawDate = o.date ?? o.created_at ?? o.createdAt ?? new Date().toISOString();
+        const date = normalizeDate(rawDate);
+        return { ...o, amount, date };
+      });
       filteredOrders = [...allOrders];
       displayOrders();
     } else {
@@ -166,7 +193,7 @@ function generateSampleOrders() {
       product: 'Premium Package',
       amount: 5000,
       status: 'completed',
-      date: new Date(2026, 3, 20).toLocaleDateString()
+      date: new Date(2026, 3, 20).toISOString()
     },
     {
       id: 'ORD-002',
@@ -174,7 +201,7 @@ function generateSampleOrders() {
       product: 'Basic Package',
       amount: 2500,
       status: 'processing',
-      date: new Date(2026, 3, 22).toLocaleDateString()
+      date: new Date(2026, 3, 22).toISOString()
     },
     {
       id: 'ORD-003',
@@ -182,7 +209,7 @@ function generateSampleOrders() {
       product: 'Enterprise Package',
       amount: 10000,
       status: 'pending',
-      date: new Date(2026, 3, 23).toLocaleDateString()
+      date: new Date(2026, 3, 23).toISOString()
     },
     {
       id: 'ORD-004',
@@ -190,7 +217,7 @@ function generateSampleOrders() {
       product: 'Standard Package',
       amount: 3500,
       status: 'completed',
-      date: new Date(2026, 3, 21).toLocaleDateString()
+      date: new Date(2026, 3, 21).toISOString()
     },
     {
       id: 'ORD-005',
@@ -198,7 +225,7 @@ function generateSampleOrders() {
       product: 'Premium Package',
       amount: 5000,
       status: 'cancelled',
-      date: new Date(2026, 3, 19).toLocaleDateString()
+      date: new Date(2026, 3, 19).toISOString()
     }
   ];
 }
@@ -338,61 +365,79 @@ function clearFilters() {
 }
 // Open new order modal
 function openNewOrderModal() {
-  // Populate menu items dropdown
-  const select = document.getElementById('menuItemSelect');
-  select.innerHTML = '<option value="">-- Select a menu item --</option>';
-  menuItems.filter(item => item.available && item.stock > 0).forEach(item => {
-    const option = document.createElement('option');
-    option.value = item.id;
-    option.textContent = `${item.name} - $${item.price.toFixed(2)} (Stock: ${item.stock})`;
-    select.appendChild(option);
-  });
+  // Initialize order items container with one row and populate selects
+  const container = document.getElementById('orderItemsContainer');
+  container.innerHTML = '';
+  addOrderItemRow();
+  document.getElementById('amount').value = '';
   document.getElementById('orderModal').style.display = 'flex';
 }
 
 function updateOrderAmount() {
-  const select = document.getElementById('menuItemSelect');
-  const quantity = parseInt(document.getElementById('orderQuantity').value) || 1;
-  const amountInput = document.getElementById('amount');
-  
-  if (!select.value) {
-    amountInput.value = '';
-    return;
-  }
-  
-  const item = menuItems.find(i => i.id === select.value);
-  if (item) {
-    const total = (item.price * quantity).toFixed(2);
-    amountInput.value = total;
-  }
+  const container = document.getElementById('orderItemsContainer');
+  const rows = container.querySelectorAll('.order-item-row');
+  let total = 0;
+  rows.forEach(row => {
+    const select = row.querySelector('.menuItemSelect');
+    const qtyInput = row.querySelector('.orderQuantity');
+    const itemAmountInput = row.querySelector('.itemAmount');
+    const qty = parseInt(qtyInput.value) || 1;
+    if (!select.value) {
+      itemAmountInput.value = '';
+      return;
+    }
+    const item = menuItems.find(i => i.id === select.value);
+    if (item) {
+      const itemTotal = parseFloat((item.price * qty).toFixed(2));
+      itemAmountInput.value = itemTotal;
+      total += itemTotal;
+    } else {
+      itemAmountInput.value = '';
+    }
+  });
+  document.getElementById('amount').value = total ? total.toFixed(2) : '';
 }
 // Close order modal
 function closeOrderModal() {
   document.getElementById('orderModal').style.display = 'none';
   document.getElementById('orderForm').reset();
+  const container = document.getElementById('orderItemsContainer');
+  if (container) container.innerHTML = '';
 }
 // Handle create order
 async function handleCreateOrder(event) {
   event.preventDefault();
   const customerName = document.getElementById('customerName').value;
-  const menuItemId = document.getElementById('menuItemSelect').value;
-  const quantity = parseInt(document.getElementById('orderQuantity').value) || 1;
-  const amount = parseFloat(document.getElementById('amount').value);
+  const amount = parseFloat(document.getElementById('amount').value) || 0;
+  // Collect item rows
+  const container = document.getElementById('orderItemsContainer');
+  const rows = container.querySelectorAll('.order-item-row');
+  const items = [];
+  let totalQuantity = 0;
+  for (const row of rows) {
+    const select = row.querySelector('.menuItemSelect');
+    const qtyInput = row.querySelector('.orderQuantity');
+    const qty = parseInt(qtyInput.value) || 1;
+    if (!select.value) {
+      alert('Please select a menu item for each row');
+      return;
+    }
+    const item = menuItems.find(i => i.id === select.value);
+    if (!item) {
+      alert('Menu item not found');
+      return;
+    }
+    if (qty > item.stock) {
+      alert(`Insufficient stock for ${item.name}. Available: ${item.stock}`);
+      return;
+    }
+    items.push({ menuItemId: item.id, name: item.name, quantity: qty, price: item.price });
+    totalQuantity += qty;
+  }
   const status = document.getElementById('orderStatus').value;
-  
-  if (!menuItemId) {
-    alert('Please select a menu item');
-    return;
-  }
-  
-  const item = menuItems.find(i => i.id === menuItemId);
-  if (!item) {
-    alert('Menu item not found');
-    return;
-  }
-  
-  if (quantity > item.stock) {
-    alert(`Insufficient stock. Available: ${item.stock}`);
+
+  if (items.length === 0) {
+    alert('Please add at least one product');
     return;
   }
   
@@ -403,18 +448,22 @@ async function handleCreateOrder(event) {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        customerName,
-        product: item.name,
-        menuItemId,
-        quantity,
-        amount,
-        status
+          customerName,
+          product: items.map(i=>i.name).join(', '),
+          menuItemId: items[0] ? items[0].menuItemId : null,
+          quantity: totalQuantity,
+          amount,
+          status,
+          items
       })
     });
     if (response.ok) {
       const data = await response.json();
-      // Decrease stock locally
-      item.stock -= quantity;
+        // Decrease stock locally for each item
+        items.forEach(it => {
+          const mi = menuItems.find(m=>m.id===it.menuItemId);
+          if (mi) mi.stock -= it.quantity;
+        });
       applyMenuFilters();
       renderMenu();
       showNotification('Order created successfully!');
@@ -429,6 +478,54 @@ async function handleCreateOrder(event) {
     alert('Error creating order: ' + error.message);
   }
 }
+
+// Add new order item row
+function addOrderItemRow() {
+  const container = document.getElementById('orderItemsContainer');
+  const row = document.createElement('div');
+  row.className = 'modal-grid order-item-row';
+  
+  const availableItems = menuItems.filter(item => item.available && item.stock > 0);
+  const optionsHtml = availableItems.map(item => 
+    `<option value="${item.id}">${item.name} - $${item.price.toFixed(2)} (Stock: ${item.stock})</option>`
+  ).join('');
+  
+  row.innerHTML = `
+    <div class="modal-field">
+      <label>Menu Item</label>
+      <select class="menuItemSelect" required onchange="updateOrderAmount()">
+        <option value="">-- Select a menu item --</option>
+        ${optionsHtml}
+      </select>
+    </div>
+    <div class="modal-field">
+      <label>Quantity</label>
+      <input class="orderQuantity" type="number" step="1" min="1" value="1" required onchange="updateOrderAmount()">
+    </div>
+    <div class="modal-field">
+      <label>Item Amount</label>
+      <input class="itemAmount" type="number" step="0.01" readonly placeholder="0.00">
+    </div>
+    <div class="modal-field" style="align-self:center;">
+      <button type="button" class="btn btn-secondary" onclick="removeOrderItemRow(this)" style="height:36px;">Remove</button>
+    </div>
+  `;
+  
+  container.appendChild(row);
+}
+
+// Remove order item row
+function removeOrderItemRow(button) {
+  const row = button.closest('.order-item-row');
+  const container = document.getElementById('orderItemsContainer');
+  if (container.querySelectorAll('.order-item-row').length > 1) {
+    row.remove();
+    updateOrderAmount();
+  } else {
+    alert('You must have at least one product');
+  }
+}
+
 // View order details
 function viewOrderDetails(orderId) {
   openOrderModal(orderId);

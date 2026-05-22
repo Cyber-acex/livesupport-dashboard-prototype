@@ -146,8 +146,8 @@ fetch("/api/user")
 <!---->
 <script src="/socket.io/socket.io.js"></script>
 <script src="./js/notification-sound.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="./js/analytics.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="./js/analytics.js" defer></script>
 <script src="./js/staff-performance.js"></script>
 <script src="./js/sidebar.js" defer></script>
 <!-- Add canvas elements for the charts -->
@@ -201,7 +201,6 @@ fetch("/api/user")
     .chart-container.chart-fullwidth { width: 98%; min-width: auto; }
 
     canvas { width: 100% !important; height: auto !important; max-height: 480px; }
-    .chart-item canvas { min-height: 300px; }
 
     /* On small screens stack charts */
     @media (max-width: 980px) {
@@ -722,7 +721,7 @@ fetch("/api/user")
 
   <div class="chart-container chart-fullwidth">
     <div class="chart-item">
-        <h3>Line Chart 1</h3>
+        <h3>AI vs Staff Messages (Monthly)</h3>
         <canvas id="aiStaffMonthlyChart" width="800" height="300"></canvas>
     </div>
   </div>

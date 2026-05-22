@@ -255,4 +255,23 @@
     }
   });
 
+  // Initialize page zoom from localStorage
+  (function initializeZoom() {
+    const savedZoom = localStorage.getItem('pageZoom');
+    if (savedZoom) {
+      const zoomPercentage = Number(savedZoom);
+      if (zoomPercentage >= 25 && zoomPercentage <= 150) {
+        const zoomFactor = zoomPercentage / 100;
+        
+        // Try to use Electron webFrame if available
+        if (typeof window !== 'undefined' && window.electronAPI && typeof window.electronAPI.setZoom === 'function') {
+          window.electronAPI.setZoom(zoomFactor);
+        } else {
+          // Fallback: use CSS zoom for web browsers
+          document.documentElement.style.zoom = zoomPercentage + '%';
+        }
+      }
+    }
+  })();
+
 })();

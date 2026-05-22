@@ -7,6 +7,7 @@ const deliveryMarkers = new Map();
 const deliveryPolylines = new Map();
 const deliverySimulations = new Map();
 const activeDeliveries = new Map();
+let selectedDeliveryId = null;
 
 // Ikeja, Lagos coordinates as default center
 const DEFAULT_CENTER = { lat: 6.5244, lng: 3.3792 };
@@ -124,7 +125,7 @@ function updateDeliveriesList() {
 
   list.innerHTML = deliveries
     .map(d => `
-      <div class="delivery-item ${d.isActive ? 'active' : ''}" onclick="focusDelivery(${d.id})">
+      <div class="delivery-item ${d.id === selectedDeliveryId ? 'active' : ''}" data-delivery-id="${d.id}" onclick="focusDelivery(${d.id})">
         <div class="delivery-header">
           <span>${d.order_id || `Order #${d.id}`}</span>
           <span class="delivery-status ${d.delivery_status}">${d.delivery_status || 'pending'}</span>
@@ -151,9 +152,12 @@ function focusDelivery(deliveryId) {
     marker.openPopup();
   }
 
+  selectedDeliveryId = deliveryId;
+
   // Update UI
   document.querySelectorAll('.delivery-item').forEach(item => item.classList.remove('active'));
-  event.currentTarget.classList.add('active');
+  const selectedItem = document.querySelector(`.delivery-item[data-delivery-id="${deliveryId}"]`);
+  if (selectedItem) selectedItem.classList.add('active');
 }
 
 // Center map on first active delivery
@@ -227,6 +231,23 @@ function startSimulation() {
   const deliveries = Array.from(activeDeliveries.values());
   if (deliveries.length === 0) {
     alert('Please add or load deliveries first');
+    return;
+  }
+
+  if (selectedDeliveryId && activeDeliveries.has(selectedDeliveryId)) {
+    const selectedDelivery = activeDeliveries.get(selectedDeliveryId);
+    if (selectedDelivery.delivery_status === 'delivered') {
+      alert('Order has already been delivered');
+      return;
+    }
+
+    if (deliverySimulations.has(selectedDelivery.id)) {
+      alert('This order is already being tracked');
+      return;
+    }
+
+    simulateDeliveryMovement(selectedDelivery.id);
+    alert(`Tracking order ${selectedDelivery.order_id}`);
     return;
   }
 
@@ -389,6 +410,7 @@ async function searchOrderById() {
 
       // Add to active deliveries (overwrite if exists)
       activeDeliveries.set(deliveryToAdd.id, deliveryToAdd);
+      selectedDeliveryId = deliveryToAdd.id;
       
       // Update map
       addDeliveryToMap(deliveryToAdd);

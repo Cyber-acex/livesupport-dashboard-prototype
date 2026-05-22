@@ -11,6 +11,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const fontSizeRange = document.getElementById('fontSizeRange');
   if (fontSizeRange) fontSizeRange.value = savedFontSize;
 
+  // Load page zoom
+  const savedZoom = localStorage.getItem('pageZoom') || '100';
+  applyZoom(Number(savedZoom));
+  const zoomRange = document.getElementById('pageZoomRange');
+  if (zoomRange) zoomRange.value = savedZoom;
+
   // Optional: update the appearance select in settings page
   const themeSelect = document.getElementById('theme');
   if (themeSelect) themeSelect.value = theme;
@@ -116,4 +122,54 @@ function loadSidebarSettings() {
 
   if (positionSelect) positionSelect.value = savedPosition;
   if (widthSelect) widthSelect.value = savedWidth;
+}
+
+/**
+ * Apply page zoom using JavaScript zoom or Electron webFrame
+ */
+function applyZoom(zoomPercentage) {
+  // Clamp zoom between 25% and 150%
+  const clampedZoom = Math.max(25, Math.min(150, zoomPercentage));
+  
+  // Convert percentage to decimal (e.g., 100 -> 1.0, 125 -> 1.25)
+  const zoomFactor = clampedZoom / 100;
+
+  // Try to use Electron webFrame if available
+  if (typeof window !== 'undefined' && window.electronAPI && typeof window.electronAPI.setZoom === 'function') {
+    window.electronAPI.setZoom(zoomFactor);
+  } else {
+    // Fallback: use CSS zoom for web browsers
+    document.documentElement.style.zoom = clampedZoom + '%';
+  }
+
+  // Update localStorage
+  localStorage.setItem('pageZoom', clampedZoom);
+
+  // Update the zoom label
+  const zoomLabel = document.getElementById('zoomLabel');
+  if (zoomLabel) {
+    zoomLabel.textContent = clampedZoom + '%';
+  }
+
+  // Update the zoom range input
+  const zoomRange = document.getElementById('pageZoomRange');
+  if (zoomRange) {
+    zoomRange.value = clampedZoom;
+  }
+}
+
+/**
+ * Set zoom to a specific percentage
+ */
+function setZoom(percentage) {
+  applyZoom(Number(percentage));
+}
+
+/**
+ * Adjust zoom by a given factor (e.g., 0.05 for +5%, -0.05 for -5%)
+ */
+function adjustZoom(factor) {
+  const currentZoom = Number(localStorage.getItem('pageZoom')) || 100;
+  const newZoom = currentZoom + (factor * 100);
+  applyZoom(newZoom);
 }

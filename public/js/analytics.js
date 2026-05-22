@@ -1,8 +1,11 @@
 // Ensure the DOM is fully loaded before initializing the pie chart
 document.addEventListener('DOMContentLoaded', () => {
-    const ctx5 = document.getElementById('chart5').getContext('2d');
-    const barCtx = document.getElementById('ticketBarChart').getContext('2d');
-    const messageCtx = document.getElementById('messageBarChart').getContext('2d');
+    const chart5 = document.getElementById('chart5');
+    const ticketCanvas = document.getElementById('ticketBarChart');
+    const messageCanvas = document.getElementById('messageBarChart');
+    const ctx5 = chart5 ? chart5.getContext('2d') : null;
+    const barCtx = ticketCanvas ? ticketCanvas.getContext('2d') : null;
+    const messageCtx = messageCanvas ? messageCanvas.getContext('2d') : null;
     const gaugeRespCtx = document.getElementById('gaugeResponse') ? document.getElementById('gaugeResponse').getContext('2d') : null;
     const gaugeResRateCtx = document.getElementById('gaugeResolution') ? document.getElementById('gaugeResolution').getContext('2d') : null;
     let gaugeRespChart = null;
@@ -120,7 +123,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Fetch counts from server and render bar chart (fetchTicketsByPeriod already returns parsed JSON)
-    ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
+    if (barCtx) {
+        ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
+    } else {
+        console.warn('Ticket bar chart canvas not found.');
+    }
     messageChart = null; // created later after the function definition
     const aiStaffCtx = document.getElementById('aiStaffMonthlyChart') ? document.getElementById('aiStaffMonthlyChart').getContext('2d') : null;
     let aiStaffChart = null;
@@ -462,70 +469,34 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    const lineChartHoverPlugin = {
-        id: 'lineChartHoverPlugin',
-        afterDraw: chart => {
-            const active = chart.tooltip && typeof chart.tooltip.getActiveElements === 'function'
-                ? chart.tooltip.getActiveElements()
-                : (typeof chart.getActiveElements === 'function' ? chart.getActiveElements() : []);
-            if (!active || !active.length) return;
-            const activeElement = active[0];
-            const x = activeElement.element ? activeElement.element.x : activeElement.x;
-            const yTop = chart.scales.y.top;
-            const yBottom = chart.scales.y.bottom;
-            if (typeof x !== 'number' || typeof yTop !== 'number' || typeof yBottom !== 'number') return;
-            const ctx = chart.ctx;
-            ctx.save();
-            ctx.beginPath();
-            ctx.setLineDash([6, 6]);
-            ctx.strokeStyle = 'rgba(148, 163, 184, 0.92)';
-            ctx.lineWidth = 1;
-            ctx.moveTo(x, yTop);
-            ctx.lineTo(x, yBottom);
-            ctx.stroke();
-            ctx.restore();
-        }
-    };
-
     function createAIStaffMonthlyChart(ctx, labels, aiData, staffData) {
-        const gradientSales = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
-        gradientSales.addColorStop(0, 'rgba(59, 130, 246, 0.24)');
-        gradientSales.addColorStop(1, 'rgba(59, 130, 246, 0.04)');
-        const gradientRevenue = ctx.createLinearGradient(0, 0, 0, ctx.canvas.height);
-        gradientRevenue.addColorStop(0, 'rgba(147, 197, 253, 0.22)');
-        gradientRevenue.addColorStop(1, 'rgba(147, 197, 253, 0.04)');
-
         return new Chart(ctx, {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [
                     {
-                        label: 'Sales',
+                        label: 'AI Messages',
                         data: aiData,
-                        borderColor: '#2563eb',
-                        backgroundColor: gradientSales,
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59,130,246,0.18)',
                         fill: true,
-                        tension: 0.38,
+                        tension: 0.34,
                         pointBackgroundColor: '#ffffff',
-                        pointBorderColor: '#2563eb',
+                        pointBorderColor: '#3b82f6',
                         pointRadius: 4,
-                        pointHoverRadius: 6,
-                        pointHoverBorderWidth: 2,
                         borderWidth: 3
                     },
                     {
-                        label: 'Revenue',
+                        label: 'Staff Messages',
                         data: staffData,
-                        borderColor: '#60a5fa',
-                        backgroundColor: gradientRevenue,
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16,185,129,0.18)',
                         fill: true,
-                        tension: 0.38,
+                        tension: 0.34,
                         pointBackgroundColor: '#ffffff',
-                        pointBorderColor: '#60a5fa',
+                        pointBorderColor: '#10b981',
                         pointRadius: 4,
-                        pointHoverRadius: 6,
-                        pointHoverBorderWidth: 2,
                         borderWidth: 3
                     }
                 ]
@@ -535,58 +506,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 plugins: {
                     legend: {
                         display: true,
-                        position: 'top',
-                        labels: {
-                            color: '#475569',
-                            usePointStyle: true,
-                            pointStyle: 'circle',
-                            padding: 16
-                        }
+                        position: 'top'
+                    },
+                    title: {
+                        display: true,
+                        text: 'AI vs Staff Messages - Last 12 Months'
                     },
                     tooltip: {
-                        enabled: true,
                         mode: 'index',
-                        intersect: false,
-                        backgroundColor: '#ffffff',
-                        titleColor: '#0f172a',
-                        bodyColor: '#0f172a',
-                        borderColor: 'rgba(148, 163, 184, 0.3)',
-                        borderWidth: 1,
-                        padding: 12,
-                        displayColors: true,
-                        callbacks: {
-                            title: items => items && items.length ? items[0].label : '',
-                            label: context => `${context.dataset.label}: ${context.parsed.y}`
-                        }
+                        intersect: false
                     }
                 },
                 interaction: {
-                    mode: 'index',
+                    mode: 'nearest',
                     intersect: false
                 },
                 scales: {
                     x: {
-                        grid: {
-                            display: false,
-                            drawBorder: false
-                        },
-                        ticks: {
-                            color: '#475569'
-                        }
+                        grid: { display: false },
+                        ticks: { color: '#333' }
                     },
                     y: {
                         beginAtZero: true,
-                        grid: {
-                            color: 'rgba(148, 163, 184, 0.16)',
-                            drawBorder: false
-                        },
-                        ticks: {
-                            color: '#475569'
-                        }
+                        ticks: { color: '#333' }
                     }
                 }
-            },
-            plugins: [lineChartHoverPlugin]
+            }
         });
     }
 

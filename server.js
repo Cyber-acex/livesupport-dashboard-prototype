@@ -3327,24 +3327,40 @@ app.get('/api/orders', (req, res) => {
 
 // Create new order
 app.post('/api/orders', (req, res) => {
-    const { customerName, product, menuItemId, quantity, amount, status } = req.body;
-    
-    if (!customerName || !product || !amount) {
-        return res.status(400).json({ error: "Missing required fields: customerName, product, amount" });
+    // Accept both legacy single-item payloads and new multi-item payloads
+    const { customerName, product, menuItemId, quantity, amount, status, items } = req.body;
+
+    // Basic validation: require customerName and amount (amount can be 0)
+    if (!customerName || (amount === undefined || amount === null)) {
+        return res.status(400).json({ error: "Missing required fields: customerName, amount" });
     }
 
     // Generate order ID
     const orderId = `ORD-${Date.now()}`;
-    
-    // Format product info
-    const productDisplay = quantity ? `${product} x${quantity}` : product;
-    
+
+    // If `items` array provided, format a combined product display and compute total quantity
+    let productDisplay = '';
+    let totalQuantity = 0;
+    if (Array.isArray(items) && items.length > 0) {
+        productDisplay = items.map(it => {
+            const q = Number(it.quantity || 1);
+            totalQuantity += q;
+            // Format: "2x Small Pizza" for qty > 1, "Small Pizza" for qty === 1
+            return q > 1 ? `${q}x ${it.name}` : it.name;
+        }).join(', ');
+    } else {
+        totalQuantity = Number(quantity) || 0;
+        productDisplay = totalQuantity ? `${product} x${totalQuantity}` : (product || '');
+    }
+
+    const now = new Date();
     const insertSql = isPg
-        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id'
-        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status) VALUES (?, ?, ?, ?, ?, ?, ?)';
+        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id'
+        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+
     db.query(
         insertSql,
-        [orderId, customerName, null, productDisplay, amount, amount, status || 'pending'],
+        [orderId, customerName, null, productDisplay, amount, amount, status || 'pending', now],
         (err, result) => {
             if (err) {
                 console.error('Error creating order:', err);
@@ -3352,6 +3368,8 @@ app.post('/api/orders', (req, res) => {
             }
 
             const responsePayload = { success: true, orderId, id: result.insertId || result.rows?.[0]?.id };
+
+            // Optionally: persist individual item lines to another table in future
 
             startDeliverySimulationForOrder(orderId, (deliveryErr) => {
                 if (deliveryErr) {

@@ -6,6 +6,7 @@
   <title>Dashboard LiveSupport</title>
   <link rel="icon" href="/favicon.png" type="image/png">
   <link rel="shortcut icon" href="/favicon.png">
+  <script src="./js/user.js"></script>
   <script>document.documentElement.classList.add('ls-js');</script>
   <script>
     // Apply theme from localStorage immediately to prevent flash
@@ -34,6 +35,20 @@
         // Set data attributes so we can apply classes after DOM loads
         document.documentElement.setAttribute('data-sidebar-pos', sidebarPosition);
         document.documentElement.setAttribute('data-sidebar-width', sidebarWidth);
+      }catch(e){}
+    })();
+  </script>
+  <script>
+    // Apply page zoom immediately to prevent layout shift
+    (function(){
+      try{
+        const savedZoom = localStorage.getItem('pageZoom');
+        if (savedZoom) {
+          const zoomPercentage = Number(savedZoom);
+          if (zoomPercentage >= 25 && zoomPercentage <= 150) {
+            document.documentElement.style.zoom = zoomPercentage + '%';
+          }
+        }
       }catch(e){}
     })();
   </script>
