@@ -1,6 +1,5 @@
 // Ensure the DOM is fully loaded before initializing the pie chart
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[Analytics] DOMContentLoaded event triggered');
     const chart5 = document.getElementById('chart5');
     const ticketCanvas = document.getElementById('ticketBarChart');
     const messageCanvas = document.getElementById('messageBarChart');
@@ -9,7 +8,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const messageCtx = messageCanvas ? messageCanvas.getContext('2d') : null;
     const gaugeRespCtx = document.getElementById('gaugeResponse') ? document.getElementById('gaugeResponse').getContext('2d') : null;
     const gaugeResRateCtx = document.getElementById('gaugeResolution') ? document.getElementById('gaugeResolution').getContext('2d') : null;
-    console.log('[Analytics] Canvas elements found - barCtx:', !!barCtx, 'messageCtx:', !!messageCtx);
     let gaugeRespChart = null;
     let gaugeResRateChart = null;
     let ticketChart = null;
@@ -60,34 +58,22 @@ document.addEventListener('DOMContentLoaded', () => {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                interaction: {
-                    intersect: false,
-                    mode: 'index'
-                },
                 plugins: {
                     legend: {
                         display: false
                     },
                     tooltip: {
-                        enabled: true,
                         callbacks: {
-                            afterLabel: (context) => {
+                            label: context => {
                                 const value = context.raw || 0;
-                                setTicketBarHoverDetails(context.label, value);
-                                return '';
-                            },
-                            title: () => ''
+                                return ` ${context.dataset.label}: ${value}`;
+                            }
                         },
                         backgroundColor: 'rgba(15, 23, 42, 0.92)',
                         titleColor: '#fff',
                         bodyColor: '#fff',
                         borderRadius: 14,
-                        padding: 12,
-                        external: (context) => {
-                            if (context.tooltip.opacity === 0) {
-                                setTicketBarHoverDetails();
-                            }
-                        }
+                        padding: 12
                     }
                 },
                 scales: {
@@ -104,7 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             color: '#64748b',
                             font: { size: 13 },
                             autoSkip: false,
-                            stepSize: 1,
+                            values: [0, 1, 5, 7, 9, 10, 20],
                             callback: value => value.toString()
                         }
                     }
@@ -112,22 +98,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-    }
 
     function updateTicketBarChart(chart, data) {
         if (!chart || !data) return;
         chart.data.datasets[0].data = [data.daily, data.weekly, data.monthly];
         chart.update();
-    }
-
-    function setTicketBarHoverDetails(label, value) {
-        const detailsEl = document.getElementById('ticketBarHoverDetails');
-        if (!detailsEl) return;
-        if (typeof label === 'string' && value != null) {
-            detailsEl.textContent = `${label}: ${value} ticket${value === 1 ? '' : 's'}`;
-        } else {
-            detailsEl.textContent = 'Hover over a bar to see details';
-        }
     }
 
     async function refreshTicketCountChart() {
@@ -219,21 +194,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Fetch counts from server and render bar chart (fetchTicketsByPeriod already returns parsed JSON)
     if (barCtx) {
-        console.log('barCtx found, attempting to create chart');
-        try {
-            console.log('Creating ticket bar chart...');
-            ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
-            console.log('Chart created successfully!', ticketChart);
-            refreshTicketCountChart();
-            scheduleDailyTicketRefresh();
-            scheduleWeeklyTicketRefresh();
-            scheduleMonthlyTicketRefresh();
-        } catch (err) {
-            console.error('Failed to create ticket bar chart:', err);
-            console.error('Stack:', err.stack);
-        }
+        ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
+        refreshTicketCountChart();
+        scheduleDailyTicketRefresh();
+        scheduleWeeklyTicketRefresh();
+        scheduleMonthlyTicketRefresh();
     } else {
-        console.warn('Ticket bar chart canvas not found or context unavailable.');
+        console.warn('Ticket bar chart canvas not found.');
     }
     messageChart = null; // created later after the function definition
     const aiStaffCtx = document.getElementById('aiStaffMonthlyChart') ? document.getElementById('aiStaffMonthlyChart').getContext('2d') : null;

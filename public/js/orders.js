@@ -15,6 +15,37 @@ let currentMenuSort = 'score_desc';
 let currentMenuSection = 'items';
 let tableLayout = [];
 const MENU_STORAGE_KEY = 'ls_menu_items_cache';
+const TABLE_LAYOUT_STORAGE_KEY = 'ls_table_layout_cache';
+
+function saveTableLayoutToStorage() {
+  try {
+    localStorage.setItem(TABLE_LAYOUT_STORAGE_KEY, JSON.stringify(tableLayout));
+  } catch (e) {
+    console.warn('Could not save table layout to localStorage', e);
+  }
+}
+
+function loadTableLayoutFromStorage() {
+  try {
+    const raw = localStorage.getItem(TABLE_LAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed
+      .filter(item => item && typeof item.number === 'number' && ['vacant', 'reserved', 'occupied'].includes(item.status))
+      .map(item => ({
+        number: Number(item.number),
+        label: item.label || `Table ${item.number}`,
+        status: item.status || 'vacant',
+        customerName: item.customerName || undefined,
+        reservedUntil: item.reservedUntil || undefined,
+        isBooking: !!item.isBooking
+      }));
+  } catch (e) {
+    console.warn('Could not load table layout from localStorage', e);
+    return null;
+  }
+}
 
 const SAMPLE_MENU_ITEMS = [
   { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured', 'Premium'], description: 'Tomato sauce, fresh mozzarella, basil' },
@@ -870,6 +901,16 @@ function getRandomTableStatus() {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
+function getRandomOccupiedDurationMinutes() {
+  const options = [15, 20, 45];
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+function getOccupiedUntil(now = new Date()) {
+  const minutes = getRandomOccupiedDurationMinutes();
+  return new Date(now.getTime() + minutes * 60 * 1000).toISOString();
+}
+
 function generateTableLayout() {
   tableLayout = [];
   for (let i = 1; i <= 40; i += 1) {
@@ -886,6 +927,13 @@ async function loadTableLayout() {
     }
     const data = await response.json();
     if (!Array.isArray(data) || data.length === 0) {
+      const savedLayout = loadTableLayoutFromStorage();
+      if (savedLayout && savedLayout.length > 0) {
+        tableLayout = savedLayout;
+        renderTableLayout();
+        await updateTableStatuses().catch(error => console.error('Failed to update table statuses after load:', error));
+        return;
+      }
       generateTableLayout();
       return;
     }
@@ -898,9 +946,20 @@ async function loadTableLayout() {
       isBooking: !!table.isBooking
     }));
     renderTableLayout();
+    saveTableLayoutToStorage();
   } catch (error) {
     console.warn('Error loading table layout:', error);
+    const savedLayout = loadTableLayoutFromStorage();
+    if (savedLayout && savedLayout.length > 0) {
+      tableLayout = savedLayout;
+      renderTableLayout();
+      await updateTableStatuses().catch(error => console.error('Failed to update table statuses after load:', error));
+      return;
+    }
     generateTableLayout();
+  }
+  if (tableLayout.length > 0) {
+    updateTableStatuses().catch(error => console.error('Failed to update table statuses after load:', error));
   }
 }
 
@@ -965,10 +1024,16 @@ function getTableReservationLabel(table) {
   if (!table.customerName || !table.reservedUntil) return '';
   const date = new Date(table.reservedUntil);
   if (isNaN(date)) return '';
-  if (table.isBooking) {
-    return `Booked for ${table.customerName} on ${date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  if (table.status === 'reserved') {
+    if (table.isBooking) {
+      return `Booked for ${table.customerName} on ${date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return `Reserved for ${table.customerName} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   }
-  return `Reserved for ${table.customerName} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  if (table.status === 'occupied') {
+    return `Occupied until ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return '';
 }
 
 function openTableActionModal(tableNumber, action) {
@@ -1056,7 +1121,7 @@ async function persistTableState(tableNumber, status, customerName, reservedUnti
     const body = {
       status,
       customerName: customerName || null,
-      reservedUntil: reservedUntil || null,
+      reservedUntil: reservedUntil || (status === 'occupied' ? getOccupiedUntil() : null),
       isBooking: !!isBooking
     };
     const response = await fetch(`/api/tables/${tableNumber}`, {
@@ -1087,6 +1152,7 @@ async function persistTableState(tableNumber, status, customerName, reservedUnti
       tableLayout.sort((a, b) => a.number - b.number);
     }
     renderTableLayout();
+    saveTableLayoutToStorage();
   } catch (error) {
     console.error('Error updating table state:', error);
     alert(error.message || 'Failed to update table status.');
@@ -1099,22 +1165,39 @@ async function updateTableStatuses() {
   let changed = false;
   const updates = [];
   for (const table of tableLayout) {
-    if (table.status === 'reserved' && table.reservedUntil) {
+    if (table.reservedUntil) {
       const target = new Date(table.reservedUntil);
       if (!isNaN(target.getTime()) && now >= target) {
-        table.status = 'occupied';
-        changed = true;
-        updates.push(
-          persistTableState(table.number, 'occupied', table.customerName, table.reservedUntil, table.isBooking)
-            .catch(error => console.error('Failed to persist table expiration update:', error))
-        );
+        if (table.status === 'reserved') {
+          const occupiedUntil = getOccupiedUntil(now);
+          table.status = 'occupied';
+          table.reservedUntil = occupiedUntil;
+          changed = true;
+          updates.push(
+            persistTableState(table.number, 'occupied', table.customerName, occupiedUntil, table.isBooking)
+              .catch(error => console.error('Failed to persist table expiration update:', error))
+          );
+        } else if (table.status === 'occupied') {
+          table.status = 'vacant';
+          table.customerName = undefined;
+          table.reservedUntil = undefined;
+          table.isBooking = false;
+          changed = true;
+          updates.push(
+            persistTableState(table.number, 'vacant', undefined, undefined, false)
+              .catch(error => console.error('Failed to persist table expiration update:', error))
+          );
+        }
       }
     }
   }
   if (updates.length > 0) {
     await Promise.all(updates);
   }
-  if (changed) renderTableLayout();
+  if (changed) {
+    renderTableLayout();
+    saveTableLayoutToStorage();
+  }
 }
 
 function loadMenu() {

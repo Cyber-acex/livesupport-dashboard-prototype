@@ -146,7 +146,7 @@ fetch("/api/user")
 <!---->
 <script src="/socket.io/socket.io.js"></script>
 <script src="./js/notification-sound.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
 <script src="./js/analytics.js" defer></script>
 <script src="./js/staff-performance.js"></script>
 <script src="./js/sidebar.js" defer></script>
@@ -226,6 +226,12 @@ fetch("/api/user")
         padding: 12px;
         box-shadow: 0 6px 18px rgba(0,0,0,0.08);
         text-align: center;
+    }
+
+    .ticket-bar-chart-container {
+        width: 600px !important;
+        max-width: 600px !important;
+        margin: 34px auto !important;
     }
 
     .message-chart-container { width: 32%; }
@@ -731,7 +737,7 @@ fetch("/api/user")
   </div>
 </div>
 
-  <div class="chart-container chart-fullwidth">
+  <div class="chart-container chart-fullwidth ticket-bar-chart-container">
     <div class="chart-item bar-chart-card">
       <h3>Tickets Created by Day, Week, Month</h3>
       <canvas id="ticketBarChart" width="800" height="340"></canvas>

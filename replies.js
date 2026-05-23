@@ -46,7 +46,6 @@ function loadKnowledgeBase() {
 // Load KB on startup
 loadKnowledgeBase();
 
-// Menu items from knowledge base
 const MENU_ITEMS = {
     pizza: {
         small: { name: 'Small Pizza', price: 10, available: 12 },
@@ -57,6 +56,56 @@ const MENU_ITEMS = {
         classic: { name: 'Classic Burger', price: 8, available: 10 },
         cheese: { name: 'Cheese Burger', price: 9, available: 6 },
         double: { name: 'Double Burger', price: 12, available: 3 }
+    },
+    ordersPageMenu: {
+        Pizza: {
+            margherita: { name: 'Margherita', price: 8.99, available: 24, description: 'Tomato sauce, fresh mozzarella, basil' },
+            pepperoni: { name: 'Pepperoni', price: 9.99, available: 18, description: 'Pepperoni, mozzarella' },
+            bbq_chicken: { name: 'BBQ Chicken', price: 12.50, available: 15, description: 'Smoky barbecue sauce, chicken, red onion' },
+            four_cheese: { name: 'Four Cheese', price: 11.75, available: 14, description: 'Mozzarella, cheddar, parmesan, goat cheese' },
+            hawaiian: { name: 'Hawaiian', price: 10.99, available: 12, description: 'Ham, pineapple, mozzarella' },
+            spicy_thai: { name: 'Spicy Thai', price: 13.50, available: 10, description: 'Peanut sauce, chicken, chili, cilantro' }
+        },
+        Burgers: {
+            classic_burger: { name: 'Classic Burger', price: 8.99, available: 25, description: 'Beef patty, lettuce, tomato, onion, pickles' },
+            cheese_burger: { name: 'Cheese Burger', price: 9.99, available: 22, description: 'Beef patty, cheddar, caramelized onions' },
+            double_burger: { name: 'Double Burger', price: 12.99, available: 16, description: 'Two beef patties, cheese, bacon, secret sauce' },
+            veggie_deluxe: { name: 'Veggie Deluxe', price: 10.50, available: 18, description: 'Grilled veggie patty, avocado, sprouts, aioli' },
+            crispy_chicken: { name: 'Crispy Chicken', price: 11.25, available: 20, description: 'Fried chicken, slaw, spicy mayo' }
+        },
+        Sandwiches: {
+            avocado_wrap: { name: 'Avocado Wrap', price: 9.50, available: 18, description: 'Avocado, spinach, hummus, tomato in a tortilla' },
+            blt_sandwich: { name: 'BLT Sandwich', price: 9.99, available: 17, description: 'Bacon, lettuce, tomato, mayo on sourdough' },
+            steak_sandwich: { name: 'Steak Sandwich', price: 13.75, available: 9, description: 'Sliced steak, caramelized onions, peppercorn sauce' },
+            chicken_caesar_wrap: { name: 'Chicken Caesar Wrap', price: 10.25, available: 19, description: 'Grilled chicken, romaine, parmesan, Caesar dressing' }
+        },
+        Salads: {
+            greek_salad: { name: 'Greek Salad', price: 10.99, available: 20, description: 'Cucumber, feta, olives, tomato, oregano dressing' },
+            cobb_salad: { name: 'Cobb Salad', price: 11.50, available: 18, description: 'Chicken, bacon, egg, avocado, blue cheese' }
+        },
+        Bowls: {
+            harvest_bowl: { name: 'Harvest Bowl', price: 12.75, available: 15, description: 'Quinoa, roasted vegetables, grilled chicken, tahini' }
+        },
+        Pasta: {
+            pesto_pasta: { name: 'Pesto Pasta', price: 11.99, available: 16, description: 'Penne tossed with basil pesto and parmesan' },
+            shrimp_alfredo: { name: 'Shrimp Alfredo', price: 14.50, available: 12, description: 'Fettuccine in creamy Alfredo with sautéed shrimp' },
+            mushroom_risotto: { name: 'Mushroom Risotto', price: 13.25, available: 14, description: 'Creamy arborio rice with wild mushrooms and parmesan' }
+        },
+        Sides: {
+            loaded_fries: { name: 'Loaded Fries', price: 7.50, available: 26, description: 'Crispy fries topped with cheese, bacon, and jalapeños' },
+            garlic_bread: { name: 'Garlic Bread', price: 5.99, available: 28, description: 'Toasted baguette with garlic butter and herbs' },
+            onion_rings: { name: 'Onion Rings', price: 6.50, available: 24, description: 'Beer-battered onion rings with dipping sauce' },
+            cheese_sticks: { name: 'Cheese Sticks', price: 7.25, available: 22, description: 'Breaded mozzarella sticks with marinara' }
+        },
+        Desserts: {
+            chocolate_lava_cake: { name: 'Chocolate Lava Cake', price: 8.50, available: 15, description: 'Warm chocolate cake with molten core' },
+            tiramisu: { name: 'Tiramisu', price: 8.99, available: 14, description: 'Coffee-soaked ladyfingers, mascarpone cream' },
+            berry_parfait: { name: 'Berry Parfait', price: 7.99, available: 18, description: 'Greek yogurt layered with berries and granola' }
+        },
+        Drinks: {
+            iced_lemon_tea: { name: 'Iced Lemon Tea', price: 3.99, available: 40, description: 'Lemon iced tea with mint and honey' },
+            sparkling_water: { name: 'Sparkling Water', price: 2.99, available: 50, description: 'Chilled sparkling mineral water' }
+        }
     }
 };
 
@@ -85,7 +134,9 @@ async function getMenuItemsFromDb() {
 
 function getFallbackMenuItems() {
     const items = [];
-    for (const [category, group] of Object.entries(MENU_ITEMS)) {
+    const menuSource = MENU_ITEMS.ordersPageMenu ? MENU_ITEMS.ordersPageMenu : MENU_ITEMS;
+    for (const [category, group] of Object.entries(menuSource)) {
+        if (typeof group !== 'object' || group === null) continue;
         const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
         for (const item of Object.values(group)) {
             items.push({
@@ -116,7 +167,8 @@ function formatMenuItemsForPrompt(menuItems) {
         lines.push(`${category}:`);
         grouped[category].slice(0, 12).forEach(item => {
             const availableText = typeof item.available === 'number' ? ` (${item.available} available)` : '';
-            lines.push(`- ${item.name}: $${item.price.toFixed(2)}${availableText}`);
+            const descriptionText = item.description ? ` - ${item.description}` : '';
+            lines.push(`- ${item.name}: $${item.price.toFixed(2)}${availableText}${descriptionText}`);
         });
         if (grouped[category].length > 12) {
             lines.push(`- ...plus ${grouped[category].length - 12} more items in ${category}`);
@@ -942,9 +994,11 @@ async function getMistralReply(message, phone = null, conversationId = null) {
         }
         
         // Find relevant knowledge base entries (vector search when available)
-        let relevantKB = await findRelevantKB(message);
         const menuInquiry = isMenuInquiry(message);
-        if (menuInquiry && relevantKB && relevantKB.length > 0) {
+        let relevantKB = await findRelevantKB(message);
+        if (menuInquiry) {
+            relevantKB = [];
+        } else if (relevantKB && relevantKB.length > 0) {
             relevantKB = relevantKB.filter(item => {
                 const combinedText = `${item.title || ''} ${item.content || item.answer || item.text || ''} ${item.category || ''}`.toLowerCase();
                 return !/(menu|order|pizza|burger|dish|food|price|available items|price list|specials)/.test(combinedText);

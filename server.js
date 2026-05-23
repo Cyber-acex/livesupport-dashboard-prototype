@@ -579,8 +579,8 @@ app.use(session({
 
 // Middleware to protect HTML pages
 app.use((req, res, next) => {
-    if (req.path.endsWith('.html') && req.path !== '/login.html') {
-        if (!req.session || !req.session.user) {
+    if (req.path.endsWith('.html') && req.path !== '/login.html' && req.path !== '/knowledge.html' && req.path !== '/orders.html' && req.path !== '/menu.html' && req.path !== '/tables.html') {
+        if (!req.session.user) {
             return res.redirect('/login.html');
         }
     }
@@ -4449,7 +4449,7 @@ setHandoffCallback((conversationId) => {
 // Add endpoint to fetch analytics data
 app.get('/api/analytics', isAuthenticated, async (req, res) => {
     try {
-        const [countsRows] = await db.promise().query(`
+        const [counts] = await db.promise().query(`
             SELECT
                 (SELECT COUNT(*) FROM conversations) AS chats,
                 (SELECT COUNT(*) FROM tickets) AS tickets,
@@ -4460,7 +4460,7 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
                 (SELECT COUNT(*) FROM resolved) AS resolvedChats
         `);
 
-        const [feedbackRows] = await db.promise().query(`
+        const [feedback] = await db.promise().query(`
             SELECT
                 COUNT(*) AS count,
                 AVG(rating) AS avg_rating,
@@ -4469,67 +4469,19 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
             WHERE rating IS NOT NULL
         `);
 
-        let avgResp = { avg_response_seconds: null };
-        try {
-            const [avgResponseRows] = await db.promise().query(isPg ? `
-                SELECT AVG(EXTRACT(EPOCH FROM (r.created_at - r.prev_created))) AS avg_response_seconds
-                FROM (
-                    SELECT r.id, r.conversation_id, r.created_at,
-                           (SELECT MAX(m2.created_at) FROM messages m2 WHERE m2.conversation_id = r.conversation_id AND m2.created_at < r.created_at) AS prev_created
-                    FROM replies r
-                ) r
-                WHERE r.prev_created IS NOT NULL
-            ` : `
-                SELECT AVG(TIMESTAMPDIFF(SECOND,
-                    (SELECT MAX(m2.created_at) FROM messages m2 WHERE m2.conversation_id = r.conversation_id AND m2.created_at < r.created_at),
-                    r.created_at
-                )) AS avg_response_seconds
-                FROM replies r
-                WHERE EXISTS (
-                    SELECT 1 FROM messages m2 WHERE m2.conversation_id = r.conversation_id AND m2.created_at < r.created_at
-                )
-            `);
-            avgResp = (Array.isArray(avgResponseRows) ? avgResponseRows[0] : avgResponseRows) || avgResp;
-        } catch (err) {
-            console.warn('Warning: avg response query failed', err);
-        }
-
-        let avgRes = { avg_resolution_seconds: null };
-        try {
-            const [avgResolutionRows] = await db.promise().query(isPg ? `
-                SELECT AVG(EXTRACT(EPOCH FROM (res.resolved_at - c.created_at))) AS avg_resolution_seconds
-                FROM resolved res
-                JOIN conversations c ON c.id = res.conversation_id
-            ` : `
-                SELECT AVG(TIMESTAMPDIFF(SECOND, c.created_at, res.resolved_at)) AS avg_resolution_seconds
-                FROM resolved res
-                JOIN conversations c ON c.id = res.conversation_id
-            `);
-            avgRes = (Array.isArray(avgResolutionRows) ? avgResolutionRows[0] : avgResolutionRows) || avgRes;
-        } catch (err) {
-            console.warn('Warning: avg resolution query failed', err);
-        }
-
-        const summary = (Array.isArray(countsRows) ? countsRows[0] : countsRows) || {};
-        const fb = (Array.isArray(feedbackRows) ? feedbackRows[0] : feedbackRows) || {};
-
-        const numChats = Number(summary.chats) || 0;
-        const numResolvedChats = Number(summary.resolvedChats) || 0;
+        const summary = counts[0] || {};
+        const fb = feedback[0] || {};
 
         res.json({
-            numChats,
+            numChats: Number(summary.chats) || 0,
             numTickets: Number(summary.tickets) || 0,
             numEscalatedTickets: Number(summary.escalatedTickets) || 0,
             numReceipts: Number(summary.receipts) || 0,
             numEscalatedReceipts: Number(summary.escalatedReceipts) || 0,
             numEscalatedChats: Number(summary.escalatedChats) || 0,
-            numResolvedChats,
-            activeChats: Math.max(0, numChats - numResolvedChats),
-            avgResponseSeconds: avgResp.avg_response_seconds != null ? Number(avgResp.avg_response_seconds) : null,
-            avgResolutionSeconds: avgRes.avg_resolution_seconds != null ? Number(avgRes.avg_resolution_seconds) : null,
-            resolutionRate: numChats ? (numResolvedChats / numChats) : 0,
+            numResolvedChats: Number(summary.resolvedChats) || 0,
             aiFeedbackCount: Number(fb.count) || 0,
-            aiFeedbackAvg: fb.avg_rating != null ? Number(fb.avg_rating) : null,
+            aiFeedbackAvg: fb.avg_rating !== null ? Number(fb.avg_rating) : null,
             aiFeedbackPositive: Number(fb.positive) || 0
         });
     } catch (error) {
@@ -4538,46 +4490,23 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
     }
 });
 
-app.get('/api/my-metrics', isAuthenticated, async (req, res) => {
-    try {
-        const statsRows = await db.promise().query(`
-            SELECT
-                COUNT(*) AS tickets,
-                SUM(CASE WHEN LOWER(status) = 'resolved' THEN 1 ELSE 0 END) AS resolvedChats
-            FROM tickets
-        `);
-
-        const stats = (Array.isArray(statsRows) ? statsRows[0] : statsRows) || { tickets: 0, resolvedChats: 0 };
-        const tickets = Number(stats.tickets) || 0;
-        const resolvedChats = Number(stats.resolvedChats) || 0;
-
-        res.json({
-            avgResponseSeconds: 0,
-            resolutionRate: tickets ? resolvedChats / tickets : 0
-        });
-    } catch (error) {
-        console.error('Error fetching my-metrics data:', error);
-        res.status(500).json({ error: 'Failed to fetch my-metrics data' });
-    }
-});
-
 // API endpoint for ticket counts by time period
 app.get('/api/tickets-by-period', async (req, res) => {
     try {
         const ticketCountsSql = isPg
             ? `SELECT
-                    COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now())) AS daily,
-                    COUNT(*) FILTER (WHERE created_at >= date_trunc('week', now())) AS weekly,
-                    COUNT(*) FILTER (WHERE created_at >= date_trunc('month', now())) AS monthly
-                FROM tickets`
+                SUM((created_at::date = CURRENT_DATE)::int) AS daily,
+                SUM((DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE))::int) AS weekly,
+                SUM((DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE))::int) AS monthly
+            FROM tickets`
             : `SELECT
-                    SUM(created_at >= CURDATE()) AS daily,
-                    SUM(created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)) AS weekly,
-                    SUM(created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS monthly
-                FROM tickets`;
-        const rows = await db.promise().query(ticketCountsSql);
+                SUM(DATE(created_at) = CURDATE()) AS daily,
+                SUM(YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)) AS weekly,
+                SUM(YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())) AS monthly
+            FROM tickets`;
+        const [rows] = await db.promise().query(ticketCountsSql);
 
-        const counts = (Array.isArray(rows) ? rows[0] : rows) || { daily: 0, weekly: 0, monthly: 0 };
+        const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
         console.log('tickets-by-period counts', counts);
 
         res.json({
