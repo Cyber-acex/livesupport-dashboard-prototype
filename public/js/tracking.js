@@ -5,7 +5,7 @@
 let map;
 const deliveryMarkers = new Map();
 const deliveryPolylines = new Map();
-const deliverySimulations = new Map();
+const deliveryTrackers = new Map();
 const activeDeliveries = new Map();
 let selectedDeliveryId = null;
 
@@ -20,6 +20,12 @@ function initMap() {
     attribution: '© OpenStreetMap contributors',
     maxZoom: 19,
   }).addTo(map);
+
+  // Ensure Leaflet recalculates size after container layout changes
+  map.whenReady(() => {
+    setTimeout(() => { try { map.invalidateSize(); } catch (e) { console.warn('invalidateSize failed', e); } }, 150);
+  });
+  window.addEventListener('resize', () => { try { setTimeout(() => map.invalidateSize(), 150); } catch (e) {} });
 
   console.log('✓ Map initialized with Leaflet.js');
 }
@@ -124,11 +130,13 @@ function updateDeliveriesList() {
   }
 
   list.innerHTML = deliveries
-    .map(d => `
+    .map(d => {
+      const statusText = d.order_status || d.delivery_status || 'pending';
+      return `
       <div class="delivery-item ${d.id === selectedDeliveryId ? 'active' : ''}" data-delivery-id="${d.id}" onclick="focusDelivery(${d.id})">
         <div class="delivery-header">
           <span>${d.order_id || `Order #${d.id}`}</span>
-          <span class="delivery-status ${d.delivery_status}">${d.delivery_status || 'pending'}</span>
+          <span class="delivery-status ${statusText}">${statusText}</span>
         </div>
         <div class="delivery-info">
           <div><label>Rider:</label> ${d.rider_name || 'Pending'}</div>
@@ -137,7 +145,8 @@ function updateDeliveriesList() {
           <div><label>ETA:</label> ${d.eta || 'Calculating...'}</div>
         </div>
       </div>
-    `)
+      `;
+    })
     .join('');
 }
 
@@ -227,110 +236,122 @@ function generateTestDelivery() {
 }
 
 // Start simulation for a delivery
-function startSimulation() {
-  const deliveries = Array.from(activeDeliveries.values());
-  if (deliveries.length === 0) {
-    alert('Please add or load deliveries first');
-    return;
-  }
+function isDeliveryDelivered(delivery) {
+  return (delivery.order_status && delivery.order_status.toLowerCase() === 'delivered') ||
+         (delivery.delivery_status && delivery.delivery_status.toLowerCase() === 'delivered');
+}
 
-  if (selectedDeliveryId && activeDeliveries.has(selectedDeliveryId)) {
-    const selectedDelivery = activeDeliveries.get(selectedDeliveryId);
-    if (selectedDelivery.delivery_status === 'delivered') {
+async function refreshDeliveryFromServer(delivery) {
+  if (!delivery || !delivery.order_id) return delivery;
+
+  try {
+    const response = await fetch(`/api/tracking/${encodeURIComponent(delivery.order_id)}`);
+    if (!response.ok) return delivery;
+
+    const orderData = await response.json();
+    if (!orderData.delivery) {
+      delivery.order_status = orderData.status || delivery.order_status;
+      return delivery;
+    }
+
+    const deliveryInfo = orderData.delivery;
+    delivery.current_lat = parseFloat(deliveryInfo.current_lat) || delivery.current_lat;
+    delivery.current_lng = parseFloat(deliveryInfo.current_lng) || delivery.current_lng;
+    delivery.customer_lat = parseFloat(deliveryInfo.customer_lat) || delivery.customer_lat;
+    delivery.customer_lng = parseFloat(deliveryInfo.customer_lng) || delivery.customer_lng;
+    delivery.delivery_status = deliveryInfo.status || delivery.delivery_status;
+    delivery.order_status = orderData.status || delivery.order_status;
+    delivery.rider_name = deliveryInfo.rider_name || delivery.rider_name;
+    delivery.vehicle = deliveryInfo.vehicle || delivery.vehicle;
+
+    if (delivery.current_lat && delivery.current_lng && delivery.customer_lat && delivery.customer_lng) {
+      delivery.distance = calculateDistance(
+        delivery.current_lat,
+        delivery.current_lng,
+        delivery.customer_lat,
+        delivery.customer_lng
+      );
+      delivery.eta = delivery.distance ? Math.ceil(delivery.distance * 10) + ' mins' : delivery.eta || '-- mins';
+    }
+
+    activeDeliveries.set(delivery.id, delivery);
+    return delivery;
+  } catch (error) {
+    console.warn('Could not refresh delivery from server:', error);
+    return delivery;
+  }
+}
+
+async function startTracking() {
+  if (!selectedDeliveryId) {
+    const deliveries = Array.from(activeDeliveries.values());
+    if (deliveries.length === 0) {
+      alert('Please add or load deliveries first');
+      return;
+    }
+
+    const firstDelivery = deliveries.find(d => !isDeliveryDelivered(d));
+    if (!firstDelivery) {
       alert('Order has already been delivered');
       return;
     }
 
-    if (deliverySimulations.has(selectedDelivery.id)) {
-      alert('This order is already being tracked');
-      return;
-    }
+    selectedDeliveryId = firstDelivery.id;
+  }
 
-    simulateDeliveryMovement(selectedDelivery.id);
-    alert(`Tracking order ${selectedDelivery.order_id}`);
+  const delivery = activeDeliveries.get(selectedDeliveryId);
+  if (!delivery) {
+    alert('Please select an order to track');
     return;
   }
 
-  // Start simulation for first active delivery that is not already delivered
-  for (let delivery of deliveries) {
-    if (delivery.delivery_status === 'delivered') {
-      continue;
-    }
-
-    if (!deliverySimulations.has(delivery.id)) {
-      simulateDeliveryMovement(delivery.id);
-      alert(`Tracking order ${delivery.order_id}`);
-      return;
-    }
-  }
-
-  const hasUndelivered = deliveries.some(d => d.delivery_status !== 'delivered');
-  if (!hasUndelivered) {
+  if (isDeliveryDelivered(delivery)) {
     alert('Order has already been delivered');
     return;
   }
 
-  alert('All non-delivered orders are already simulating!');
+  if (deliveryTrackers.has(delivery.id)) {
+    alert('This order is already being tracked');
+    return;
+  }
+
+  await refreshDeliveryFromServer(delivery);
+  addDeliveryToMap(delivery);
+  updateDeliveriesList();
+  startDeliveryTracking(delivery.id);
+  alert(`Now following live location for order ${delivery.order_id}`);
 }
 
-// Stop all simulations
-function stopAllSimulations() {
-  deliverySimulations.forEach((intervalId, deliveryId) => {
+// Stop all live tracking intervals
+function stopAllTracking() {
+  deliveryTrackers.forEach((intervalId, deliveryId) => {
     clearInterval(intervalId);
   });
-  deliverySimulations.clear();
-  console.log('✓ All simulations stopped');
+  deliveryTrackers.clear();
+  console.log('✓ All tracking stopped');
 }
 
-// Simulate delivery movement
-function simulateDeliveryMovement(deliveryId) {
-  if (deliverySimulations.has(deliveryId)) return;
+// Follow the live order location on the server
+function startDeliveryTracking(deliveryId) {
+  if (deliveryTrackers.has(deliveryId)) return;
 
   const delivery = activeDeliveries.get(deliveryId);
   if (!delivery) return;
 
-  let progress = 0;
-  const startLat = delivery.current_lat;
-  const startLng = delivery.current_lng;
-  const endLat = delivery.customer_lat;
-  const endLng = delivery.customer_lng;
-
-  const intervalId = setInterval(() => {
-    progress += 0.01; // 1% per update
-
-    if (progress >= 1) {
-      progress = 1;
-      delivery.delivery_status = 'delivered';
-      delivery.current_lat = endLat;
-      delivery.current_lng = endLng;
-      clearInterval(intervalId);
-      deliverySimulations.delete(deliveryId);
-      console.log(`✓ Delivery ${delivery.order_id} completed`);
-    } else {
-      delivery.delivery_status = progress < 0.5 ? 'picked-up' : 'in-transit';
-    }
-
-    // Interpolate position
-    delivery.current_lat = startLat + (endLat - startLat) * progress;
-    delivery.current_lng = startLng + (endLng - startLng) * progress;
-
-    // Update distance and ETA
-    const remainingDist = calculateDistance(
-      delivery.current_lat,
-      delivery.current_lng,
-      endLat,
-      endLng
-    );
-    delivery.distance = remainingDist;
-    delivery.eta = Math.ceil(remainingDist * 80) + ' mins'; // ~80 km/h
-
-    // Update map
-    addDeliveryToMap(delivery);
+  const intervalId = setInterval(async () => {
+    const updatedDelivery = await refreshDeliveryFromServer(delivery);
+    addDeliveryToMap(updatedDelivery);
     updateDeliveriesList();
-  }, 1000);
 
-  deliverySimulations.set(deliveryId, intervalId);
-  console.log(`▶️ Started simulation for delivery ${delivery.order_id}`);
+    if (isDeliveryDelivered(updatedDelivery)) {
+      clearInterval(intervalId);
+      deliveryTrackers.delete(deliveryId);
+      console.log(`✓ Live tracking completed for delivery ${updatedDelivery.order_id}`);
+    }
+  }, 5000);
+
+  deliveryTrackers.set(deliveryId, intervalId);
+  console.log(`▶️ Started live tracking for delivery ${delivery.order_id}`);
 }
 
 // Calculate distance between two coordinates (km)
@@ -353,10 +374,13 @@ window.addEventListener('load', () => {
   console.log('🚀 Tracking system loaded');
 });
 
-// Refresh deliveries every 5 seconds when page is visible
-setInterval(() => {
-  if (!document.hidden) {
-    // Only refresh if user is actively looking at the page
+// Refresh selected delivery every 5 seconds when page is visible and not already live-tracking
+setInterval(async () => {
+  if (!document.hidden && selectedDeliveryId && activeDeliveries.has(selectedDeliveryId) && !deliveryTrackers.has(selectedDeliveryId)) {
+    const delivery = activeDeliveries.get(selectedDeliveryId);
+    await refreshDeliveryFromServer(delivery);
+    addDeliveryToMap(delivery);
+    updateDeliveriesList();
   }
 }, 5000);
 
@@ -389,7 +413,8 @@ async function searchOrderById() {
     
     // Add delivery to map if it has coordinates
     if (delivery.current_lat && delivery.current_lng) {
-      const deliveryToAdd = {
+      const existingDelivery = activeDeliveries.get(orderData.id);
+      const deliveryData = {
         id: orderData.id,
         order_id: orderData.order_id,
         rider_name: delivery.rider_name || 'Not Assigned',
@@ -399,14 +424,21 @@ async function searchOrderById() {
         customer_lat: parseFloat(delivery.customer_lat),
         customer_lng: parseFloat(delivery.customer_lng),
         delivery_status: delivery.status || 'pending',
-        distance: calculateDistance(
-          parseFloat(delivery.current_lat),
-          parseFloat(delivery.current_lng),
-          parseFloat(delivery.customer_lat),
-          parseFloat(delivery.customer_lng)
-        ),
-        eta: '-- mins'
+        order_status: orderData.status || 'pending',
       };
+
+      const distance = calculateDistance(
+        parseFloat(delivery.current_lat),
+        parseFloat(delivery.current_lng),
+        parseFloat(delivery.customer_lat),
+        parseFloat(delivery.customer_lng)
+      );
+      deliveryData.distance = distance;
+      deliveryData.eta = distance ? Math.ceil(distance * 10) + ' mins' : '-- mins';
+
+      const deliveryToAdd = existingDelivery && deliveryTrackers.has(orderData.id)
+        ? Object.assign(existingDelivery, deliveryData)
+        : deliveryData;
 
       // Add to active deliveries (overwrite if exists)
       activeDeliveries.set(deliveryToAdd.id, deliveryToAdd);
@@ -425,9 +457,10 @@ async function searchOrderById() {
       resultInfo.innerHTML = `
         <div><label>Order ID:</label> ${orderData.order_id}</div>
         <div><label>Customer:</label> ${orderData.customer_name}</div>
+        <div><label>Order Status:</label> <strong>${(orderData.status || 'pending').toUpperCase()}</strong></div>
         <div><label>Rider:</label> ${delivery.rider_name || 'Not Assigned'}</div>
         <div><label>Vehicle:</label> ${delivery.vehicle || 'Unknown'}</div>
-        <div><label>Status:</label> <strong>${(delivery.status || 'pending').toUpperCase()}</strong></div>
+        <div><label>Delivery Status:</label> <strong>${(delivery.status || 'pending').toUpperCase()}</strong></div>
         <div><label>Current Location:</label> ${delivery.current_lat.toFixed(4)}, ${delivery.current_lng.toFixed(4)}</div>
         <div><label>Distance to Destination:</label> ${deliveryToAdd.distance.toFixed(2)} km</div>
       `;

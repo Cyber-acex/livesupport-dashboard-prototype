@@ -34,7 +34,7 @@
       padding: 20px;
       display: flex;
       gap: 20px;
-      height: calc(100vh - 120px);
+      min-height: calc(100vh - 170px);
     }
 
     .tracking-main {
@@ -132,19 +132,25 @@
     }
 
     .map-container {
-      flex: 1;
       background: white;
       border-radius: 8px;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       overflow: hidden;
       position: relative;
       margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 700px;
     }
 
     #map {
       width: 100%;
-      height: 100%;
+      flex: 1;
+      min-height: 0;
       border-radius: 8px;
+      background: #eef6ff;
+      border: 1px solid rgba(0,0,0,0.04);
     }
 
     .map-controls {
@@ -186,12 +192,14 @@
 
     .deliveries-panel {
       width: 350px;
+      max-height: calc(100vh - 160px);
       background: white;
       border-radius: 8px;
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-      overflow-y: auto;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
+      min-height: 800px;
     }
 
     .panel-header {
@@ -204,6 +212,7 @@
 
     .deliveries-list {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
     }
 
@@ -376,7 +385,7 @@
       }
 
       .map-container {
-        height: 500px;
+        height: 520px;
       }
     }
   </style>
@@ -484,8 +493,8 @@
           <div class="no-deliveries">No active deliveries</div>
         </div>
         <div class="simulation-controls">
-          <button onclick="startSimulation()">▶️ Track Order</button>
-          <button class="danger" onclick="stopAllSimulations()">⏹️ Stop All</button>
+          <button onclick="startTracking()">▶️ Track Order</button>
+          <button class="danger" onclick="stopAllTracking()">⏹️ Stop All</button>
           <button onclick="generateTestDelivery()">+ Add Test Delivery</button>
         </div>
       </div>

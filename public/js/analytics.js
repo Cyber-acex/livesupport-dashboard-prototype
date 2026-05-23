@@ -1,5 +1,6 @@
 // Ensure the DOM is fully loaded before initializing the pie chart
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[Analytics] DOMContentLoaded event triggered');
     const chart5 = document.getElementById('chart5');
     const ticketCanvas = document.getElementById('ticketBarChart');
     const messageCanvas = document.getElementById('messageBarChart');
@@ -8,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const messageCtx = messageCanvas ? messageCanvas.getContext('2d') : null;
     const gaugeRespCtx = document.getElementById('gaugeResponse') ? document.getElementById('gaugeResponse').getContext('2d') : null;
     const gaugeResRateCtx = document.getElementById('gaugeResolution') ? document.getElementById('gaugeResolution').getContext('2d') : null;
+    console.log('[Analytics] Canvas elements found - barCtx:', !!barCtx, 'messageCtx:', !!messageCtx);
     let gaugeRespChart = null;
     let gaugeResRateChart = null;
     let ticketChart = null;
@@ -20,10 +22,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const applyFiltersBtn = document.getElementById('applyFilters');
     const exportCsvBtn = document.getElementById('exportCsv');
     const kpiTotalTickets = document.getElementById('kpi-totalTickets');
-    const kpiAvgResponse = document.getElementById('kpi-avgResponse');
-    const kpiResolutionRate = document.getElementById('kpi-resolutionRate');
-    const kpiActiveChats = document.getElementById('kpi-activeChats');
-    const kpiAIFeedbackAvg = document.getElementById('kpi-aiFeedbackAvg');
+    const kpiAvgResponse = document.getElementById('kpi-analyticsAvgResponse');
+    const kpiResolutionTime = document.getElementById('kpi-resolutionTime');
+    const kpiActiveChats = document.getElementById('kpi-analyticsActiveChats');
+    const kpiAIFeedbackAvg = document.getElementById('kpi-analyticsAIFeedbackAvg');
     const kpiAIFeedbackCount = document.getElementById('kpi-aiFeedbackCount');
 
     // Keep last fetched datasets for export
@@ -33,51 +35,99 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Function to create bar chart for tickets by period
     function createTicketBarChart(ctx, data) {
+        const gradient = ctx.createLinearGradient(0, 0, 0, 340);
+        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.95)');
+        gradient.addColorStop(1, 'rgba(59, 130, 246, 0.7)');
+
         return new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Today', 'This Week', 'This Month'],
+                labels: ['Day', 'Week', 'Month'],
                 datasets: [{
-                    label: 'Total Tickets Created',
+                    label: 'Tickets Created',
                     data: [data.daily, data.weekly, data.monthly],
-                    backgroundColor: [
-                        '#FF6384',
-                        '#36A2EB',
-                        '#FFCE56'
-                    ],
-                    borderColor: [
-                        '#FF6384',
-                        '#36A2EB',
-                        '#FFCE56'
-                    ],
-                    borderWidth: 2
+                    backgroundColor: gradient,
+                    hoverBackgroundColor: 'rgba(37, 99, 235, 0.95)',
+                    borderColor: 'rgba(37, 99, 235, 0.9)',
+                    borderWidth: 0,
+                    borderRadius: 24,
+                    borderSkipped: false,
+                    barPercentage: 0.65,
+                    categoryPercentage: 0.7,
+                    maxBarThickness: 84
                 }]
             },
             options: {
                 responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
                 plugins: {
                     legend: {
-                        display: true,
-                        position: 'top'
+                        display: false
                     },
-                    title: {
-                        display: true,
-                        text: 'Tickets Created This Period'
+                    tooltip: {
+                        enabled: true,
+                        callbacks: {
+                            afterLabel: (context) => {
+                                const value = context.raw || 0;
+                                setTicketBarHoverDetails(context.label, value);
+                                return '';
+                            },
+                            title: () => ''
+                        },
+                        backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        borderRadius: 14,
+                        padding: 12,
+                        external: (context) => {
+                            if (context.tooltip.opacity === 0) {
+                                setTicketBarHoverDetails();
+                            }
+                        }
                     }
                 },
                 scales: {
+                    x: {
+                        grid: { display: false, drawBorder: false },
+                        ticks: { color: '#334155', font: { size: 14, weight: 600 } }
+                    },
                     y: {
-                        beginAtZero: true
+                        beginAtZero: true,
+                        min: 0,
+                        max: 20,
+                        grid: { color: 'rgba(148,163,184,0.18)', drawBorder: false },
+                        ticks: {
+                            color: '#64748b',
+                            font: { size: 13 },
+                            autoSkip: false,
+                            stepSize: 1,
+                            callback: value => value.toString()
+                        }
                     }
                 }
             }
         });
+    }
     }
 
     function updateTicketBarChart(chart, data) {
         if (!chart || !data) return;
         chart.data.datasets[0].data = [data.daily, data.weekly, data.monthly];
         chart.update();
+    }
+
+    function setTicketBarHoverDetails(label, value) {
+        const detailsEl = document.getElementById('ticketBarHoverDetails');
+        if (!detailsEl) return;
+        if (typeof label === 'string' && value != null) {
+            detailsEl.textContent = `${label}: ${value} ticket${value === 1 ? '' : 's'}`;
+        } else {
+            detailsEl.textContent = 'Hover over a bar to see details';
+        }
     }
 
     async function refreshTicketCountChart() {
@@ -91,6 +141,51 @@ document.addEventListener('DOMContentLoaded', () => {
             updateTicketBarChart(ticketChart, { daily: 0, weekly: 0, monthly: 0 });
             return { daily: 0, weekly: 0, monthly: 0 };
         }
+    }
+
+    function msUntilNextMidnight() {
+        const now = new Date();
+        const next = new Date(now);
+        next.setHours(24, 0, 0, 0);
+        return next - now;
+    }
+
+    function msUntilNextWeekStart() {
+        const now = new Date();
+        const day = now.getDay();
+        const diff = ((8 - day) % 7) || 7; // Next Monday
+        const next = new Date(now);
+        next.setDate(now.getDate() + diff);
+        next.setHours(0, 0, 0, 0);
+        return next - now;
+    }
+
+    function msUntilNextMonthStart() {
+        const now = new Date();
+        const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        next.setHours(0, 0, 0, 0);
+        return next - now;
+    }
+
+    function scheduleDailyTicketRefresh() {
+        setTimeout(async () => {
+            await refreshTicketCountChart();
+            scheduleDailyTicketRefresh();
+        }, msUntilNextMidnight());
+    }
+
+    function scheduleWeeklyTicketRefresh() {
+        setTimeout(async () => {
+            await refreshTicketCountChart();
+            scheduleWeeklyTicketRefresh();
+        }, msUntilNextWeekStart());
+    }
+
+    function scheduleMonthlyTicketRefresh() {
+        setTimeout(async () => {
+            await refreshTicketCountChart();
+            scheduleMonthlyTicketRefresh();
+        }, msUntilNextMonthStart());
     }
 
     // Fetch data for bar chart
@@ -124,15 +219,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Fetch counts from server and render bar chart (fetchTicketsByPeriod already returns parsed JSON)
     if (barCtx) {
-        ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
+        console.log('barCtx found, attempting to create chart');
+        try {
+            console.log('Creating ticket bar chart...');
+            ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
+            console.log('Chart created successfully!', ticketChart);
+            refreshTicketCountChart();
+            scheduleDailyTicketRefresh();
+            scheduleWeeklyTicketRefresh();
+            scheduleMonthlyTicketRefresh();
+        } catch (err) {
+            console.error('Failed to create ticket bar chart:', err);
+            console.error('Stack:', err.stack);
+        }
     } else {
-        console.warn('Ticket bar chart canvas not found.');
+        console.warn('Ticket bar chart canvas not found or context unavailable.');
     }
     messageChart = null; // created later after the function definition
     const aiStaffCtx = document.getElementById('aiStaffMonthlyChart') ? document.getElementById('aiStaffMonthlyChart').getContext('2d') : null;
     let aiStaffChart = null;
 
-    const socket = io();
+    let socket = null;
+    try {
+        if (typeof io !== 'undefined') {
+            socket = io();
+        }
+    } catch (e) {
+        socket = null;
+    }
 
     // Fetch live data and render the 3D pie chart
     function create3DPieChart(ctx, data) {
@@ -329,8 +443,21 @@ document.addEventListener('DOMContentLoaded', () => {
     async function refreshMyMetrics() {
         try {
             const res = await fetch('/api/my-metrics', { credentials: 'same-origin' });
-            if (!res.ok) return;
-            const data = await res.json();
+            let data = null;
+
+            if (res.ok) {
+                data = await res.json();
+            } else if (res.status === 404) {
+                const fallback = await fetch('/api/analytics', { credentials: 'same-origin' });
+                if (!fallback.ok) return;
+                const analyticsData = await fallback.json();
+                data = {
+                    avgResponseSeconds: 0,
+                    resolutionRate: analyticsData.numTickets ? analyticsData.numResolvedChats / analyticsData.numTickets : 0
+                };
+            } else {
+                return;
+            }
 
             const maxResp = 600;
             if (!gaugeRespChart && gaugeRespCtx) {
@@ -365,6 +492,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function refreshAnalyticsChart() {
+        if (!ctx5) {
+            loadKPIs();
+            return Promise.resolve();
+        }
+
         const qp = buildQueryParams();
         return fetch('/api/analytics' + qp, { credentials: 'same-origin' })
             .then(handleAuthRedirect)
@@ -382,7 +514,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 loadKPIs();
             })
             .catch(() => {
-                if (!analyticsChart) {
+                if (!analyticsChart && ctx5) {
                     analyticsChart = create3DPieChart(ctx5, {
                         numChats: 10,
                         numEscalatedChats: 8,
@@ -484,7 +616,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         tension: 0.34,
                         pointBackgroundColor: '#ffffff',
                         pointBorderColor: '#3b82f6',
-                        pointRadius: 4,
+                        pointRadius: 5,
+                        pointHitRadius: 14,
+                        pointHoverRadius: 10,
+                        pointHoverBorderWidth: 3,
+                        pointHoverBackgroundColor: '#3b82f6',
+                        pointStyle: 'circle',
+                        hoverBorderColor: '#3b82f6',
                         borderWidth: 3
                     },
                     {
@@ -496,7 +634,13 @@ document.addEventListener('DOMContentLoaded', () => {
                         tension: 0.34,
                         pointBackgroundColor: '#ffffff',
                         pointBorderColor: '#10b981',
-                        pointRadius: 4,
+                        pointRadius: 5,
+                        pointHitRadius: 14,
+                        pointHoverRadius: 10,
+                        pointHoverBorderWidth: 3,
+                        pointHoverBackgroundColor: '#10b981',
+                        pointStyle: 'circle',
+                        hoverBorderColor: '#10b981',
                         borderWidth: 3
                     }
                 ]
@@ -513,12 +657,40 @@ document.addEventListener('DOMContentLoaded', () => {
                         text: 'AI vs Staff Messages - Last 12 Months'
                     },
                     tooltip: {
+                        enabled: true,
                         mode: 'index',
-                        intersect: false
+                        intersect: false,
+                        position: 'nearest',
+                        backgroundColor: 'rgba(255,255,255,0.98)',
+                        borderColor: 'rgba(148,163,184,0.75)',
+                        borderWidth: 1,
+                        padding: 12,
+                        cornerRadius: 12,
+                        caretSize: 8,
+                        caretPadding: 10,
+                        bodyColor: '#111',
+                        titleColor: '#111',
+                        titleFont: { weight: '600' },
+                        displayColors: true,
+                        usePointStyle: true,
+                        bodySpacing: 8,
+                        callbacks: {
+                            title: function(context) {
+                                return context[0] ? context[0].label : '';
+                            },
+                            label: function(context) {
+                                return `${context.dataset.label}: ${context.formattedValue}`;
+                            }
+                        }
                     }
                 },
                 interaction: {
-                    mode: 'nearest',
+                    mode: 'index',
+                    intersect: false,
+                    axis: 'x'
+                },
+                hover: {
+                    mode: 'index',
                     intersect: false
                 },
                 scales: {
@@ -528,18 +700,69 @@ document.addEventListener('DOMContentLoaded', () => {
                     },
                     y: {
                         beginAtZero: true,
-                        ticks: { color: '#333' }
+                        ticks: { color: '#333' },
+                        grid: {
+                            color: 'rgba(148,163,184,0.18)',
+                            borderDash: [4, 4]
+                        }
                     }
                 }
-            }
+            },
+            plugins: [
+                {
+                    id: 'verticalHoverLine',
+                    afterDraw: function(chart) {
+                        if (chart.tooltip && chart.tooltip.opacity === 1) {
+                            const ctx = chart.ctx;
+                            const x = chart.tooltip.caretX;
+                            const top = chart.scales.y.top;
+                            const bottom = chart.scales.y.bottom;
+                            ctx.save();
+                            ctx.beginPath();
+                            ctx.setLineDash([4, 4]);
+                            ctx.strokeStyle = 'rgba(148,163,184,0.85)';
+                            ctx.lineWidth = 1;
+                            ctx.moveTo(x, top);
+                            ctx.lineTo(x, bottom);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                    }
+                }
+            ]
         });
+    }
+
+    function normalizeMonthlyLabels(labels, aiData, staffData) {
+        const monthOrder = {
+            Jan: 0, Feb: 1, Mar: 2, Apr: 3,
+            May: 4, Jun: 5, Jul: 6, Aug: 7,
+            Sep: 8, Oct: 9, Nov: 10, Dec: 11
+        };
+        const items = (labels || []).map((label, index) => {
+            const key = String(label || '').slice(0, 3);
+            const order = monthOrder[key];
+            return {
+                label: label || '',
+                ai: aiData[index] != null ? aiData[index] : 0,
+                staff: staffData[index] != null ? staffData[index] : 0,
+                order: typeof order === 'number' ? order : 999
+            };
+        });
+        items.sort((a, b) => a.order - b.order);
+        return {
+            labels: items.map(item => item.label),
+            ai: items.map(item => item.ai),
+            staff: items.map(item => item.staff)
+        };
     }
 
     function updateAIStaffMonthlyChart(chart, labels, aiData, staffData) {
         if (!chart) return;
-        chart.data.labels = labels;
-        chart.data.datasets[0].data = aiData;
-        chart.data.datasets[1].data = staffData;
+        const normalized = normalizeMonthlyLabels(labels, aiData, staffData);
+        chart.data.labels = normalized.labels;
+        chart.data.datasets[0].data = normalized.ai;
+        chart.data.datasets[1].data = normalized.staff;
         chart.update();
     }
 
@@ -589,10 +812,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error('Fetch failed');
             }
             const data = await res.json();
+            const normalized = normalizeMonthlyLabels(data.labels || [], data.ai || [], data.staff || []);
             if (!aiStaffChart) {
-                aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, data.labels || [], data.ai || [], data.staff || []);
+                aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, normalized.labels, normalized.ai, normalized.staff);
             } else {
-                updateAIStaffMonthlyChart(aiStaffChart, data.labels || [], data.ai || [], data.staff || []);
+                updateAIStaffMonthlyChart(aiStaffChart, normalized.labels, normalized.ai, normalized.staff);
             }
             return data;
         } catch (error) {
@@ -687,15 +911,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (kpiAvgResponse) kpiAvgResponse.textContent = avgResp;
 
-        // resolution rate
-        let rr = '—';
-        if (lastAnalyticsData && typeof lastAnalyticsData.resolutionRate === 'number') {
-            rr = `${Math.round(lastAnalyticsData.resolutionRate * 100)}%`;
-        } else if (lastAnalyticsData && lastAnalyticsData.numTickets && lastAnalyticsData.numResolvedChats) {
-            const rate = (lastAnalyticsData.numResolvedChats / Math.max(1, lastAnalyticsData.numTickets));
-            rr = `${Math.round(rate * 100)}%`;
+        // resolution time
+        let resolutionTime = '—';
+        if (lastAnalyticsData && typeof lastAnalyticsData.avgResolutionSeconds === 'number') {
+            resolutionTime = Math.round(lastAnalyticsData.avgResolutionSeconds);
         }
-        if (kpiResolutionRate) kpiResolutionRate.textContent = rr;
+        if (kpiResolutionTime) kpiResolutionTime.textContent = resolutionTime;
 
         // active chats
         let active = '—';

@@ -176,6 +176,37 @@ fetch("/api/user")
         font-weight: 700;
         margin-bottom: 8px;
     }
+    .bar-chart-card {
+      padding: 24px;
+      background: linear-gradient(180deg, #ffffff, #f5f7ff);
+      border-radius: 28px;
+      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.08);
+    }
+    .bar-chart-card h3 {
+      margin-bottom: 18px;
+      font-size: 20px;
+      letter-spacing: -0.02em;
+    }
+    .bar-chart-card canvas {
+      width: 100% !important;
+      height: 340px !important;
+      border-radius: 28px;
+      background: #fff;
+      display: block;
+      box-sizing: border-box;
+    }
+    .chart-hover-details {
+      margin-top: 16px;
+      font-size: 0.95rem;
+      color: #334155;
+      background: rgba(59, 130, 246, 0.08);
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      border-radius: 14px;
+      padding: 12px 16px;
+      text-align: left;
+      max-width: 420px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+    }
     .main { color: #2c2c2c; }
 
     /* Responsive chart layout */
@@ -216,6 +247,7 @@ fetch("/api/user")
     }
     .staff-panel {
       padding: 0 0 56px;
+      padding-left: 40px;
     }
 
     .staff-header {
@@ -674,22 +706,22 @@ fetch("/api/user")
   </div>
   <div class="kpi-card">
     <h4>Avg Response (s)</h4>
-      <p id="kpi-avgResponse">—</p>
+      <p id="kpi-analyticsAvgResponse">—</p>
     <div class="kpi-small">Average first response time</div>
   </div>
   <div class="kpi-card">
-    <h4>Resolution Rate</h4>
-      <p id="kpi-resolutionRate">—</p>
-    <div class="kpi-small">% resolved within SLA</div>
+    <h4>Resolution Time</h4>
+      <p id="kpi-resolutionTime">—</p>
+    <div class="kpi-small">Average seconds to resolve</div>
   </div>
   <div class="kpi-card">
     <h4>Active Chats</h4>
-      <p id="kpi-activeChats">—</p>
+      <p id="kpi-analyticsActiveChats">—</p>
     <div class="kpi-small">Currently live</div>
   </div>
   <div class="kpi-card">
     <h4>AI Feedback Avg</h4>
-      <p id="kpi-aiFeedbackAvg">—</p>
+      <p id="kpi-analyticsAIFeedbackAvg">—</p>
     <div class="kpi-small">Average rating from staff/customers</div>
   </div>
   <div class="kpi-card">
@@ -699,31 +731,18 @@ fetch("/api/user")
   </div>
 </div>
 
-<div class="chart-container chart-left">
-    <div class="chart-item">
-        <h3>Bar Chart - Tickets by Period</h3>
-        <canvas id="ticketBarChart" width="400" height="200"></canvas>
-    </div>
-</div>
-<div class="chart-container">
-    <div class="chart-item">
-        <h3>Pie Chart Overview</h3>
-        <canvas id="chart5" width="400" height="400"></canvas>
-    </div>
-</div>
-<div class="message-chart-container">
-    <div class="chart-item">
-        <h3>Messages Received</h3>
-        <canvas id="messageBarChart" width="400" height="200"></canvas>
-    </div>
-
-  </div>
-
   <div class="chart-container chart-fullwidth">
-    <div class="chart-item">
-        <h3>AI vs Staff Messages (Monthly)</h3>
-        <canvas id="aiStaffMonthlyChart" width="800" height="300"></canvas>
+    <div class="chart-item bar-chart-card">
+      <h3>Tickets Created by Day, Week, Month</h3>
+      <canvas id="ticketBarChart" width="800" height="340"></canvas>
+      <div id="ticketBarHoverDetails" class="chart-hover-details">Hover over a bar to see details</div>
     </div>
+  </div>
+  <div class="chart-container chart-fullwidth">
+  <div class="chart-item">
+    <h3>AI vs Staff Messages (Monthly)</h3>
+    <canvas id="aiStaffMonthlyChart" width="800" height="300"></canvas>
+  </div>
   </div>
 
   </div>

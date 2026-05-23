@@ -14,6 +14,73 @@ let currentMenuSpecialCategory = 'All';
 let currentMenuSort = 'score_desc';
 let currentMenuSection = 'items';
 let tableLayout = [];
+const MENU_STORAGE_KEY = 'ls_menu_items_cache';
+
+const SAMPLE_MENU_ITEMS = [
+  { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured', 'Premium'], description: 'Tomato sauce, fresh mozzarella, basil' },
+  { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
+  { id: 'm3', name: 'BBQ Chicken', category: 'Pizza', subtype: 'Signature', price: 12.50, available: true, stock: 15, tags: ['Popular'], description: 'Smoky barbecue sauce, chicken, red onion' },
+  { id: 'm4', name: 'Four Cheese', category: 'Pizza', subtype: 'Vegetarian', price: 11.75, available: true, stock: 14, tags: ['Vegetarian'], description: 'Mozzarella, cheddar, parmesan, goat cheese' },
+  { id: 'm5', name: 'Hawaiian', category: 'Pizza', subtype: 'Classic', price: 10.99, available: true, stock: 12, tags: ['Sweet & Savory'], description: 'Ham, pineapple, mozzarella' },
+  { id: 'm6', name: 'Spicy Thai', category: 'Pizza', subtype: 'Premium', price: 13.50, available: true, stock: 10, tags: ['Premium', 'Spicy'], description: 'Peanut sauce, chicken, chili, cilantro' },
+  { id: 'm7', name: 'Classic Burger', category: 'Burgers', subtype: 'Beef', price: 8.99, available: true, stock: 25, tags: ['Popular'], description: 'Beef patty, lettuce, tomato, onion, pickles' },
+  { id: 'm8', name: 'Cheese Burger', category: 'Burgers', subtype: 'Beef', price: 9.99, available: true, stock: 22, tags: ['Popular', 'Discount'], description: 'Beef patty, cheddar, caramelized onions' },
+  { id: 'm9', name: 'Double Burger', category: 'Burgers', subtype: 'Beef', price: 12.99, available: true, stock: 16, tags: ['Hearty'], description: 'Two beef patties, cheese, bacon, secret sauce' },
+  { id: 'm10', name: 'Veggie Deluxe', category: 'Burgers', subtype: 'Vegetarian', price: 10.50, available: true, stock: 18, tags: ['Vegetarian'], description: 'Grilled veggie patty, avocado, sprouts, aioli' },
+  { id: 'm11', name: 'Crispy Chicken', category: 'Burgers', subtype: 'Chicken', price: 11.25, available: true, stock: 20, tags: ['Crispy'], description: 'Fried chicken, slaw, spicy mayo' },
+  { id: 'm12', name: 'Avocado Wrap', category: 'Sandwiches', subtype: 'Fresh', price: 9.50, available: true, stock: 18, tags: ['Healthy'], description: 'Avocado, spinach, hummus, tomato in a tortilla' },
+  { id: 'm13', name: 'BLT Sandwich', category: 'Sandwiches', subtype: 'Classic', price: 9.99, available: true, stock: 17, tags: ['Classic'], description: 'Bacon, lettuce, tomato, mayo on sourdough' },
+  { id: 'm14', name: 'Steak Sandwich', category: 'Sandwiches', subtype: 'Premium', price: 13.75, available: true, stock: 9, tags: ['Premium'], description: 'Sliced steak, caramelized onions, peppercorn sauce' },
+  { id: 'm15', name: 'Chicken Caesar Wrap', category: 'Sandwiches', subtype: 'Classic', price: 10.25, available: true, stock: 19, tags: ['Popular'], description: 'Grilled chicken, romaine, parmesan, Caesar dressing' },
+  { id: 'm16', name: 'Greek Salad', category: 'Salads', subtype: 'Fresh', price: 10.99, available: true, stock: 20, tags: ['Vegetarian'], description: 'Cucumber, feta, olives, tomato, oregano dressing' },
+  { id: 'm17', name: 'Cobb Salad', category: 'Salads', subtype: 'Protein', price: 11.50, available: true, stock: 18, tags: ['Protein'], description: 'Chicken, bacon, egg, avocado, blue cheese' },
+  { id: 'm18', name: 'Harvest Bowl', category: 'Bowls', subtype: 'Seasonal', price: 12.75, available: true, stock: 15, tags: ['Healthy'], description: 'Quinoa, roasted vegetables, grilled chicken, tahini' },
+  { id: 'm19', name: 'Pesto Pasta', category: 'Pasta', subtype: 'Vegetarian', price: 11.99, available: true, stock: 16, tags: ['Vegetarian'], description: 'Penne tossed with basil pesto and parmesan' },
+  { id: 'm20', name: 'Shrimp Alfredo', category: 'Pasta', subtype: 'Seafood', price: 14.50, available: true, stock: 12, tags: ['Premium'], description: 'Fettuccine in creamy Alfredo with sautéed shrimp' },
+  { id: 'm21', name: 'Mushroom Risotto', category: 'Pasta', subtype: 'Vegetarian', price: 13.25, available: true, stock: 14, tags: ['Rich'], description: 'Creamy arborio rice with wild mushrooms and parmesan' },
+  { id: 'm22', name: 'Loaded Fries', category: 'Sides', subtype: 'Snack', price: 7.50, available: true, stock: 26, tags: ['Popular'], description: 'Crispy fries topped with cheese, bacon, and jalapeños' },
+  { id: 'm23', name: 'Garlic Bread', category: 'Sides', subtype: 'Classic', price: 5.99, available: true, stock: 28, tags: ['Classic'], description: 'Toasted baguette with garlic butter and herbs' },
+  { id: 'm24', name: 'Onion Rings', category: 'Sides', subtype: 'Crispy', price: 6.50, available: true, stock: 24, tags: ['Crispy'], description: 'Beer-battered onion rings with dipping sauce' },
+  { id: 'm25', name: 'Cheese Sticks', category: 'Sides', subtype: 'Snack', price: 7.25, available: true, stock: 22, tags: ['Cheesy'], description: 'Breaded mozzarella sticks with marinara' },
+  { id: 'm26', name: 'Chocolate Lava Cake', category: 'Desserts', subtype: 'Sweet', price: 8.50, available: true, stock: 15, tags: ['Dessert'], description: 'Warm chocolate cake with molten core' },
+  { id: 'm27', name: 'Tiramisu', category: 'Desserts', subtype: 'Classic', price: 8.99, available: true, stock: 14, tags: ['Classic'], description: 'Coffee-soaked ladyfingers, mascarpone cream' },
+  { id: 'm28', name: 'Berry Parfait', category: 'Desserts', subtype: 'Fresh', price: 7.99, available: true, stock: 18, tags: ['Healthy'], description: 'Greek yogurt layered with berries and granola' },
+  { id: 'm29', name: 'Iced Lemon Tea', category: 'Drinks', subtype: 'Cold', price: 3.99, available: true, stock: 40, tags: ['Refreshing'], description: 'Lemon iced tea with mint and honey' },
+  { id: 'm30', name: 'Sparkling Water', category: 'Drinks', subtype: 'Cold', price: 2.99, available: true, stock: 50, tags: ['Light'], description: 'Chilled sparkling mineral water' },
+];
+
+function saveMenuItemsToStorage() {
+  try {
+    localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(menuItems));
+  } catch (e) {
+    console.warn('Could not save menu items to localStorage', e);
+  }
+}
+
+function loadMenuItemsFromStorage() {
+  try {
+    const raw = localStorage.getItem(MENU_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch (e) {
+    console.warn('Could not load menu items from localStorage', e);
+    return null;
+  }
+}
+
+function mergeMenuItems(baseItems, extraItems) {
+  const itemsById = new Map();
+  baseItems.forEach(item => {
+    if (item && item.id) itemsById.set(item.id, { ...item });
+  });
+  extraItems.forEach(item => {
+    if (item && item.id && !itemsById.has(item.id)) {
+      itemsById.set(item.id, { ...item });
+    }
+  });
+  return Array.from(itemsById.values());
+}
 
 function normalizeDate(value) {
   if (!value) return new Date().toISOString();
@@ -66,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStaffName();
   loadOrders();
   loadMenu();
-  generateTableLayout();
+  loadTableLayout();
   applyOrderPageHash();
   setupThemeToggle();
   setupRealtimeUpdates();
@@ -794,7 +861,7 @@ function switchMenuSection(view) {
     btn.setAttribute('aria-selected', String(showItems ? isItems : !isItems));
   });
   if (!showItems && tableLayout.length === 0) {
-    generateTableLayout();
+    loadTableLayout();
   }
 }
 
@@ -806,9 +873,35 @@ function getRandomTableStatus() {
 function generateTableLayout() {
   tableLayout = [];
   for (let i = 1; i <= 40; i += 1) {
-    tableLayout.push({ number: i, label: `Table ${i}`, status: getRandomTableStatus() });
+    tableLayout.push({ number: i, label: `Table ${i}`, status: 'vacant' });
   }
   renderTableLayout();
+}
+
+async function loadTableLayout() {
+  try {
+    const response = await fetch('/api/tables');
+    if (!response.ok) {
+      throw new Error(`Failed to load tables: ${response.status}`);
+    }
+    const data = await response.json();
+    if (!Array.isArray(data) || data.length === 0) {
+      generateTableLayout();
+      return;
+    }
+    tableLayout = data.map(table => ({
+      number: Number(table.number),
+      label: table.label || `Table ${table.number}`,
+      status: table.status || 'vacant',
+      customerName: table.customerName || undefined,
+      reservedUntil: table.reservedUntil || undefined,
+      isBooking: !!table.isBooking
+    }));
+    renderTableLayout();
+  } catch (error) {
+    console.warn('Error loading table layout:', error);
+    generateTableLayout();
+  }
 }
 
 function renderTableLayout() {
@@ -822,7 +915,7 @@ function renderTableLayout() {
       const reservationLabel = getTableReservationLabel(table);
       const statusText = table.status === 'vacant' ? 'Vacant' : table.status === 'reserved' ? 'Reserved' : 'Occupied';
       return `
-      <div class="table-card ${table.status}">
+      <div class="table-card ${table.status}" data-table-number="${table.number}">
         <button type="button" class="table-action-trigger" onclick="event.stopPropagation(); toggleTableActionMenu(${table.number})">⋮</button>
         <div class="table-action-menu" id="tableActionMenu-${table.number}">
           <button type="button" class="table-action-item" onclick="event.stopPropagation(); openTableActionModal(${table.number}, 'reserve')">Reserve</button>
@@ -847,20 +940,25 @@ function renderTableLayout() {
 }
 
 function refreshTableLayout() {
-  generateTableLayout();
+  loadTableLayout();
   showNotification('Table statuses refreshed');
 }
 
 function closeAllTableActionMenus() {
   document.querySelectorAll('.table-action-menu.open').forEach(menu => menu.classList.remove('open'));
+  document.querySelectorAll('.table-card.menu-open').forEach(card => card.classList.remove('menu-open'));
 }
 
 function toggleTableActionMenu(tableNumber) {
   const menu = document.getElementById(`tableActionMenu-${tableNumber}`);
   if (!menu) return;
+  const card = document.querySelector(`.table-card[data-table-number="${tableNumber}"]`);
   const isOpen = menu.classList.contains('open');
   closeAllTableActionMenus();
-  if (!isOpen) menu.classList.add('open');
+  if (!isOpen) {
+    menu.classList.add('open');
+    if (card) card.classList.add('menu-open');
+  }
 }
 
 function getTableReservationLabel(table) {
@@ -892,6 +990,10 @@ function openTableActionModal(tableNumber, action) {
   typeInput.value = action;
   tableInput.value = String(tableNumber);
 
+  dateInput.required = action === 'book';
+  timeInput.required = true;
+  customerInput.required = true;
+
   if (action === 'reserve') {
     title.textContent = `Reserve ${tableLayout[tableNumber-1]?.label || 'Table'}`;
     subtitle.textContent = 'Reserve by time only; it becomes occupied when the time arrives.';
@@ -912,7 +1014,7 @@ function closeTableActionModal() {
   closeAllTableActionMenus();
 }
 
-function handleTableActionSave(event) {
+async function handleTableActionSave(event) {
   event.preventDefault();
   const type = document.getElementById('tableActionType').value;
   const number = Number(document.getElementById('tableActionTableNumber').value);
@@ -923,67 +1025,101 @@ function handleTableActionSave(event) {
     return alert('Please fill in all required fields.');
   }
   if (type === 'reserve') {
-    reserveTable(number, customerName, timeValue);
+    await reserveTable(number, customerName, timeValue);
   } else if (type === 'book') {
-    bookTable(number, customerName, dateValue, timeValue);
+    await bookTable(number, customerName, dateValue, timeValue);
   }
   closeTableActionModal();
-  renderTableLayout();
 }
 
-function reserveTable(tableNumber, customerName, timeValue) {
-  const table = tableLayout.find(t => t.number === tableNumber);
-  if (!table) return;
+async function reserveTable(tableNumber, customerName, timeValue) {
   const [hours, minutes] = timeValue.split(':').map(Number);
   const now = new Date();
   const target = new Date(now);
   target.setHours(hours, minutes, 0, 0);
   if (target <= now) target.setDate(target.getDate() + 1);
-  table.status = 'reserved';
-  table.customerName = customerName;
-  table.reservedUntil = target.toISOString();
-  table.isBooking = false;
+  await persistTableState(tableNumber, 'reserved', customerName, target.toISOString(), false);
 }
 
-function bookTable(tableNumber, customerName, dateValue, timeValue) {
-  const table = tableLayout.find(t => t.number === tableNumber);
-  if (!table) return;
+async function bookTable(tableNumber, customerName, dateValue, timeValue) {
   const target = new Date(`${dateValue}T${timeValue}`);
   if (isNaN(target.getTime())) return alert('Invalid date or time selected.');
-  table.status = 'reserved';
-  table.customerName = customerName;
-  table.reservedUntil = target.toISOString();
-  table.isBooking = true;
+  await persistTableState(tableNumber, 'reserved', customerName, target.toISOString(), true);
 }
 
-function markTableVacant(tableNumber) {
-  const table = tableLayout.find(t => t.number === tableNumber);
-  if (!table) return;
-  table.status = 'vacant';
-  table.customerName = undefined;
-  table.reservedUntil = undefined;
-  table.isBooking = false;
-  renderTableLayout();
+async function markTableVacant(tableNumber) {
+  await persistTableState(tableNumber, 'vacant', undefined, undefined, false);
 }
 
-function updateTableStatuses() {
+async function persistTableState(tableNumber, status, customerName, reservedUntil, isBooking) {
+  try {
+    const body = {
+      status,
+      customerName: customerName || null,
+      reservedUntil: reservedUntil || null,
+      isBooking: !!isBooking
+    };
+    const response = await fetch(`/api/tables/${tableNumber}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || `Unable to update table ${tableNumber}`);
+    }
+    const updated = await response.json();
+    const index = tableLayout.findIndex(t => t.number === tableNumber);
+    const nextState = {
+      number: tableNumber,
+      label: `Table ${tableNumber}`,
+      status: updated.status,
+      customerName: updated.customerName || undefined,
+      reservedUntil: updated.reservedUntil || undefined,
+      isBooking: !!updated.isBooking
+    };
+    if (index >= 0) {
+      tableLayout[index] = nextState;
+    } else {
+      tableLayout.push(nextState);
+      tableLayout.sort((a, b) => a.number - b.number);
+    }
+    renderTableLayout();
+  } catch (error) {
+    console.error('Error updating table state:', error);
+    alert(error.message || 'Failed to update table status.');
+    throw error;
+  }
+}
+
+async function updateTableStatuses() {
   const now = new Date();
   let changed = false;
-  tableLayout.forEach(table => {
+  const updates = [];
+  for (const table of tableLayout) {
     if (table.status === 'reserved' && table.reservedUntil) {
       const target = new Date(table.reservedUntil);
       if (!isNaN(target.getTime()) && now >= target) {
         table.status = 'occupied';
         changed = true;
+        updates.push(
+          persistTableState(table.number, 'occupied', table.customerName, table.reservedUntil, table.isBooking)
+            .catch(error => console.error('Failed to persist table expiration update:', error))
+        );
       }
     }
-  });
+  }
+  if (updates.length > 0) {
+    await Promise.all(updates);
+  }
   if (changed) renderTableLayout();
 }
 
 function loadMenu() {
   // Try to fetch menu from backend API; fallback to local sample
-  fetch('/api/menu')
+  fetch('/api/menu', { credentials: 'same-origin' })
     .then(r => r.json())
     .then(data => {
       // API returns object grouped by category: { category: { key_name: { name, price, available, image_url } } }
@@ -997,31 +1133,76 @@ function loadMenu() {
       }
       if (arr.length === 0) {
         // fallback sample
-        menuItems = [
-          { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured', 'Premium'], description: 'Tomato sauce, fresh mozzarella, basil' },
-          { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
-          { id: 'm3', name: 'Festive Roast', category: 'Specials', subtype: 'Holiday', price: 14.99, available: true, stock: 12, tags: ['Festive'], description: 'Maple glazed chicken with seasonal vegetables' },
-          { id: 'm4', name: 'Truffle Burger', category: 'Premium', subtype: 'Gourmet', price: 18.50, available: true, stock: 8, tags: ['Premium'], description: 'Wagyu beef patty, truffle aioli, aged cheddar' },
-          { id: 'm5', name: 'Winter Salad', category: 'Salads', subtype: 'Fresh', price: 10.50, available: true, stock: 20, tags: ['Festive', 'Discount'], description: 'Cranberry, pear and feta with citrus dressing' },
-        ];
+        menuItems = SAMPLE_MENU_ITEMS.map(item => ({ ...item }));
       } else {
         menuItems = arr;
+      }
+      const stored = loadMenuItemsFromStorage();
+      if (stored && stored.length > 0) {
+        menuItems = mergeMenuItems(menuItems, stored);
       }
       filteredMenuItems = [...menuItems];
       buildMenuChips();
       renderMenu();
     }).catch(err => {
       console.warn('Failed to load /api/menu, using sample', err);
-      menuItems = [
-        { id: 'm1', name: 'Margherita', category: 'Pizza', subtype: 'Classic', price: 8.99, available: true, stock: 24, tags: ['Featured'], description: 'Tomato sauce, fresh mozzarella, basil' },
-        { id: 'm2', name: 'Pepperoni', category: 'Pizza', subtype: 'Classic', price: 9.99, available: true, stock: 18, tags: ['Popular', 'Discount'], description: 'Pepperoni, mozzarella' },
-        { id: 'm3', name: 'Festive Roast', category: 'Specials', subtype: 'Holiday', price: 14.99, available: true, stock: 12, tags: ['Festive'], description: 'Maple glazed chicken with seasonal vegetables' },
-        { id: 'm4', name: 'Truffle Burger', category: 'Premium', subtype: 'Gourmet', price: 18.50, available: true, stock: 8, tags: ['Premium'], description: 'Wagyu beef patty, truffle aioli, aged cheddar' },
-        { id: 'm5', name: 'Winter Salad', category: 'Salads', subtype: 'Fresh', price: 10.50, available: true, stock: 20, tags: ['Festive', 'Discount'], description: 'Cranberry, pear and feta with citrus dressing' },
-      ];
+      menuItems = SAMPLE_MENU_ITEMS.map(item => ({ ...item }));
+      const stored = loadMenuItemsFromStorage();
+      if (stored && stored.length > 0) {
+        menuItems = mergeMenuItems(menuItems, stored);
+      }
       filteredMenuItems = [...menuItems];
       buildMenuChips();
       renderMenu();
+    });
+}
+
+function bulkAddSampleMenuItems() {
+  const existingIds = new Set(menuItems.map(item => item.id));
+  const itemsToAdd = SAMPLE_MENU_ITEMS.filter(item => !existingIds.has(item.id)).map(item => ({ ...item }));
+  if (itemsToAdd.length === 0) {
+    showNotification('Sample menu already loaded');
+    return;
+  }
+
+  const payload = itemsToAdd.map(item => ({
+    category: item.category,
+    key: item.id,
+    name: item.name,
+    price: item.price,
+    available: item.stock || 0,
+    image_url: item.image_url || null
+  }));
+
+  fetch('/api/menu/bulk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ items: payload })
+  })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.success) {
+        menuItems = menuItems.concat(itemsToAdd);
+        saveMenuItemsToStorage();
+        buildMenuChips();
+        applyMenuFilters();
+        showNotification(`Added ${itemsToAdd.length} sample menu items`);
+      } else {
+        menuItems = menuItems.concat(itemsToAdd);
+        saveMenuItemsToStorage();
+        buildMenuChips();
+        applyMenuFilters();
+        showNotification('Added sample menu items locally');
+      }
+    })
+    .catch(err => {
+      console.warn('Bulk sample menu save failed', err);
+      menuItems = menuItems.concat(itemsToAdd);
+      saveMenuItemsToStorage();
+      buildMenuChips();
+      applyMenuFilters();
+      showNotification('Added sample menu items locally');
     });
 }
 
@@ -1245,7 +1426,7 @@ function handleMenuItemSave(event) {
   const key = (id && !id.startsWith('m')) ? id : keyFromName;
   const payload = { category, key, name, price, available: stock, image_url: null };
 
-  fetch('/api/menu/item', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) })
+  fetch('/api/menu/item', { method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin', body: JSON.stringify(payload) })
     .then(r => r.json())
     .then(resp => {
       if (resp && resp.success) {
@@ -1254,6 +1435,7 @@ function handleMenuItemSave(event) {
         const entry = { id: key, key, name, category, subtype, price, stock, tags, description, available };
         if (idx !== -1) menuItems[idx] = entry;
         else menuItems.push(entry);
+        saveMenuItemsToStorage();
         buildMenuChips();
         applyMenuFilters();
         closeMenuItemModal();
@@ -1263,6 +1445,7 @@ function handleMenuItemSave(event) {
         const idx = menuItems.findIndex(i=>i.id===id);
         if (idx !== -1) menuItems[idx] = { ...menuItems[idx], name, category, subtype, price, stock, tags, description, available };
         else menuItems.push({ id: key, key, name, category, subtype, price, stock, tags, description, available });
+        saveMenuItemsToStorage();
         buildMenuChips();
         applyMenuFilters();
         closeMenuItemModal();
@@ -1274,6 +1457,7 @@ function handleMenuItemSave(event) {
       const idx = menuItems.findIndex(i=>i.id===id);
       if (idx !== -1) menuItems[idx] = { ...menuItems[idx], name, category, subtype, price, stock, tags, description, available };
       else menuItems.push({ id: key, key, name, category, subtype, price, stock, tags, description, available });
+      saveMenuItemsToStorage();
       buildMenuChips();
       applyMenuFilters();
       closeMenuItemModal();
@@ -1287,12 +1471,13 @@ function deleteMenuItem(id) {
   if (!item) return showNotification('Item not found');
   const category = item.category || 'other';
   const key = item.key || item.id;
-  fetch(`/api/menu/item/${encodeURIComponent(category)}/${encodeURIComponent(key)}`, { method: 'DELETE' })
+  fetch(`/api/menu/item/${encodeURIComponent(category)}/${encodeURIComponent(key)}`, { method: 'DELETE', credentials: 'same-origin' })
     .then(r => r.json())
     .then(resp => {
       if (resp && resp.success) {
         const idx = menuItems.findIndex(i=>i.id===id);
         if (idx !== -1) menuItems.splice(idx,1);
+        saveMenuItemsToStorage();
         buildMenuChips();
         applyMenuFilters();
         showNotification('Menu item deleted');
@@ -1300,6 +1485,7 @@ function deleteMenuItem(id) {
         // fallback: local delete
         const idx = menuItems.findIndex(i=>i.id===id);
         if (idx !== -1) menuItems.splice(idx,1);
+        saveMenuItemsToStorage();
         buildMenuChips();
         applyMenuFilters();
         showNotification('Menu item deleted (offline)');
@@ -1308,6 +1494,7 @@ function deleteMenuItem(id) {
       console.warn('Delete menu item failed', err);
       const idx = menuItems.findIndex(i=>i.id===id);
       if (idx !== -1) menuItems.splice(idx,1);
+      saveMenuItemsToStorage();
       buildMenuChips();
       applyMenuFilters();
       showNotification('Menu item deleted (offline)');

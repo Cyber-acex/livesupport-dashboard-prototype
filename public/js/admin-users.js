@@ -1,6 +1,26 @@
 const _base = (typeof window !== 'undefined' && window.BACKEND_URL) ? String(window.BACKEND_URL).replace(/\/$/, '') : '';
 
+// Check if user is admin before allowing access
+async function checkAdminAccess() {
+  try {
+    const res = await fetch(_base + '/api/user');
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data && (data.role || '').toString().toLowerCase() === 'admin';
+  } catch (e) {
+    return false;
+  }
+}
+
 async function fetchUsers() {
+  // Verify admin access before fetching
+  const isAdmin = await checkAdminAccess();
+  if (!isAdmin) {
+    const container = document.getElementById('usersList');
+    if (container) container.innerHTML = '<h2 style="color:#b91c1c;">Access denied</h2>';
+    return;
+  }
+
   const res = await fetch(_base + '/api/admin/users');
   if (res.status === 401) return location.href = '/login.html';
   if (res.status === 403) return document.body.innerHTML = '<h2>Access denied</h2>';

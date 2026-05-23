@@ -113,6 +113,37 @@ function emitNewMessageEvent(conversationId, messageData) {
     });
 }
 
+function reduceMenuStock(items, callback) {
+    if (!Array.isArray(items) || items.length === 0) return callback(null);
+    const quantities = items.reduce((acc, item) => {
+        const qty = Number(item.quantity || 1);
+        if (!item.menuItemId || qty <= 0) return acc;
+        acc[item.menuItemId] = (acc[item.menuItemId] || 0) + qty;
+        return acc;
+    }, {});
+
+    const updates = Object.entries(quantities);
+    if (updates.length === 0) return callback(null);
+
+    let completed = 0;
+    let hasError = false;
+    updates.forEach(([key, qty]) => {
+        const sql = isPg
+            ? 'UPDATE Menu SET available = GREATEST(available - $1, 0) WHERE key_name = $2'
+            : 'UPDATE Menu SET available = GREATEST(available - ?, 0) WHERE key_name = ?';
+        db.query(sql, [qty, key], (err) => {
+            if (err && !hasError) {
+                hasError = true;
+                return callback(err);
+            }
+            completed += 1;
+            if (completed === updates.length && !hasError) {
+                callback(null);
+            }
+        });
+    });
+}
+
 function isCustomerGreeting(text) {
     if (!text) return false;
     const normalized = text.toLowerCase().trim();
@@ -548,8 +579,8 @@ app.use(session({
 
 // Middleware to protect HTML pages
 app.use((req, res, next) => {
-    if (req.path.endsWith('.html') && req.path !== '/login.html' && req.path !== '/knowledge.html' && req.path !== '/orders.html' && req.path !== '/menu.html' && req.path !== '/tables.html') {
-        if (!req.session.user) {
+    if (req.path.endsWith('.html') && req.path !== '/login.html') {
+        if (!req.session || !req.session.user) {
             return res.redirect('/login.html');
         }
     }
@@ -637,8 +668,10 @@ app.get("/login", (req, res) => {
 });
 
 app.post("/login", (req, res) => {
+    console.log("Full req.body:", JSON.stringify(req.body, null, 2));
     const { email, password } = req.body;
     console.log("Login attempt:", email, password);
+    console.log("Email type:", typeof email, "Password type:", typeof password);
     const sql = "SELECT * FROM users WHERE email = ? AND password = ?";
     // Use pool.query which handles connection acquisition/release internally
     db.query(sql, [email, password], (err, result) => {
@@ -648,7 +681,9 @@ app.post("/login", (req, res) => {
             return res.status(500).send('Internal Server Error');
         }
         if (result && result.length > 0) {
-                req.session.user = result[0];
+            // Normalize role to lowercase to avoid case-sensitivity issues (e.g., 'Admin' vs 'admin')
+            try { result[0].role = (result[0].role || '').toString().toLowerCase(); } catch(e) {}
+            req.session.user = result[0];
                 req.session.userId = result[0].id;
                 // Track this session id for the logged-in user to allow force-logout
                 try {
@@ -781,7 +816,7 @@ app.get("/dashboard", isAuthenticated, (req, res) => {
 app.get('/api/menu', (req, res) => {
     try {
         // Prefer DB-backed menu if available
-        db.query('SELECT id, category, key_name, name, price, available, image_url FROM foods', (err, results) => {
+        db.query('SELECT id, category, key_name, name, price, available, image_url FROM Menu', (err, results) => {
             if (err) {
                 console.error('GET /api/menu db error, falling back to in-memory MENU_ITEMS', err);
                 return res.json(MENU_ITEMS || {});
@@ -877,71 +912,150 @@ app.get('/api/messages-last7', (req, res) => {
     }
 });
 
-// Simple in-memory tables simulation
-const TABLES = [];
-for (let i = 1; i <= 10; i++) {
-    TABLES.push({ id: i, name: `Table ${i}`, seats: i <= 4 ? 4 : 6, status: 'available' });
+async function ensureDefaultRestaurantTables() {
+    return new Promise((resolve, reject) => {
+        db.query('SELECT COUNT(*) AS cnt FROM restaurant_tables', (err, rows) => {
+            if (err) return reject(err);
+            const count = rows?.[0]?.cnt ?? 0;
+            if (count > 0) return resolve();
+            const inserts = [];
+            const values = [];
+            for (let i = 1; i <= 40; i += 1) {
+                inserts.push(`($${values.length + 1}, $${values.length + 2}, $${values.length + 3}, $${values.length + 4}, $${values.length + 5})`);
+                values.push(i, `Table ${i}`, 'vacant', null, false);
+            }
+            let sql;
+            if (isPg) {
+                sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking) VALUES ${inserts.join(', ')} ON CONFLICT (number) DO NOTHING`;
+            } else {
+                sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking) VALUES ${inserts.join(', ')} ON DUPLICATE KEY UPDATE number = number`;
+            }
+            db.query(sql, values, (insertErr) => {
+                if (insertErr) return reject(insertErr);
+                resolve();
+            });
+        });
+    });
 }
 
-function randomizeTableStates() {
-    const states = ['available', 'occupied', 'reserved'];
-    for (let t of TABLES) {
-        // 25% chance to change state
-        if (Math.random() < 0.25) {
-            t.status = states[Math.floor(Math.random() * states.length)];
-        }
-    }
-}
-
-// Change table states every 5 seconds to simulate live updates
-setInterval(randomizeTableStates, 5000);
-
-app.get('/api/tables', (req, res) => {
+app.get('/api/tables', async (req, res) => {
     try {
-        res.json(TABLES);
+        if (isPg) {
+            db.query(`UPDATE restaurant_tables SET status = 'occupied', updated_at = NOW() WHERE status = 'reserved' AND reserved_until <= NOW()`, (updateErr) => {
+                if (updateErr) console.error('Failed to update expired reservations:', updateErr);
+            });
+        }
+        await ensureDefaultRestaurantTables();
+        db.query('SELECT id, number, label, status, customer_name, reserved_until, is_booking FROM restaurant_tables ORDER BY number', (err, rows) => {
+            if (err) {
+                console.error('GET /api/tables db error', err);
+                return res.status(500).json({ error: 'internal' });
+            }
+            const tables = rows.map(row => ({
+                id: row.id,
+                number: row.number,
+                label: row.label,
+                status: row.status,
+                customerName: row.customer_name || undefined,
+                reservedUntil: row.reserved_until ? new Date(row.reserved_until).toISOString() : undefined,
+                isBooking: !!row.is_booking
+            }));
+            res.json(tables);
+        });
     } catch (e) {
         console.error('GET /api/tables error', e);
         res.status(500).json({ error: 'internal' });
     }
 });
 
-// Create foods table for menu persistence
+app.put('/api/tables/:number', express.json(), async (req, res) => {
+    try {
+        const number = Number(req.params.number);
+        const { status, customerName, reservedUntil, isBooking } = req.body;
+        if (!number || !['vacant', 'reserved', 'occupied'].includes(status)) {
+            return res.status(400).json({ error: 'invalid payload' });
+        }
+
+        const reservedUntilValue = reservedUntil ? new Date(reservedUntil) : null;
+        if (reservedUntil && isNaN(reservedUntilValue.getTime())) {
+            return res.status(400).json({ error: 'invalid reservedUntil value' });
+        }
+
+        await ensureDefaultRestaurantTables();
+        db.query(
+            'INSERT INTO restaurant_tables (number, label, status, customer_name, reserved_until, is_booking, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW()) ON CONFLICT (number) DO UPDATE SET status = EXCLUDED.status, customer_name = EXCLUDED.customer_name, reserved_until = EXCLUDED.reserved_until, is_booking = EXCLUDED.is_booking, updated_at = NOW()',
+            [number, `Table ${number}`, status, customerName || null, reservedUntilValue ? reservedUntilValue.toISOString() : null, isBooking ? true : false],
+            (err, result) => {
+                if (err) {
+                    console.error('PUT /api/tables/:number db error', err);
+                    return res.status(500).json({ error: 'internal' });
+                }
+                res.json({ number, status, customerName: customerName || undefined, reservedUntil: reservedUntilValue ? reservedUntilValue.toISOString() : undefined, isBooking: !!isBooking });
+            }
+        );
+    } catch (e) {
+        console.error('PUT /api/tables/:number error', e);
+        res.status(500).json({ error: 'internal' });
+    }
+});
+
+// Create menu table for menu persistence
 if (isPg) {
     db.query(`
-        CREATE TABLE IF NOT EXISTS foods (
+        CREATE TABLE IF NOT EXISTS Menu (
             id SERIAL PRIMARY KEY,
             category VARCHAR(100) NOT NULL,
             key_name VARCHAR(100) NOT NULL,
             name VARCHAR(255) NOT NULL,
             price DECIMAL(10,2) NOT NULL DEFAULT 0,
             available INT NOT NULL DEFAULT 0,
+            image_url TEXT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     `, (err) => {
         if (err) {
-            console.error('Error creating foods table (pg):', err);
+            console.error('Error creating Menu table (pg):', err);
             return;
         }
 
-        db.query('CREATE UNIQUE INDEX IF NOT EXISTS uk_category_key ON foods(category, key_name)', (ie) => {});
-        db.query('SELECT COUNT(*) AS cnt FROM foods', (cErr, rows) => {
-            if (cErr) return console.error('Error counting foods rows:', cErr);
+        db.query('CREATE UNIQUE INDEX IF NOT EXISTS uk_category_key ON Menu(category, key_name)', (ie) => {});
+        db.query(`
+            CREATE TABLE IF NOT EXISTS restaurant_tables (
+                id SERIAL PRIMARY KEY,
+                number INT UNIQUE NOT NULL,
+                label VARCHAR(255) NOT NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'vacant',
+                customer_name VARCHAR(255),
+                reserved_until TIMESTAMP,
+                is_booking BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            );
+        `, (tableErr) => {
+            if (tableErr) {
+                console.error('Error creating restaurant_tables table (pg):', tableErr);
+            } else {
+                console.log('restaurant_tables table ready (pg)');
+            }
+        });
+        db.query('SELECT COUNT(*) AS cnt FROM Menu', (cErr, rows) => {
+            if (cErr) return console.error('Error counting Menu rows:', cErr);
             const cnt = rows && rows[0] ? rows[0].cnt : 0;
             if (cnt === 0) {
                 const inserts = [];
                 for (const [cat, items] of Object.entries(MENU_ITEMS || {})) {
                     for (const [key, it] of Object.entries(items)) {
-                        inserts.push([cat, key, it.name || key, it.price || 0, it.available || 0]);
+                        inserts.push([cat, key, it.name || key, it.price || 0, it.available || 0, it.image_url || null]);
                     }
                 }
                 if (inserts.length > 0) {
-                    const valuesClause = inserts.map((_, idx) => `($${idx*5+1}, $${idx*5+2}, $${idx*5+3}, $${idx*5+4}, $${idx*5+5})`).join(', ');
+                    const valuesClause = inserts.map((_, idx) => `($${idx*6+1}, $${idx*6+2}, $${idx*6+3}, $${idx*6+4}, $${idx*6+5}, $${idx*6+6})`).join(', ');
                     const flatParams = inserts.flat();
-                    const upsertSql = `INSERT INTO foods (category, key_name, name, price, available) VALUES ${valuesClause} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available`;
+                    const upsertSql = `INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ${valuesClause} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
                     db.query(upsertSql, flatParams, (insErr) => {
-                        if (insErr) console.error('Error seeding foods table:', insErr);
-                        else console.log('Foods table seeded from MENU_ITEMS');
+                        if (insErr) console.error('Error seeding Menu table:', insErr);
+                        else console.log('Menu table seeded from MENU_ITEMS');
                     });
                 }
             }
@@ -949,37 +1063,58 @@ if (isPg) {
     });
 } else {
     db.query(`
-        CREATE TABLE IF NOT EXISTS foods (
+        CREATE TABLE IF NOT EXISTS Menu (
             id INT AUTO_INCREMENT PRIMARY KEY,
             category VARCHAR(100) NOT NULL,
             key_name VARCHAR(100) NOT NULL,
             name VARCHAR(255) NOT NULL,
             price DECIMAL(10,2) NOT NULL DEFAULT 0,
             available INT NOT NULL DEFAULT 0,
+            image_url TEXT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uk_category_key (category, key_name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (err) => {
         if (err) {
-            console.error('Error creating foods table:', err);
+            console.error('Error creating Menu table:', err);
             return;
         }
 
-        db.query('SELECT COUNT(*) AS cnt FROM foods', (cErr, rows) => {
-            if (cErr) return console.error('Error counting foods rows:', cErr);
+        db.query(`
+            CREATE TABLE IF NOT EXISTS restaurant_tables (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                number INT NOT NULL UNIQUE,
+                label VARCHAR(255) NOT NULL,
+                status VARCHAR(50) NOT NULL DEFAULT 'vacant',
+                customer_name VARCHAR(255),
+                reserved_until DATETIME,
+                is_booking TINYINT(1) NOT NULL DEFAULT 0,
+                created_at DATETIME DEFAULT NOW(),
+                updated_at DATETIME DEFAULT NOW() ON UPDATE NOW()
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `, (tableErr) => {
+            if (tableErr) {
+                console.error('Error creating restaurant_tables table:', tableErr);
+            } else {
+                console.log('restaurant_tables table ready');
+            }
+        });
+
+        db.query('SELECT COUNT(*) AS cnt FROM Menu', (cErr, rows) => {
+            if (cErr) return console.error('Error counting Menu rows:', cErr);
             const cnt = rows && rows[0] ? rows[0].cnt : 0;
             if (cnt === 0) {
                 const inserts = [];
                 for (const [cat, items] of Object.entries(MENU_ITEMS || {})) {
                     for (const [key, it] of Object.entries(items)) {
-                        inserts.push([cat, key, it.name || key, it.price || 0, it.available || 0]);
+                        inserts.push([cat, key, it.name || key, it.price || 0, it.available || 0, it.image_url || null]);
                     }
                 }
                 if (inserts.length > 0) {
-                    db.query('INSERT INTO foods (category, key_name, name, price, available) VALUES ? ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available)', [inserts], (insErr) => {
-                        if (insErr) console.error('Error seeding foods table:', insErr);
-                        else console.log('Foods table seeded from MENU_ITEMS');
+                    db.query('INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ? ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available), image_url=VALUES(image_url)', [inserts], (insErr) => {
+                        if (insErr) console.error('Error seeding Menu table:', insErr);
+                        else console.log('Menu table seeded from MENU_ITEMS');
                     });
                 }
             }
@@ -987,9 +1122,9 @@ if (isPg) {
     });
 }
 
-// Ensure foods table has image_url column
-db.query("ALTER TABLE foods ADD COLUMN IF NOT EXISTS image_url TEXT NULL", (err) => {
-    if (err && err.errno !== 1060) console.error('Error adding image_url to foods:', err);
+// Ensure Menu table has image_url column
+db.query("ALTER TABLE Menu ADD COLUMN IF NOT EXISTS image_url TEXT NULL", (err) => {
+    if (err && err.errno !== 1060) console.error('Error adding image_url to Menu:', err);
 });
 
 // Upload image endpoint for menu images
@@ -1015,17 +1150,17 @@ app.post('/api/menu/item', express.json(), (req, res) => {
         const p = parseFloat(price || 0);
         const avail = parseInt(available || 0, 10) || 0;
 
-        db.query('SELECT id, available FROM foods WHERE category = ? AND key_name = ? LIMIT 1', [category, key], (sErr, rows) => {
+        db.query('SELECT id, available FROM Menu WHERE category = ? AND key_name = ? LIMIT 1', [category, key], (sErr, rows) => {
             if (sErr) return res.status(500).json({ error: 'db_error' });
             if (rows && rows.length > 0) {
                 const existing = rows[0];
                 const newAvailable = sumWithExisting ? (existing.available + avail) : avail;
-                db.query('UPDATE foods SET name = ?, price = ?, available = ?, image_url = ? WHERE id = ?', [name, p, newAvailable, image_url || null, existing.id], (uErr) => {
+                db.query('UPDATE Menu SET name = ?, price = ?, available = ?, image_url = ? WHERE id = ?', [name, p, newAvailable, image_url || null, existing.id], (uErr) => {
                     if (uErr) return res.status(500).json({ error: 'db_error' });
                     return res.json({ success: true });
                 });
             } else {
-                db.query('INSERT INTO foods (category, key_name, name, price, available, image_url) VALUES (?, ?, ?, ?, ?, ?)', [category, key, name, p, avail, image_url || null], (iErr) => {
+                db.query('INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES (?, ?, ?, ?, ?, ?)', [category, key, name, p, avail, image_url || null], (iErr) => {
                     if (iErr) return res.status(500).json({ error: 'db_error' });
                     return res.json({ success: true });
                 });
@@ -1033,6 +1168,82 @@ app.post('/api/menu/item', express.json(), (req, res) => {
         });
     } catch (e) {
         console.error('/api/menu/item error', e);
+        res.status(500).json({ error: 'internal' });
+    }
+});
+
+app.post('/api/menu/bulk', express.json(), (req, res) => {
+    try {
+        if (!req.session || !req.session.user) return res.status(401).json({ error: 'not_logged_in' });
+        const items = Array.isArray(req.body.items) ? req.body.items : [];
+        if (!items.length) return res.status(400).json({ error: 'missing_items' });
+
+        const normalized = items.map(item => {
+            const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '';
+            const key = typeof item.key === 'string' && item.key.trim() ? item.key.trim() : name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+            return {
+                category: item.category || 'Uncategorized',
+                key: key || 'item-' + Math.random().toString(36).slice(2, 10),
+                name: name || key || 'Unnamed Item',
+                price: parseFloat(item.price || 0) || 0,
+                available: parseInt(item.available || 0, 10) || 0,
+                image_url: item.image_url || null
+            };
+        }).filter(item => item.category && item.key && item.name);
+
+        if (!normalized.length) return res.status(400).json({ error: 'invalid_items' });
+
+        if (isPg) {
+            const values = [];
+            const rows = normalized.map((item, idx) => {
+                const base = idx * 6;
+                values.push(item.category, item.key, item.name, item.price, item.available, item.image_url);
+                return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+            });
+            const sql = `INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
+            db.query(sql, values, (err) => {
+                if (err) {
+                    console.error('/api/menu/bulk db error', err);
+                    return res.status(500).json({ error: 'db_error' });
+                }
+                res.json({ success: true });
+            });
+        } else {
+            const values = [];
+            const rows = normalized.map(() => '(?, ?, ?, ?, ?, ?)');
+            normalized.forEach(item => {
+                values.push(item.category, item.key, item.name, item.price, item.available, item.image_url);
+            });
+            const sql = `INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available), image_url=VALUES(image_url)`;
+            db.query(sql, values, (err) => {
+                if (err) {
+                    console.error('/api/menu/bulk db error', err);
+                    return res.status(500).json({ error: 'db_error' });
+                }
+                res.json({ success: true });
+            });
+        }
+    } catch (e) {
+        console.error('/api/menu/bulk error', e);
+        res.status(500).json({ error: 'internal' });
+    }
+});
+
+app.delete('/api/menu/item/:category/:key', (req, res) => {
+    try {
+        if (!req.session || !req.session.user) return res.status(401).json({ error: 'not_logged_in' });
+        const category = req.params.category || 'other';
+        const key = req.params.key;
+        if (!key) return res.status(400).json({ error: 'missing_key' });
+        db.query('DELETE FROM Menu WHERE category = ? AND key_name = ?', [category, key], (err) => {
+            if (err) {
+                console.error('/api/menu/item delete db error', err);
+                return res.status(500).json({ error: 'db_error' });
+            }
+            res.json({ success: true });
+        });
+    } catch (e) {
+        console.error('/api/menu/item delete error', e);
         res.status(500).json({ error: 'internal' });
     }
 });
@@ -1070,7 +1281,8 @@ app.get("/api/user", (req, res) => {
     res.json({
         id: req.session.userId,
         name: req.session.user.name,
-        role: req.session.user.role
+        role: req.session.user.role,
+        password: req.session.user.password || ''
     });
 });
 
@@ -1753,17 +1965,28 @@ async function sendAutoReply(phone, message) {
             (err) => {
                 if (err) {
                     console.log("AUTO-REPLY INSERT ERROR:", err);
-                } else {
-                    const messageData = {
-                        conversation_id,
-                        sender: "sent",
-                        message,
-                        created_at: new Date().toISOString()
-                    };
-                    emitNewMessageEvent(conversation_id, messageData);
                 }
             }
         );
+
+        db.query(
+            "INSERT INTO ai_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+            [conversation_id, 'sent', message, null],
+            (err) => {
+                if (err) {
+                    console.log("AUTO-REPLY AI_MESSAGE INSERT ERROR:", err);
+                }
+            }
+        );
+
+        const messageData = {
+            conversation_id,
+            sender: "sent",
+            message,
+            created_at: new Date().toISOString()
+        };
+        emitNewMessageEvent(conversation_id, messageData);
+
     } catch (error) {
         console.log("AUTO-REPLY ERROR:", error);
     }
@@ -2002,6 +2225,9 @@ app.post('/api/instagram/send', isAuthenticated, async (req, res) => {
                 ensureInstagramLink(convId);
                 db.query('INSERT INTO replies (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'sent', message || '[attachment]'], (iErr) => {
                     if (iErr) console.error('Error inserting IG outgoing reply', iErr);
+                });
+                db.query('INSERT INTO staff_messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'sent', message || '[attachment]'], (iErr) => {
+                    if (iErr) console.error('Error inserting IG outgoing staff message', iErr);
                     else io.emit('newMessage', { conversation_id: convId, sender: 'sent', message: message || '[attachment]', created_at: new Date().toISOString() });
                 });
             };
@@ -2423,16 +2649,27 @@ app.post("/api/send-message", async (req, res) => {
                         return res.status(500).send("Message save failed");
                     }
 
-                    const messageData = {
-                        conversation_id,
-                        sender: "sent",
-                        message,
-                        created_at: new Date().toISOString()
-                    };
+                    db.query(
+                        "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+                        [conversation_id, 'sent', message, req.session ? req.session.userId : null],
+                        (err) => {
+                            if (err) {
+                                console.log("STAFF_MESSAGE INSERT ERROR:", err);
+                                return res.status(500).send("Message save failed");
+                            }
 
-                    // Emit via Socket.IO with sender name attached
-                    emitNewMessageEvent(conversation_id, messageData);
-                    res.json({ success: true, message: messageData });
+                            const messageData = {
+                                conversation_id,
+                                sender: "sent",
+                                message,
+                                created_at: new Date().toISOString()
+                            };
+
+                            // Emit via Socket.IO with sender name attached
+                            emitNewMessageEvent(conversation_id, messageData);
+                            res.json({ success: true, message: messageData });
+                        }
+                    );
                 }
             );
 
@@ -2542,21 +2779,33 @@ app.post("/api/send-media", upload.single("file"), (req, res) => {
                 "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
                 [conversation_id, 'sent', savedMessage, req.session ? req.session.userId : null],
                 (err) => {
-                    if (file.path) fs.unlink(file.path, () => {});
                     if (err) {
+                        if (file.path) fs.unlink(file.path, () => {});
                         console.log("MESSAGE INSERT ERROR:", err);
                         return res.status(500).json({ error: "Message save failed" });
                     }
 
-                    const messageData = {
-                        conversation_id,
-                        sender: "sent",
-                        message: savedMessage,
-                        created_at: new Date().toISOString()
-                    };
+                    db.query(
+                        "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+                        [conversation_id, 'sent', savedMessage, req.session ? req.session.userId : null],
+                        (err) => {
+                            if (file.path) fs.unlink(file.path, () => {});
+                            if (err) {
+                                console.log("STAFF_MESSAGE INSERT ERROR:", err);
+                                return res.status(500).json({ error: "Message save failed" });
+                            }
 
-                    emitNewMessageEvent(conversation_id, messageData);
-                    res.json({ success: true, message: messageData });
+                            const messageData = {
+                                conversation_id,
+                                sender: "sent",
+                                message: savedMessage,
+                                created_at: new Date().toISOString()
+                            };
+
+                            emitNewMessageEvent(conversation_id, messageData);
+                            res.json({ success: true, message: messageData });
+                        }
+                    );
                 }
             );
         } catch (error) {
@@ -2640,25 +2889,52 @@ app.post("/webhook", async (req, res) => {
             db.query(insertConvSql, [phone, phone, 'whatsapp'], async (err, newConv) => {
                 if (err) return console.log("INSERT ERROR:", err);
                 const convoId = newConv.insertId;
-                const targetTable = sender === 'sent' ? 'replies' : 'messages';
-                const query = `INSERT INTO ${targetTable} (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())`;
-                db.query(
-                    query,
-                    [convoId, sender, text],
-                    async (err) => {
-                        if (err) console.log("MESSAGE INSERT ERROR:", err);
-                        else {
+                if (sender === 'sent') {
+                    db.query(
+                        "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+                        [convoId, 'sent', text, null],
+                        (err) => {
+                            if (err) console.log("MESSAGE INSERT ERROR:", err);
+                        }
+                    );
+                    db.query(
+                        "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+                        [convoId, 'sent', text, null],
+                        async (err) => {
+                            if (err) {
+                                console.log("STAFF_MESSAGE INSERT ERROR:", err);
+                                return;
+                            }
+
                             emitNewMessageEvent(convoId, {
                                 sender: sender,
                                 message: text,
                                 created_at: new Date().toISOString()
                             });
 
-                            // If this is an agent message, disable AI responses
-                            if (sender === 'sent') {
-                                disableAIForConversation(convoId);
-                                console.log(`Agent message received, AI disabled for conversation ${convoId}`);
-                            } else {
+                            disableAIForConversation(convoId);
+                            console.log(`Agent message received, AI disabled for conversation ${convoId}`);
+
+                            if (text && text.toLowerCase().includes("refund")) {
+                                db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
+                                    if (err) console.log("ESCALATION INSERT ERROR:", err);
+                                });
+                            }
+                        }
+                    );
+                } else {
+                    db.query(
+                        "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())",
+                        [convoId, sender, text],
+                        async (err) => {
+                            if (err) console.log("MESSAGE INSERT ERROR:", err);
+                            else {
+                                emitNewMessageEvent(convoId, {
+                                    sender: sender,
+                                    message: text,
+                                    created_at: new Date().toISOString()
+                                });
+
                                 if (isCustomerGreeting(text) && isStaffIdleForThreeMinutes(convoId)) {
                                     enableAIForConversation(convoId);
                                 }
@@ -2676,42 +2952,70 @@ app.post("/webhook", async (req, res) => {
                                         console.log(`AI response skipped for conversation ${convoId} - agent recently active`);
                                     }
                                 }
-                            }
 
-                            // Auto-escalate if refund is mentioned
-                            if (text && text.toLowerCase().includes("refund")) {
-                                db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
-                                    if (err) console.log("ESCALATION INSERT ERROR:", err);
-                                });
-                            }
+                                // Auto-escalate if refund is mentioned
+                                if (text && text.toLowerCase().includes("refund")) {
+                                    db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
+                                        if (err) console.log("ESCALATION INSERT ERROR:", err);
+                                    });
+                                }
 
-                            // Check for automated ticket creation
-                            if (sender !== 'sent') {
-                                checkAndCreateTicket(convoId, phone, text);
+                                if (sender !== 'sent') {
+                                    checkAndCreateTicket(convoId, phone, text);
+                                }
                             }
                         }
-                    }
-                );
+                    );
+                }
             });
         } else {
             const convoId = result[0].id;
-            db.query(
-                "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())",
-                [convoId, sender, text],
-                async (err) => {
-                    if (err) console.log("MESSAGE INSERT ERROR:", err);
-                    else {
+            if (sender === 'sent') {
+                db.query(
+                    "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+                    [convoId, 'sent', text, null],
+                    (err) => {
+                        if (err) console.log("MESSAGE INSERT ERROR:", err);
+                    }
+                );
+                db.query(
+                    "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+                    [convoId, 'sent', text, null],
+                    async (err) => {
+                        if (err) {
+                            console.log("STAFF_MESSAGE INSERT ERROR:", err);
+                            return;
+                        }
+
                         emitNewMessageEvent(convoId, {
                             sender: sender,
                             message: text,
                             created_at: new Date().toISOString()
                         });
 
-                        // If this is an agent message, disable AI responses
-                        if (sender === 'sent') {
-                            disableAIForConversation(convoId);
-                            console.log(`Agent message received, AI disabled for conversation ${convoId}`);
-                        } else {
+                        disableAIForConversation(convoId);
+                        console.log(`Agent message received, AI disabled for conversation ${convoId}`);
+
+                        if (text && text.toLowerCase().includes("refund")) {
+                            db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
+                                if (err) console.log("ESCALATION INSERT ERROR:", err);
+                            });
+                        }
+                    }
+                );
+            } else {
+                db.query(
+                    "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())",
+                    [convoId, sender, text],
+                    async (err) => {
+                        if (err) console.log("MESSAGE INSERT ERROR:", err);
+                        else {
+                            emitNewMessageEvent(convoId, {
+                                sender: sender,
+                                message: text,
+                                created_at: new Date().toISOString()
+                            });
+
                             if (isCustomerGreeting(text)) {
                                 enableAIForConversation(convoId);
                             }
@@ -2729,21 +3033,20 @@ app.post("/webhook", async (req, res) => {
                                     console.log(`AI response skipped for conversation ${convoId} - agent recently active`);
                                 }
                             }
-                        }
 
-                        if (text && text.toLowerCase().includes("refund")) {
-                            db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
-                                if (err) console.log("ESCALATION INSERT ERROR:", err);
-                            });
-                        }
+                            if (text && text.toLowerCase().includes("refund")) {
+                                db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
+                                    if (err) console.log("ESCALATION INSERT ERROR:", err);
+                                });
+                            }
 
-                        // Check for automated ticket creation
-                        if (sender !== 'sent') {
-                            checkAndCreateTicket(convoId, phone, text);
+                            if (sender !== 'sent') {
+                                checkAndCreateTicket(convoId, phone, text);
+                            }
                         }
                     }
-                }
-            );
+                );
+            }
         }
     });
 
@@ -3369,13 +3672,16 @@ app.post('/api/orders', (req, res) => {
 
             const responsePayload = { success: true, orderId, id: result.insertId || result.rows?.[0]?.id };
 
-            // Optionally: persist individual item lines to another table in future
-
-            startDeliverySimulationForOrder(orderId, (deliveryErr) => {
-                if (deliveryErr) {
-                    console.error('Failed to auto-start delivery for order:', orderId, deliveryErr);
+            reduceMenuStock(items, (stockErr) => {
+                if (stockErr) {
+                    console.error('Error reducing stock for order:', stockErr);
                 }
-                res.json(responsePayload);
+                startDeliverySimulationForOrder(orderId, (deliveryErr) => {
+                    if (deliveryErr) {
+                        console.error('Failed to auto-start delivery for order:', orderId, deliveryErr);
+                    }
+                    res.json(responsePayload);
+                });
             });
         }
     );
@@ -3420,7 +3726,7 @@ app.get('/api/tracking/:orderId', (req, res) => {
     const orderId = req.params.orderId;
     
     db.query(
-        `SELECT o.id as order_id_num, o.order_id, o.customer_name, o.phone, o.product, o.items, o.amount, o.total_amount, o.status, o.order_date, o.created_at, o.updated_at, o.conversation_id,
+        `SELECT o.id as order_id_num, o.order_id, o.customer_name, o.phone, o.product, o.amount, o.total_amount, o.status, o.order_date, o.conversation_id,
          d.id as delivery_id, d.rider_name, d.vehicle, d.current_lat, d.current_lng, d.customer_lat, d.customer_lng, d.delivery_status, 
          d.order_confirmed_time, d.rider_assigned_time, d.picked_up_time, d.in_transit_time, d.arriving_time, d.delivered_time
          FROM orders o 
@@ -3429,6 +3735,7 @@ app.get('/api/tracking/:orderId', (req, res) => {
         [orderId],
         (err, results) => {
             if (err) {
+                console.error('Tracking query error:', err);
                 return res.status(500).json({ error: "Database error" });
             }
             
@@ -3443,7 +3750,6 @@ app.get('/api/tracking/:orderId', (req, res) => {
                 customer_name: order.customer_name,
                 phone: order.phone,
                 product: order.product,
-                items: order.items,
                 total_amount: order.total_amount,
                 status: order.status,
                 order_date: order.order_date,
@@ -3471,13 +3777,14 @@ app.get('/api/tracking/:orderId', (req, res) => {
 // Get all active deliveries
 app.get('/api/deliveries/active', (req, res) => {
     db.query(
-        `SELECT d.id, d.order_id, o.order_id as order_code, d.rider_name, d.vehicle, d.current_lat, d.current_lng, d.customer_lat, d.customer_lng, d.delivery_status 
+        `SELECT d.id, d.order_id, o.order_id as order_code, o.status as order_status, d.rider_name, d.vehicle, d.current_lat, d.current_lng, d.customer_lat, d.customer_lng, d.delivery_status 
          FROM deliveries d 
          LEFT JOIN orders o ON d.order_id = o.id 
          WHERE d.delivery_status != 'delivered' AND d.delivery_status != 'cancelled'
          ORDER BY d.updated_at DESC`,
         (err, results) => {
             if (err) {
+                console.error('Active deliveries query error:', err);
                 return res.status(500).json({ error: "Database error" });
             }
             
@@ -3490,7 +3797,8 @@ app.get('/api/deliveries/active', (req, res) => {
                 current_lng: parseFloat(d.current_lng),
                 customer_lat: parseFloat(d.customer_lat),
                 customer_lng: parseFloat(d.customer_lng),
-                delivery_status: d.delivery_status || 'pending'
+                delivery_status: d.delivery_status || 'pending',
+                order_status: d.order_status || 'pending'
             }));
             
             res.json(deliveries);
@@ -4141,7 +4449,7 @@ setHandoffCallback((conversationId) => {
 // Add endpoint to fetch analytics data
 app.get('/api/analytics', isAuthenticated, async (req, res) => {
     try {
-        const [counts] = await db.promise().query(`
+        const [countsRows] = await db.promise().query(`
             SELECT
                 (SELECT COUNT(*) FROM conversations) AS chats,
                 (SELECT COUNT(*) FROM tickets) AS tickets,
@@ -4152,7 +4460,7 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
                 (SELECT COUNT(*) FROM resolved) AS resolvedChats
         `);
 
-        const [feedback] = await db.promise().query(`
+        const [feedbackRows] = await db.promise().query(`
             SELECT
                 COUNT(*) AS count,
                 AVG(rating) AS avg_rating,
@@ -4161,19 +4469,67 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
             WHERE rating IS NOT NULL
         `);
 
-        const summary = counts[0] || {};
-        const fb = feedback[0] || {};
+        let avgResp = { avg_response_seconds: null };
+        try {
+            const [avgResponseRows] = await db.promise().query(isPg ? `
+                SELECT AVG(EXTRACT(EPOCH FROM (r.created_at - r.prev_created))) AS avg_response_seconds
+                FROM (
+                    SELECT r.id, r.conversation_id, r.created_at,
+                           (SELECT MAX(m2.created_at) FROM messages m2 WHERE m2.conversation_id = r.conversation_id AND m2.created_at < r.created_at) AS prev_created
+                    FROM replies r
+                ) r
+                WHERE r.prev_created IS NOT NULL
+            ` : `
+                SELECT AVG(TIMESTAMPDIFF(SECOND,
+                    (SELECT MAX(m2.created_at) FROM messages m2 WHERE m2.conversation_id = r.conversation_id AND m2.created_at < r.created_at),
+                    r.created_at
+                )) AS avg_response_seconds
+                FROM replies r
+                WHERE EXISTS (
+                    SELECT 1 FROM messages m2 WHERE m2.conversation_id = r.conversation_id AND m2.created_at < r.created_at
+                )
+            `);
+            avgResp = (Array.isArray(avgResponseRows) ? avgResponseRows[0] : avgResponseRows) || avgResp;
+        } catch (err) {
+            console.warn('Warning: avg response query failed', err);
+        }
+
+        let avgRes = { avg_resolution_seconds: null };
+        try {
+            const [avgResolutionRows] = await db.promise().query(isPg ? `
+                SELECT AVG(EXTRACT(EPOCH FROM (res.resolved_at - c.created_at))) AS avg_resolution_seconds
+                FROM resolved res
+                JOIN conversations c ON c.id = res.conversation_id
+            ` : `
+                SELECT AVG(TIMESTAMPDIFF(SECOND, c.created_at, res.resolved_at)) AS avg_resolution_seconds
+                FROM resolved res
+                JOIN conversations c ON c.id = res.conversation_id
+            `);
+            avgRes = (Array.isArray(avgResolutionRows) ? avgResolutionRows[0] : avgResolutionRows) || avgRes;
+        } catch (err) {
+            console.warn('Warning: avg resolution query failed', err);
+        }
+
+        const summary = (Array.isArray(countsRows) ? countsRows[0] : countsRows) || {};
+        const fb = (Array.isArray(feedbackRows) ? feedbackRows[0] : feedbackRows) || {};
+
+        const numChats = Number(summary.chats) || 0;
+        const numResolvedChats = Number(summary.resolvedChats) || 0;
 
         res.json({
-            numChats: Number(summary.chats) || 0,
+            numChats,
             numTickets: Number(summary.tickets) || 0,
             numEscalatedTickets: Number(summary.escalatedTickets) || 0,
             numReceipts: Number(summary.receipts) || 0,
             numEscalatedReceipts: Number(summary.escalatedReceipts) || 0,
             numEscalatedChats: Number(summary.escalatedChats) || 0,
-            numResolvedChats: Number(summary.resolvedChats) || 0,
+            numResolvedChats,
+            activeChats: Math.max(0, numChats - numResolvedChats),
+            avgResponseSeconds: avgResp.avg_response_seconds != null ? Number(avgResp.avg_response_seconds) : null,
+            avgResolutionSeconds: avgRes.avg_resolution_seconds != null ? Number(avgRes.avg_resolution_seconds) : null,
+            resolutionRate: numChats ? (numResolvedChats / numChats) : 0,
             aiFeedbackCount: Number(fb.count) || 0,
-            aiFeedbackAvg: fb.avg_rating !== null ? Number(fb.avg_rating) : null,
+            aiFeedbackAvg: fb.avg_rating != null ? Number(fb.avg_rating) : null,
             aiFeedbackPositive: Number(fb.positive) || 0
         });
     } catch (error) {
@@ -4182,23 +4538,46 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
     }
 });
 
+app.get('/api/my-metrics', isAuthenticated, async (req, res) => {
+    try {
+        const statsRows = await db.promise().query(`
+            SELECT
+                COUNT(*) AS tickets,
+                SUM(CASE WHEN LOWER(status) = 'resolved' THEN 1 ELSE 0 END) AS resolvedChats
+            FROM tickets
+        `);
+
+        const stats = (Array.isArray(statsRows) ? statsRows[0] : statsRows) || { tickets: 0, resolvedChats: 0 };
+        const tickets = Number(stats.tickets) || 0;
+        const resolvedChats = Number(stats.resolvedChats) || 0;
+
+        res.json({
+            avgResponseSeconds: 0,
+            resolutionRate: tickets ? resolvedChats / tickets : 0
+        });
+    } catch (error) {
+        console.error('Error fetching my-metrics data:', error);
+        res.status(500).json({ error: 'Failed to fetch my-metrics data' });
+    }
+});
+
 // API endpoint for ticket counts by time period
 app.get('/api/tickets-by-period', async (req, res) => {
     try {
         const ticketCountsSql = isPg
             ? `SELECT
-                SUM((created_at::date = CURRENT_DATE)::int) AS daily,
-                SUM((DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE))::int) AS weekly,
-                SUM((DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE))::int) AS monthly
-            FROM tickets`
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now())) AS daily,
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('week', now())) AS weekly,
+                    COUNT(*) FILTER (WHERE created_at >= date_trunc('month', now())) AS monthly
+                FROM tickets`
             : `SELECT
-                SUM(DATE(created_at) = CURDATE()) AS daily,
-                SUM(YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1)) AS weekly,
-                SUM(YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE())) AS monthly
-            FROM tickets`;
-        const [rows] = await db.promise().query(ticketCountsSql);
+                    SUM(created_at >= CURDATE()) AS daily,
+                    SUM(created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)) AS weekly,
+                    SUM(created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS monthly
+                FROM tickets`;
+        const rows = await db.promise().query(ticketCountsSql);
 
-        const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
+        const counts = (Array.isArray(rows) ? rows[0] : rows) || { daily: 0, weekly: 0, monthly: 0 };
         console.log('tickets-by-period counts', counts);
 
         res.json({
@@ -4415,7 +4794,29 @@ httpServer.listen(PORT, () => {
         }
 
         // Ensure optional AI/staff message tables exist to avoid runtime query errors
-        try {
+        if (isPg) {
+            db.query(`
+                CREATE TABLE IF NOT EXISTS ai_messages (
+                    id SERIAL PRIMARY KEY,
+                    conversation_id INT,
+                    sender VARCHAR(255),
+                    message TEXT,
+                    user_id INT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            `, (err) => { if (err) console.error('Error ensuring ai_messages table at startup:', err); else console.log('ai_messages table ensured at startup'); });
+
+            db.query(`
+                CREATE TABLE IF NOT EXISTS staff_messages (
+                    id SERIAL PRIMARY KEY,
+                    conversation_id INT,
+                    sender VARCHAR(255),
+                    message TEXT,
+                    user_id INT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            `, (err) => { if (err) console.error('Error ensuring staff_messages table at startup:', err); else console.log('staff_messages table ensured at startup'); });
+        } else {
             db.query(`
                 CREATE TABLE IF NOT EXISTS ai_messages (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -4437,8 +4838,6 @@ httpServer.listen(PORT, () => {
                     created_at DATETIME DEFAULT NOW()
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
             `, (err) => { if (err) console.error('Error ensuring staff_messages table at startup:', err); else console.log('staff_messages table ensured at startup'); });
-        } catch (e) {
-            console.warn('Could not ensure ai/staff message tables at startup', e?.message || e);
         }
     } catch (e) {
         console.log(`✅🎲Server running on port ${PORT}🎲`);

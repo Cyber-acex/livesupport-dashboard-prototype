@@ -35,14 +35,14 @@ html.dark-theme{
 #statusFilter, #riderFilter{ padding:8px 10px; border-radius:8px; border:1px solid #e6edf8; background:var(--card); }
 
 /* Map container */
-.map-container{ height:520px; border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(2,6,23,0.08); }
+.map-container{ flex:1; min-height:450px; max-height:720px; border-radius:12px; overflow:hidden; box-shadow:0 8px 30px rgba(2,6,23,0.08); }
 #map{ height:100%; }
 .map-controls{ right:16px; top:16px; background:var(--card); padding:8px; border-radius:8px; box-shadow:0 6px 18px rgba(2,6,23,0.06); }
 .map-controls button{ background:transparent; color:var(--primary); border:1px solid rgba(11,116,255,0.12); padding:8px 10px; border-radius:8px; font-weight:700; cursor:pointer; }
 .map-controls button.stop{ background:var(--danger); color:#fff; border:none; }
 
 /* Deliveries panel */
-.deliveries-panel{ width:360px; display:flex; flex-direction:column; gap:0; }
+.deliveries-panel{ width:300px; max-width:30%; display:flex; flex-direction:column; gap:0; }
 .panel-header{ padding:16px; font-weight:700; color:var(--primary); background:linear-gradient(90deg, rgba(11,116,255,0.06), transparent); border-bottom:1px solid rgba(11,116,255,0.03); }
 .deliveries-list{ padding:12px; overflow:auto; background:transparent; }
 .delivery-item{ background:var(--card); margin-bottom:10px; border-radius:10px; padding:12px; box-shadow:0 6px 16px rgba(2,6,23,0.04); transition:transform .12s ease, box-shadow .12s ease; display:block; }
@@ -70,8 +70,8 @@ html.dark-theme{
 
 /* responsive */
 @media (max-width:1200px){
-  .deliveries-panel{ width:100%; max-height:360px; }
-  .map-container{ height:420px; }
+  .deliveries-panel{ width:100%; max-height:300px; }
+  .map-container{ min-height:500px; }
 }
 
 /* marker icon adjustments for better visibility */

@@ -195,10 +195,10 @@ model Setting {
   priority      String? @db.VarChar(20)
   autoAssign    String? @db.VarChar(10)
   theme         String? @db.VarChar(20)
-  translateEnabled Boolean? @db.Boolean
-  translateLang    String? @db.VarChar(10)
-  avatarUrl        String? @db.Text
-  autopilotMode    String? @db.VarChar(20)
+  translateEnabled Boolean? @db.Boolean @map("translate_enabled")
+  translateLang    String? @db.VarChar(10) @map("translate_lang")
+  avatarUrl        String? @db.Text @map("avatar_url")
+  autopilotMode    String? @db.VarChar(20) @map("autopilotmode")
 
   user          User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -288,6 +288,35 @@ model Food {
 
   @@map("foods")
   @@unique([category, key_name], name: "uk_category_key")
+}
+
+model Menu {
+  id         Int      @id @default(autoincrement())
+  category   String   @db.VarChar(100)
+  key_name   String   @db.VarChar(100)
+  name       String   @db.VarChar(255)
+  price      Decimal  @db.Decimal(10,2)
+  available  Int
+  image_url  String?  @db.Text
+  created_at DateTime @default(now()) @db.Timestamp(0)
+  updated_at DateTime @default(now()) @db.Timestamp(0)
+
+  @@map("menu")
+  @@unique([category, key_name], name: "uk_category_key")
+}
+
+model Table {
+  id            Int      @id @default(autoincrement())
+  number        Int      @unique
+  label         String   @db.VarChar(255)
+  status        String   @default("vacant") @db.VarChar(50)
+  customerName  String?  @db.VarChar(255) @map("customer_name")
+  reservedUntil DateTime? @db.Timestamp(0) @map("reserved_until")
+  isBooking     Boolean  @default(false) @map("is_booking")
+  created_at    DateTime @default(now()) @db.Timestamp(0)
+  updated_at    DateTime @updatedAt @db.Timestamp(0)
+
+  @@map("restaurant_tables")
 }
 
 model WhatsappToken {

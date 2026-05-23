@@ -205,7 +205,6 @@ img, video {
 }
 
 html, body {
-    height: 100%;
         margin: 0;
         overflow-x: hidden;
         overflow-y: auto;
@@ -213,7 +212,7 @@ html, body {
 
 /* Force root and layout to match viewport height so fixed sidebar fills it */
 html, body, .dashboard {
-  height: 100vh !important;
+  min-height: 100vh;
 }
 
 .sidebar {
@@ -232,7 +231,7 @@ body {
 .dashboard {
         display: flex;
         min-height: 100vh;
-        height: 100%;
+  height: auto;
         padding-top: 60px;
 }
 
@@ -717,21 +716,25 @@ img, video {
   }
 }
 
+.html-body-reset {
+  /* helper class to avoid repeating height rules */
+}
+
 html, body {
-    height: 100%;
-    margin: 0;
-    overflow: auto;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 body {
-    background: #f3f4f6;
-    padding-left: 8px;
+  background: #f3f4f6;
+  padding-left: 8px;
 }
 
 .dashboard {
-    display: flex;
-    min-height: 100vh;
-    height: 100%;
+  display: flex;
+  min-height: 100vh;
+  height: auto;
 }
 
 /* SIDEBAR */
@@ -927,7 +930,6 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 }
 
 /* TOPBAR */
-.main .topbar,
 .topbar {
     position: fixed;
     top: 0;
@@ -945,12 +947,6 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     z-index: 1000;
     box-sizing: border-box;
     zoom: 1;
-}
-
-/* Prevent topbar styling from affecting dashboard pages */
-.main-area .topbar {
-    position: static !important;
-    display: none !important;
 }
 .top-left,
 .top-right {
@@ -1453,6 +1449,8 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 }
 
 .messages {
+    display: flex;
+    flex-direction: column;
     flex: 1;
     padding: 16px;
     overflow-y: auto;

@@ -60,6 +60,96 @@ const MENU_ITEMS = {
     }
 };
 
+async function getMenuItemsFromDb() {
+    try {
+        if (!prisma || !prisma.menu) {
+            return [];
+        }
+        const items = await prisma.menu.findMany({
+            orderBy: [
+                { category: 'asc' },
+                { name: 'asc' }
+            ]
+        });
+        return Array.isArray(items) ? items.map(item => ({
+            category: item.category || 'Menu',
+            name: item.name || item.key_name || 'Unknown item',
+            price: Number(item.price || 0),
+            available: typeof item.available === 'number' ? item.available : 0
+        })) : [];
+    } catch (error) {
+        console.log('getMenuItemsFromDb error:', error?.message || error);
+        return [];
+    }
+}
+
+function getFallbackMenuItems() {
+    const items = [];
+    for (const [category, group] of Object.entries(MENU_ITEMS)) {
+        const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
+        for (const item of Object.values(group)) {
+            items.push({
+                category: categoryName,
+                name: item.name,
+                price: item.price,
+                available: item.available || 0
+            });
+        }
+    }
+    return items;
+}
+
+function formatMenuItemsForPrompt(menuItems) {
+    if (!Array.isArray(menuItems) || menuItems.length === 0) {
+        return '';
+    }
+
+    const grouped = menuItems.reduce((acc, item) => {
+        const category = item.category || 'Menu';
+        if (!acc[category]) acc[category] = [];
+        acc[category].push(item);
+        return acc;
+    }, {});
+
+    const lines = [];
+    for (const category of Object.keys(grouped)) {
+        lines.push(`${category}:`);
+        grouped[category].slice(0, 12).forEach(item => {
+            const availableText = typeof item.available === 'number' ? ` (${item.available} available)` : '';
+            lines.push(`- ${item.name}: $${item.price.toFixed(2)}${availableText}`);
+        });
+        if (grouped[category].length > 12) {
+            lines.push(`- ...plus ${grouped[category].length - 12} more items in ${category}`);
+        }
+        lines.push('');
+    }
+    return lines.join('\n').trim();
+}
+
+function isMenuInquiry(message) {
+    if (!message) return false;
+    const lowerMessage = message.toLowerCase();
+    const menuKeywords = [
+        'menu',
+        'show me the menu',
+        'what do you have',
+        'what can i order',
+        'available items',
+        'food options',
+        'price list',
+        'what are your pizzas',
+        'what are your burgers',
+        'see the menu',
+        'menu items',
+        'order from menu',
+        'dishes',
+        'specials',
+        'what is on the menu',
+        'what do you serve'
+    ];
+    return menuKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
 async function findRelevantKB(message) {
     try {
         if (!message || !knowledgeBase || knowledgeBase.length === 0) return [];
@@ -852,7 +942,15 @@ async function getMistralReply(message, phone = null, conversationId = null) {
         }
         
         // Find relevant knowledge base entries (vector search when available)
-        const relevantKB = await findRelevantKB(message);
+        let relevantKB = await findRelevantKB(message);
+        const menuInquiry = isMenuInquiry(message);
+        if (menuInquiry && relevantKB && relevantKB.length > 0) {
+            relevantKB = relevantKB.filter(item => {
+                const combinedText = `${item.title || ''} ${item.content || item.answer || item.text || ''} ${item.category || ''}`.toLowerCase();
+                return !/(menu|order|pizza|burger|dish|food|price|available items|price list|specials)/.test(combinedText);
+            });
+        }
+
         let kbContext = "";
         if (relevantKB && relevantKB.length > 0) {
             kbContext = "\n\nRelevant knowledge base information:\n" + relevantKB.map(item => 
@@ -860,6 +958,16 @@ async function getMistralReply(message, phone = null, conversationId = null) {
             ).join('\n\n');
         }
         
+        let menuContext = "";
+        if (menuInquiry) {
+            const menuItemsForPrompt = await getMenuItemsFromDb();
+            const effectiveMenuItems = menuItemsForPrompt.length > 0 ? menuItemsForPrompt : getFallbackMenuItems();
+            const formattedMenu = formatMenuItemsForPrompt(effectiveMenuItems);
+            if (formattedMenu) {
+                menuContext = `\n\nMenu information from the Orders page:\n${formattedMenu}`;
+            }
+        }
+
         // Get customer order history
         let orderContext = "";
         if (phone) {
@@ -904,9 +1012,13 @@ async function getMistralReply(message, phone = null, conversationId = null) {
 
         // Craft a system prompt and user prompt for the support agent
         const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.`;
-        let userPrompt = `Customer message: "${message}"${kbContext}${orderContext}
+        let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}
 
 If the customer reports a problem, ask clarifying questions and gather details before suggesting a solution. Only offer a human agent connection if the customer explicitly requests a live agent. Keep the response helpful and concise.`;
+
+        if (menuInquiry) {
+            userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;
+        }
 
         if (conversationHistory.length > 0) {
             const historyText = "\n\nConversation history:\n" + conversationHistory.map(msg => {
@@ -926,7 +1038,7 @@ IMPORTANT: Confirm the order details exactly as specified above. Do not add or c
             } else {
                 userPrompt += `
 
-The customer appears to be placing an order but I couldn't identify the specific items. Ask them to clarify what they want to order from our menu (Pizzas: Small $10, Medium $15, Large $20; Burgers: Classic $8, Cheese $9, Double $12).`;
+The customer appears to be placing an order but I couldn't identify the specific items. Ask them to clarify what they want to order from our menu above, or to provide the exact menu item names from the Orders page.`;
             }
         }
 

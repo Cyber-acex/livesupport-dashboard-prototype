@@ -35,8 +35,8 @@
     display: flex;
     gap: 24px;
   margin-top: 55px;
-  padding: 32px 20px 40px;
-    min-height: calc(100vh - 60px);
+  padding: 32px 20px 24px;
+    min-height: calc(100vh - 76px);
     align-items: stretch;
 }
 
@@ -521,7 +521,15 @@ input:checked + .slider {
               <input type="email" id="email" placeholder="Email">
             </div>
           </div>
-          <input type="password" id="password" placeholder="New Password">
+          <div class="password-wrap" style="max-width:420px;">
+            <input type="password" id="password" placeholder="New Password" style="flex:1;" readonly>
+            <button id="togglePasswordBtn" type="button" class="pw-toggle" aria-label="Show password" title="Show password" style="border:none;background:transparent;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+          </div>
           <button onclick="saveSettings()">Save Changes</button>
         </div>
 
@@ -647,7 +655,7 @@ input:checked + .slider {
             <input id="newName" placeholder="Name" style="padding:8px; border-radius:8px; border:1px solid #ddd;" />
             <input id="newEmail" placeholder="Email" style="padding:8px; border-radius:8px; border:1px solid #ddd;" />
             <input id="newPass" placeholder="Password" style="padding:8px; border-radius:8px; border:1px solid #ddd;" />
-            <select id="newRole" style="padding:8px; border-radius:8px; border:1px solid #ddd;"><option value="agent">agent</option><option value="admin">admin</option><option value="viewer">viewer</option><option value="Delivery Support">Delivery Support</option><option value="Refund Manager">Refund Manager</option><option value="Kitchen Supervisor">Kitchen Supervisor</option><option value="Customer Support">Customer Support</option></select>
+            <select id="newRole" style="padding:8px; border-radius:8px; border:1px solid #ddd;"><option value="agent">Agent</option><option value="admin">Admin</option><option value="viewer">Viewer</option><option value="Delivery Support">Delivery Support</option><option value="Refund Manager">Refund Manager</option><option value="Kitchen Supervisor">Kitchen Supervisor</option><option value="Customer Support">Customer Support</option></select>
             <button id="createBtn" style="padding:8px 12px; border-radius:8px; background:#2563eb; color:#fff; border:none;">Create</button>
             <div id="createMsg" style="margin-left:8px; color:#065f46; font-weight:600; display:none;"></div>
           </div>
@@ -659,6 +667,9 @@ input:checked + .slider {
 </div>
 
 <script>
+  // Store current user role for access control
+  let currentUserRole = null;
+
   // Switch sections
   function setActiveSection(id) {
     const section = document.getElementById(id);
@@ -668,6 +679,14 @@ input:checked + .slider {
   }
 
   function showSection(id) {
+    // Check if trying to access admin section without admin role
+    if (id === 'adminUsers' && currentUserRole !== 'admin') {
+      console.warn('Access denied: Only admin users can access user management');
+      // Show account section instead
+      showSection('account');
+      return;
+    }
+
     setActiveSection(id);
     try {
       if (history.replaceState) {
@@ -687,9 +706,13 @@ input:checked + .slider {
   function initSettingsSection() {
     const hashId = window.location.hash.slice(1);
     const storedId = localStorage.getItem('settingsSection');
-    const sectionId = hashId && document.getElementById(hashId)
-      ? hashId
-      : (storedId && document.getElementById(storedId) ? storedId : 'account');
+    
+    // Prevent non-admin users from accessing admin section
+    let sectionId = hashId && document.getElementById(hashId) ? hashId : (storedId && document.getElementById(storedId) ? storedId : 'account');
+    if (sectionId === 'adminUsers' && currentUserRole !== 'admin') {
+      sectionId = 'account';
+    }
+    
     showSection(sectionId);
   }
 
@@ -763,9 +786,20 @@ input:checked + .slider {
     try {
       const res = await fetch('/api/settings');
       const data = await res.json();
+      let passwordValue = '';
+      try {
+        const userRes = await fetch('/api/user');
+        if (userRes.ok) {
+          const userData = await userRes.json();
+          passwordValue = userData.password || '';
+        }
+      } catch (e) {
+        console.warn('Unable to fetch user password', e);
+      }
 
       document.getElementById('displayName').value = data.displayName || '';
       document.getElementById('email').value = data.email || '';
+      document.getElementById('password').value = passwordValue;
       document.getElementById('autoReply').value = data.autoReply || '';
       document.getElementById('chatEnabled').value = data.chatEnabled || 'on';
       document.getElementById('msgAlert').checked = data.msgAlert || false;
@@ -893,12 +927,15 @@ input:checked + .slider {
   fetch("/api/user")
     .then(res => res.json())
     .then(data => {
+      // Store user role for access control
+      currentUserRole = (data && data.role) ? String(data.role).toLowerCase() : null;
+      
       // show the user-friendly display name from settings, fallback to role or name
       const name = data.displayName || data.name || data.role || 'Staff';
       const sn = document.getElementById("staffName"); if (sn) sn.textContent = name;
       // Show admin link only for admins
       try {
-        if (data && data.role === 'admin') {
+        if (data && currentUserRole === 'admin') {
           const btn = document.getElementById('adminUsersBtn');
           if (btn) {
             btn.style.display = 'block';

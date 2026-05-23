@@ -21,6 +21,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const themeSelect = document.getElementById('theme');
   if (themeSelect) themeSelect.value = theme;
 
+  const passwordToggle = document.getElementById('togglePasswordBtn');
+  const passwordInput = document.getElementById('password');
+  if (passwordToggle && passwordInput) {
+    passwordToggle.addEventListener('click', () => {
+      if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        passwordToggle.setAttribute('aria-label', 'Hide password');
+        passwordToggle.title = 'Hide password';
+      } else {
+        passwordInput.type = 'password';
+        passwordToggle.setAttribute('aria-label', 'Show password');
+        passwordToggle.title = 'Show password';
+      }
+    });
+  }
+
   const sidebarPositionSelect = document.getElementById('sidebarPosition');
   const sidebarWidthSelect = document.getElementById('sidebarWidth');
   
