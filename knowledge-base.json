@@ -110,5 +110,47 @@
     "category": "Privacy",
     "keywords": ["privacy", "data", "personal", "information", "security", "protection", "gdpr", "rights", "access", "delete", "share"],
     "content": "How we protect and use your personal information.\n\nInformation Collected:\n- Name, address, phone, email\n- Order history and preferences\n- Payment information (securely processed)\n- Device and app usage data\n\nInformation Usage:\n- Process and deliver orders\n- Provide customer support\n- Send marketing communications (with consent)\n- Improve services and develop new features\n\nInformation Sharing:\n- Shared with delivery drivers for order fulfillment\n- Shared with payment processors for transactions\n- Shared with third-party services as needed\n- Not sold to third parties for marketing\n\nData Security:\n- Encryption for data in transit and at rest\n- Secure servers and regular backups\n- Employee access controls\n- Regular security audits\n\nData Retention:\n- Active accounts: Indefinite retention\n- Inactive accounts: 7 years minimum\n- Legal requirements may extend retention\n- Right to deletion upon request\n\nYour Rights:\n- Access your personal data\n- Correct inaccurate information\n- Delete your account and data\n- Opt out of marketing communications\n- Data portability available"
+  },
+  {
+    "id": "knowledge-base-curation",
+    "title": "Knowledge Base Curation and Maintenance",
+    "category": "Best Practices",
+    "keywords": ["curation", "knowledge base", "maintenance", "accuracy", "governance", "review"],
+    "content": "Keep the knowledge base accurate and discoverable through regular curation and governance.\n\nReview articles quarterly for accuracy\nTag content with clear categories and keywords\nRetire or archive outdated articles\nEncourage agent contributions and peer review"
+  },
+  {
+    "id": "omnichannel-routing",
+    "title": "Omnichannel Routing Strategies",
+    "category": "System",
+    "keywords": ["omnichannel", "routing", "channels", "context", "SLA", "urgency"],
+    "content": "Design routing logic that unifies conversations across channels while preserving context.\n\nUse unified customer IDs to merge histories\nPrioritize channels based on SLAs and urgency\nEmploy fallback rules when agents are unavailable\nMeasure channel-specific performance"
+  },
+  {
+    "id": "chatbot-configuration",
+    "title": "Chatbot Configuration and Handoff",
+    "category": "System",
+    "keywords": ["chatbot", "configuration", "handoff", "intent", "thresholds", "logging"],
+    "content": "Configure chatbots to handle common queries and hand off gracefully to human agents when needed.\n\nDefine clear intents and example utterances\nProvide contextual prompts for the bot\nUse confidence thresholds to trigger handoff\nLog interactions for continuous improvement"
+  },
+  {
+    "id": "onboarding-new-agents",
+    "title": "Onboarding New Support Agents",
+    "category": "Getting Started",
+    "keywords": ["onboarding", "training", "new agents", "mentors", "productivity"],
+    "content": "A structured onboarding program helps new agents become productive faster and reduces onboarding time.\n\nProvide role-specific training and shadowing\nGive hands-on exercises with sample tickets\nSet clear performance goals and checkpoints\nAssign mentors for the first 90 days"
+  },
+  {
+    "id": "customer-retention-strategies",
+    "title": "Customer Retention Strategies",
+    "category": "Analytics",
+    "keywords": ["retention", "loyalty", "churn", "re-engage", "behavior"],
+    "content": "Focus on long-term customer value by combining excellent service with proactive retention tactics.\n\nUse follow-ups and loyalty programs to re-engage customers\nAnalyze churn signals and act early\nPersonalize communications based on behavior\nMeasure retention via cohort analysis"
+  },
+  {
+    "id": "security-incident-response",
+    "title": "Security Incident Response for Support Teams",
+    "category": "System",
+    "keywords": ["security", "incident", "response", "data", "escalation", "investigation"],
+    "content": "Prepare support teams to recognize and respond to security incidents while preserving evidence.\n\nEstablish an incident response runbook\nTrain staff on data handling and escalation paths\nCoordinate with security and legal teams\nPreserve logs and timestamps for investigation"
   }
 ]

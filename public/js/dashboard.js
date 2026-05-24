@@ -741,7 +741,33 @@ document.addEventListener('DOMContentLoaded', ()=>{
       }
     };
 
+    const hoverDetails = document.getElementById('messagesChartDetails');
+
+    function updateHoverDetails(label, value){
+      if(!hoverDetails) return;
+      hoverDetails.textContent = label ? `${label}: ${value}` : 'Hover over a bar to see details';
+    }
+
     const chart = new Chart(ctx, cfg);
+    
+    canvas.addEventListener('mousemove', (event) => {
+      const elements = chart.getElementsAtEventForMode(event, 'nearest', {intersect:true}, true);
+      if(elements && elements.length > 0) {
+        const idx = elements[0].index;
+        const label = chart.data.labels[idx];
+        const value = chart.data.datasets[0].data[idx];
+        updateHoverDetails(label, value);
+        canvas.style.cursor = 'pointer';
+      } else {
+        updateHoverDetails(null, null);
+        canvas.style.cursor = 'default';
+      }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      updateHoverDetails(null, null);
+      canvas.style.cursor = 'default';
+    });
 
     async function loadMonthlyData(){
       try{
@@ -772,6 +798,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       const value = chart.data.datasets[0].data[context.dataIndex];
       return `${label}: ${value}`;
     };
+    chart.update();
   }
   initMessagesChart();
 });

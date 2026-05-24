@@ -1,4 +1,5 @@
-const notificationSocket = window.notificationSocket || io();
+const NOTIFICATION_API_BASE = window.location.protocol === 'file:' ? 'http://localhost:3000' : undefined;
+const notificationSocket = window.notificationSocket || (typeof io !== 'undefined' ? io(NOTIFICATION_API_BASE) : null);
 window.notificationSocket = notificationSocket;
 let notificationTimeout = null;
 

@@ -277,10 +277,11 @@
   function initSocketBridge(){
     try{
       if(typeof io === 'undefined') return;
-      const socket = io();
+      const base = window.location.protocol === 'file:' ? 'http://localhost:3000' : undefined;
+      const socket = io(base);
       socket.on('connect', ()=>{
         try{
-          fetch('/api/user').then(r=>r.json()).then(u=>{
+          fetch(`${base || ''}/api/user`).then(r=>r.json()).then(u=>{
             if(u && (u.id || u.name)) socket.emit('agent:register', { userId: u.id, name: u.name || u.role || 'Agent', role: u.role || 'agent' });
           }).catch(()=>{});
         }catch(e){/* ignore */}

@@ -9,10 +9,14 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
-const FALLBACK_REPLY = "Thank you for your message. An agent will respond shortly.";
+const FALLBACK_REPLY = "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
+const CLARIFICATION_OPTIONS = "If you are not sure, reply with 0 for menu, 1 for your last order, or 2 to connect with staff.";
 
 let knowledgeBase = [];
+let cannedResponses = [];
 let db = null;
+let kbWatchTimeout = null;
+let cannedWatchTimeout = null;
 
 function getInsertedId(result) {
     if (!result) return null;
@@ -36,15 +40,72 @@ function loadKnowledgeBase() {
     try {
         const kbPath = path.join(__dirname, 'knowledge-base.json');
         const data = fs.readFileSync(kbPath, 'utf8');
-        knowledgeBase = JSON.parse(data);
+        const parsed = JSON.parse(data);
+        knowledgeBase = Array.isArray(parsed) ? parsed : [];
+        console.log(`✅ Knowledge base loaded: ${knowledgeBase.length} articles`);
     } catch (error) {
         console.log("Error loading knowledge base:", error.message);
         knowledgeBase = [];
     }
 }
 
+function loadCannedResponses() {
+    try {
+        const responsesPath = path.join(__dirname, 'canned-responses.json');
+        if (!fs.existsSync(responsesPath)) {
+            cannedResponses = [];
+            return;
+        }
+        const data = fs.readFileSync(responsesPath, 'utf8');
+        const parsed = JSON.parse(data);
+        cannedResponses = Array.isArray(parsed) ? parsed : [];
+        console.log(`✅ Canned responses loaded: ${cannedResponses.length} items`);
+    } catch (error) {
+        console.log("Error loading canned responses:", error.message);
+        cannedResponses = [];
+    }
+}
+
+// Watch for KB file changes and auto-reload
+function watchKnowledgeBaseFile() {
+    try {
+        const kbPath = path.join(__dirname, 'knowledge-base.json');
+        fs.watchFile(kbPath, (curr, prev) => {
+            if (curr.mtime > prev.mtime) {
+                console.log('📖 Knowledge base file changed, reloading...');
+                if (kbWatchTimeout) clearTimeout(kbWatchTimeout);
+                kbWatchTimeout = setTimeout(() => {
+                    loadKnowledgeBase();
+                }, 500);
+            }
+        });
+    } catch (err) {
+        console.warn('Could not watch KB file:', err.message);
+    }
+}
+
+function watchCannedResponsesFile() {
+    try {
+        const responsesPath = path.join(__dirname, 'canned-responses.json');
+        fs.watchFile(responsesPath, (curr, prev) => {
+            if (curr.mtime > prev.mtime) {
+                console.log('📩 Canned responses file changed, reloading...');
+                if (cannedWatchTimeout) clearTimeout(cannedWatchTimeout);
+                cannedWatchTimeout = setTimeout(() => {
+                    loadCannedResponses();
+                }, 500);
+            }
+        });
+    } catch (err) {
+        console.warn('Could not watch canned responses file:', err.message);
+    }
+}
+
 // Load KB on startup
 loadKnowledgeBase();
+loadCannedResponses();
+watchKnowledgeBaseFile();
+watchCannedResponsesFile();
 
 const MENU_ITEMS = {
     pizza: {
@@ -108,6 +169,83 @@ const MENU_ITEMS = {
         }
     }
 };
+
+function findCannedResponse(message) {
+    if (!message || cannedResponses.length === 0) return null;
+    const lowerMessage = message.toString().toLowerCase();
+
+    for (const item of cannedResponses) {
+        if (!item || !item.trigger || !item.content) continue;
+        const triggers = Array.isArray(item.trigger) ? item.trigger : [item.trigger];
+        const normalizedTriggers = triggers
+            .map(t => (typeof t === 'string' ? t.toLowerCase().trim() : ''))
+            .filter(Boolean);
+
+        const matched = normalizedTriggers.some(trigger => {
+            if (!trigger) return false;
+            if (lowerMessage === trigger) return true;
+            if (lowerMessage.includes(trigger)) return true;
+            const words = lowerMessage.split(/\W+/);
+            return words.includes(trigger);
+        });
+
+        if (matched) {
+            return item.content;
+        }
+    }
+
+    return null;
+}
+
+function parseQuickOption(message) {
+    if (!message) return null;
+    const normalized = message.toString().trim().toLowerCase();
+    if (normalized === '0' || normalized.includes('menu')) return 'menu';
+    if (normalized === '1' || normalized.includes('last order') || normalized.includes('previous order') || normalized.includes('past order')) return 'last_order';
+    if (normalized === '2' || normalized.includes('staff') || normalized.includes('agent') || normalized.includes('support team') || normalized.includes('human')) return 'staff';
+    return null;
+}
+
+async function handleQuickOption(choice, phone, conversationId) {
+    if (choice === 'menu') {
+        const menuItemsFromDb = await getMenuItemsFromDb();
+        const menuItems = menuItemsFromDb.length > 0 ? menuItemsFromDb : getFallbackMenuItems();
+        const formatted = formatMenuItemsForPrompt(menuItems).split('\n').slice(0, 18).join('\n');
+        return `Here is a quick menu overview:\n${formatted}\n\nIf you want to order, tell me what you'd like or reply with 1 for your last order, 2 to speak with staff, or just ask another question.
+
+${CLARIFICATION_OPTIONS}`;
+    }
+
+    if (choice === 'last_order') {
+        if (!phone) {
+            return `I don't have your phone number yet. Please send your phone number or your order ID, and I'll look up your last order for you.`;
+        }
+        const orderHistory = await getOrderHistory(phone);
+        if (orderHistory && orderHistory.count > 0) {
+            return `Here is your recent order summary:\n${orderHistory.summary}\n\nIf you'd like, I can also help you with the menu or connect you with staff. Reply 0 for menu, 2 for staff, or ask another question.
+
+${CLARIFICATION_OPTIONS}`;
+        }
+        return `I couldn't find any recent orders for this number. Please provide your order ID or phone number again so I can check.
+
+${CLARIFICATION_OPTIONS}`;
+    }
+
+    if (choice === 'staff') {
+        if (conversationId && disableAICallback) {
+            disableAICallback(conversationId);
+        }
+        if (conversationId && handoffCallback) {
+            handoffCallback(conversationId);
+        }
+        if (conversationId && playHandoffAudioCallback) {
+            playHandoffAudioCallback(conversationId);
+        }
+        return `I am connecting you with our staff now. One of our agents will assist you shortly.`;
+    }
+
+    return FALLBACK_REPLY;
+}
 
 async function getMenuItemsFromDb() {
     try {
@@ -633,12 +771,13 @@ function shouldTriggerHandoff(message, conversationHistory = []) {
         return { shouldHandoff: true, reason: 'repeated_negative' };
     }
     
-    // Check for complex queries (long messages, multiple questions)
+    // Keep the AI engaged for complex queries and attempt to ask follow-up questions first.
+    // Only hand off if the customer explicitly requests staff or expresses severe negative urgency.
     const questionCount = (message.match(/\?/g) || []).length;
-    if (questionCount > 2 || message.length > 500) {
-        return { shouldHandoff: true, reason: 'complex_query' };
+    if (questionCount > 4 && sentiment.sentiment === 'negative') {
+        return { shouldHandoff: true, reason: 'complex_negative_query' };
     }
-    
+
     // Check for specific keywords that require human intervention
     const escalationKeywords = ['manager', 'supervisor', 'complain', 'escalate', 'speak to human', 'real person'];
     if (escalationKeywords.some(keyword => message.toLowerCase().includes(keyword))) {
@@ -959,6 +1098,16 @@ async function getMistralReply(message, phone = null, conversationId = null) {
 
         const ticketRequest = isTicketCreationRequest(message);
         const problemReportRequest = isProblemReportRequest(message);
+        const quickChoice = parseQuickOption(message);
+        if (quickChoice) {
+            return await handleQuickOption(quickChoice, phone, conversationId);
+        }
+
+        const cannedResponse = findCannedResponse(message);
+        if (cannedResponse) {
+            console.log('Canned response matched, returning direct reply.');
+            return cannedResponse;
+        }
 
         // Check if customer is explicitly asking to speak with a staff agent
         if (isRequestingStaff(message)) {
@@ -1068,7 +1217,9 @@ async function getMistralReply(message, phone = null, conversationId = null) {
         const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.`;
         let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}
 
-If the customer reports a problem, ask clarifying questions and gather details before suggesting a solution. Only offer a human agent connection if the customer explicitly requests a live agent. Keep the response helpful and concise.`;
+If the customer reports a problem, ask clarifying questions and gather details before suggesting a solution. Only offer a human agent connection if the customer explicitly requests a live agent. If the message is unclear, ask for clarification and offer the customer the options 0 for menu, 1 for last order, or 2 for staff. Keep the response helpful, follow up naturally, and avoid sending the customer to a human unless absolutely necessary.
+
+${CLARIFICATION_OPTIONS}`;
 
         if (menuInquiry) {
             userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;
@@ -1127,14 +1278,20 @@ The customer appears to be placing an order but I couldn't identify the specific
             return FALLBACK_REPLY;
         }
 
-        if (conversationId && isHandoffReply(reply)) {
-            console.log("Detected Mistral handoff reply, disabling AI and emitting handoff alert for conversation:", conversationId);
-            if (disableAICallback) {
-                disableAICallback(conversationId);
+        if (isHandoffReply(reply)) {
+            if (isRequestingStaff(message)) {
+                console.log("Detected explicit staff request in model reply, disabling AI and emitting handoff alert for conversation:", conversationId);
+                if (disableAICallback) {
+                    disableAICallback(conversationId);
+                }
+                if (handoffCallback) {
+                    handoffCallback(conversationId);
+                }
+                return reply;
             }
-            if (handoffCallback) {
-                handoffCallback(conversationId);
-            }
+
+            console.log("Detected non-explicit AI handoff reply; returning clarification options instead.");
+            return `I want to keep helping you. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr tell me more about your issue and I will follow up.`;
         }
 
         return reply;
@@ -1144,4 +1301,4 @@ The customer appears to be placing an order but I couldn't identify the specific
     }
 }
 
-export { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory };
+export { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory, extractOrderItemsFromMessage };

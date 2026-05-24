@@ -425,6 +425,27 @@ if (aiUseButton && messageInput) {
     });
 }
 
+const placeOrderBtn = document.getElementById("dashboardPlaceOrder");
+if (placeOrderBtn) {
+    placeOrderBtn.addEventListener("click", async () => {
+        if (!currentConversationId) {
+            return showNotification("Please select a conversation before placing an order.");
+        }
+        try {
+            const resp = await fetch(`/api/order-draft/${encodeURIComponent(currentConversationId)}`);
+            const draft = await resp.json();
+            if (!resp.ok || !draft.itemsSummary) {
+                return showNotification(draft.error || "No order details could be extracted from this conversation.");
+            }
+            localStorage.setItem("ls_aiOrderDraft", JSON.stringify(draft));
+            window.open("orders.html", "_blank");
+        } catch (err) {
+            console.error("Place order error:", err);
+            showNotification("Unable to open the order modal right now.");
+        }
+    });
+}
+
 if (testHandoffAudioBtn) {
     testHandoffAudioBtn.addEventListener("click", () => {
         playHandoffAudio();

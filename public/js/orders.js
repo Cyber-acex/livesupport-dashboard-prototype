@@ -15,36 +15,66 @@ let currentMenuSort = 'score_desc';
 let currentMenuSection = 'items';
 let tableLayout = [];
 const MENU_STORAGE_KEY = 'ls_menu_items_cache';
-const TABLE_LAYOUT_STORAGE_KEY = 'ls_table_layout_cache';
+let pendingAIDraftOrder = null;
 
-function saveTableLayoutToStorage() {
+function loadAIDraftFromStorage() {
   try {
-    localStorage.setItem(TABLE_LAYOUT_STORAGE_KEY, JSON.stringify(tableLayout));
-  } catch (e) {
-    console.warn('Could not save table layout to localStorage', e);
+    const raw = localStorage.getItem('ls_aiOrderDraft');
+    if (!raw) return null;
+    localStorage.removeItem('ls_aiOrderDraft');
+    return JSON.parse(raw);
+  } catch (err) {
+    console.warn('Failed to load AI order draft:', err);
+    return null;
   }
 }
 
-function loadTableLayoutFromStorage() {
-  try {
-    const raw = localStorage.getItem(TABLE_LAYOUT_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    return parsed
-      .filter(item => item && typeof item.number === 'number' && ['vacant', 'reserved', 'occupied'].includes(item.status))
-      .map(item => ({
-        number: Number(item.number),
-        label: item.label || `Table ${item.number}`,
-        status: item.status || 'vacant',
-        customerName: item.customerName || undefined,
-        reservedUntil: item.reservedUntil || undefined,
-        isBooking: !!item.isBooking
-      }));
-  } catch (e) {
-    console.warn('Could not load table layout from localStorage', e);
-    return null;
+function findMenuItemBySummaryName(name) {
+  if (!name) return null;
+  const lowerName = name.toLowerCase().trim();
+  let match = menuItems.find(item => item.name.toLowerCase() === lowerName);
+  if (match) return match;
+  match = menuItems.find(item => item.name.toLowerCase().includes(lowerName));
+  if (match) return match;
+  if (/pizza/.test(lowerName)) return menuItems.find(item => item.category.toLowerCase() === 'pizza' && item.available && item.stock > 0);
+  if (/burger/.test(lowerName)) return menuItems.find(item => item.category.toLowerCase() === 'burgers' && item.available && item.stock > 0);
+  if (/fries|side|loaded/.test(lowerName)) return menuItems.find(item => item.category.toLowerCase() === 'sides' && item.available && item.stock > 0) || menuItems.find(item => item.name.toLowerCase().includes('fries'));
+  if (/salad/.test(lowerName)) return menuItems.find(item => item.category.toLowerCase() === 'salads' && item.available && item.stock > 0);
+  if (/pasta/.test(lowerName)) return menuItems.find(item => item.category.toLowerCase() === 'pasta' && item.available && item.stock > 0);
+  if (/wrap/.test(lowerName)) return menuItems.find(item => item.name.toLowerCase().includes('wrap') && item.available && item.stock > 0);
+  return null;
+}
+
+function buildDraftOrderItems(itemsSummary) {
+  if (!itemsSummary || typeof itemsSummary !== 'string') return [];
+  const raw = itemsSummary.replace(/\band\b/gi, ',');
+  const parts = raw.split(/[,;]+/).map(part => part.trim()).filter(Boolean);
+  const rows = [];
+
+  for (const part of parts) {
+    let qty = 1;
+    let name = part;
+    const match = part.match(/^(\d+)\s*x?\s*(.+)$/i);
+    if (match) {
+      qty = Number(match[1]) || 1;
+      name = match[2].trim();
+    }
+
+    const menuItem = findMenuItemBySummaryName(name);
+    if (menuItem) {
+      rows.push({ menuItemId: menuItem.id, quantity: qty, name: menuItem.name });
+    } else {
+      rows.push({ name, quantity: qty });
+    }
   }
+
+  return rows;
+}
+
+function processPendingAIDraft() {
+  if (!pendingAIDraftOrder) return;
+  openNewOrderModal(pendingAIDraftOrder);
+  pendingAIDraftOrder = null;
 }
 
 const SAMPLE_MENU_ITEMS = [
@@ -162,13 +192,14 @@ function applyOrderPageHash() {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
   loadStaffName();
+  pendingAIDraftOrder = loadAIDraftFromStorage();
   loadOrders();
   loadMenu();
   loadTableLayout();
   applyOrderPageHash();
   setupThemeToggle();
   setupRealtimeUpdates();
-  setInterval(updateTableStatuses, 30000);
+  setInterval(refreshTableLayout, 30000);
 });
 
 window.addEventListener('hashchange', applyOrderPageHash);
@@ -373,6 +404,7 @@ function displayOrders() {
       <td>
         <div class="order-actions">
           <button class="action-btn view-btn" onclick="viewOrderDetails('${order.id}')">View</button>
+          <button class="action-btn receipt-btn" onclick="generateOrderReceipt('${order.id}')">Receipt</button>
           <button class="action-btn edit-btn" onclick="editOrder('${order.id}')" ${order.status === 'completed' ? 'disabled' : ''}>Completed</button>
           <button class="action-btn cancel-btn" onclick="cancelOrder('${order.id}')" ${order.status === 'cancelled' ? 'disabled' : ''}>Cancel</button>
         </div>
@@ -462,14 +494,30 @@ function clearFilters() {
   displayOrders();
 }
 // Open new order modal
-function openNewOrderModal() {
-  // Initialize order items container with one row and populate selects
+function openNewOrderModal(orderData = {}) {
   const container = document.getElementById('orderItemsContainer');
   container.innerHTML = '';
-  addOrderItemRow();
-  document.getElementById('amount').value = '';
+  const items = Array.isArray(orderData.items) && orderData.items.length ? orderData.items : buildDraftOrderItems(orderData.itemsSummary || '');
+  if (items.length > 0) {
+    items.forEach(item => addOrderItemRow(item));
+  } else {
+    addOrderItemRow();
+  }
+
+  const customerNameInput = document.getElementById('customerName');
+  if (customerNameInput) customerNameInput.value = orderData.customerName || '';
+  const statusSelect = document.getElementById('orderStatus');
+  if (statusSelect) statusSelect.value = orderData.status || 'pending';
+
+  if (orderData.amount !== undefined && orderData.amount !== null) {
+    document.getElementById('amount').value = Number(orderData.amount).toFixed(2);
+  } else {
+    updateOrderAmount();
+  }
+
   document.getElementById('orderModal').style.display = 'flex';
 }
+window.openOrderModalWithData = openNewOrderModal;
 
 function updateOrderAmount() {
   const container = document.getElementById('orderItemsContainer');
@@ -578,7 +626,7 @@ async function handleCreateOrder(event) {
 }
 
 // Add new order item row
-function addOrderItemRow() {
+function addOrderItemRow(item = {}) {
   const container = document.getElementById('orderItemsContainer');
   const row = document.createElement('div');
   row.className = 'modal-grid order-item-row';
@@ -610,6 +658,22 @@ function addOrderItemRow() {
   `;
   
   container.appendChild(row);
+
+  if (item && typeof item === 'object') {
+    const select = row.querySelector('.menuItemSelect');
+    const qtyInput = row.querySelector('.orderQuantity');
+    if (item.menuItemId) {
+      select.value = item.menuItemId;
+    } else if (item.name) {
+      const found = findMenuItemBySummaryName(item.name);
+      if (found) select.value = found.id;
+    }
+    if (item.quantity) {
+      qtyInput.value = item.quantity;
+    }
+  }
+
+  updateOrderAmount();
 }
 
 // Remove order item row
@@ -693,6 +757,72 @@ async function saveOrderChanges(event) {
     alert('Error saving order');
   }
 }
+function generateOrderReceipt(orderId) {
+  const order = allOrders.find(o => o.id === orderId);
+  if (!order) return showNotification('Order not found');
+
+  const receiptHtml = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Receipt ${escapeHtml(order.id)}</title><style>
+      @page { size: auto; margin: 12mm; }
+      html, body { width: 100%; margin: 0; padding: 0; }
+      body { font-family: Arial, sans-serif; color: #111; background: #fff; }
+      .receipt-box { width: min(720px, 100%); margin: 0 auto; padding: 24px; border: 1px solid #ddd; border-radius: 12px; box-sizing: border-box; }
+      .receipt-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+      .receipt-title { font-size: 1.5rem; margin: 0; }
+      .receipt-meta { color: #555; font-size: 0.95rem; line-height: 1.6; }
+      .receipt-table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+      .receipt-table th, .receipt-table td { padding: 12px 10px; border: 1px solid #e5e7eb; }
+      .receipt-table th { background: #f3f4f6; text-align: left; }
+      .receipt-total { text-align: right; margin-top: 20px; font-size: 1.1rem; font-weight: 700; }
+      .receipt-footer { margin-top: 30px; color: #555; font-size: 0.95rem; }
+      @media print {
+        body { margin: 0; }
+        .receipt-box { border: none; border-radius: 0; page-break-inside: avoid; }
+      }
+    </style></head><body>
+      <div class="receipt-box">
+        <div class="receipt-header">
+          <div>
+            <h1 class="receipt-title">Order Receipt</h1>
+            <div class="receipt-meta">Order ID: ${escapeHtml(order.id)}<br>Customer: ${escapeHtml(order.customerName || 'N/A')}<br>Status: ${escapeHtml(order.status || 'pending')}</div>
+          </div>
+          <div class="receipt-meta">Date: ${escapeHtml(formatOrderTimestamp(order.date))}</div>
+        </div>
+        <table class="receipt-table">
+          <thead>
+            <tr><th>Item</th><th>Qty</th><th>Amount</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>${escapeHtml(order.product || 'Order item')}</td>
+              <td>${escapeHtml(String(order.quantity || 1))}</td>
+              <td>$${Number(order.amount || 0).toLocaleString('en-US')}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="receipt-total">Total: $${Number(order.amount || 0).toLocaleString('en-US')}</div>
+        <div class="receipt-footer">Thank you for your purchase.</div>
+      </div>
+    </body></html>`;
+
+  const printWindow = window.open('', '_blank', 'width=900,height=700');
+  if (!printWindow) {
+    return showNotification('Popup blocked. Allow popups to generate a receipt.');
+  }
+  printWindow.document.write(receiptHtml);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function copyOrderId(event, orderId) {
   event.stopPropagation();
   event.preventDefault();
@@ -927,13 +1057,6 @@ async function loadTableLayout() {
     }
     const data = await response.json();
     if (!Array.isArray(data) || data.length === 0) {
-      const savedLayout = loadTableLayoutFromStorage();
-      if (savedLayout && savedLayout.length > 0) {
-        tableLayout = savedLayout;
-        renderTableLayout();
-        await updateTableStatuses().catch(error => console.error('Failed to update table statuses after load:', error));
-        return;
-      }
       generateTableLayout();
       return;
     }
@@ -946,20 +1069,9 @@ async function loadTableLayout() {
       isBooking: !!table.isBooking
     }));
     renderTableLayout();
-    saveTableLayoutToStorage();
   } catch (error) {
     console.warn('Error loading table layout:', error);
-    const savedLayout = loadTableLayoutFromStorage();
-    if (savedLayout && savedLayout.length > 0) {
-      tableLayout = savedLayout;
-      renderTableLayout();
-      await updateTableStatuses().catch(error => console.error('Failed to update table statuses after load:', error));
-      return;
-    }
     generateTableLayout();
-  }
-  if (tableLayout.length > 0) {
-    updateTableStatuses().catch(error => console.error('Failed to update table statuses after load:', error));
   }
 }
 
@@ -1021,17 +1133,18 @@ function toggleTableActionMenu(tableNumber) {
 }
 
 function getTableReservationLabel(table) {
-  if (!table.customerName || !table.reservedUntil) return '';
+  if (!table.reservedUntil) return '';
   const date = new Date(table.reservedUntil);
   if (isNaN(date)) return '';
+  if (table.status === 'occupied') {
+    return `${table.customerName ? `Occupied by ${table.customerName} until` : 'Occupied until'} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  if (!table.customerName) return '';
   if (table.status === 'reserved') {
     if (table.isBooking) {
       return `Booked for ${table.customerName} on ${date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
     }
     return `Reserved for ${table.customerName} at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  }
-  if (table.status === 'occupied') {
-    return `Occupied until ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
   }
   return '';
 }
@@ -1152,51 +1265,10 @@ async function persistTableState(tableNumber, status, customerName, reservedUnti
       tableLayout.sort((a, b) => a.number - b.number);
     }
     renderTableLayout();
-    saveTableLayoutToStorage();
   } catch (error) {
     console.error('Error updating table state:', error);
     alert(error.message || 'Failed to update table status.');
     throw error;
-  }
-}
-
-async function updateTableStatuses() {
-  const now = new Date();
-  let changed = false;
-  const updates = [];
-  for (const table of tableLayout) {
-    if (table.reservedUntil) {
-      const target = new Date(table.reservedUntil);
-      if (!isNaN(target.getTime()) && now >= target) {
-        if (table.status === 'reserved') {
-          const occupiedUntil = getOccupiedUntil(now);
-          table.status = 'occupied';
-          table.reservedUntil = occupiedUntil;
-          changed = true;
-          updates.push(
-            persistTableState(table.number, 'occupied', table.customerName, occupiedUntil, table.isBooking)
-              .catch(error => console.error('Failed to persist table expiration update:', error))
-          );
-        } else if (table.status === 'occupied') {
-          table.status = 'vacant';
-          table.customerName = undefined;
-          table.reservedUntil = undefined;
-          table.isBooking = false;
-          changed = true;
-          updates.push(
-            persistTableState(table.number, 'vacant', undefined, undefined, false)
-              .catch(error => console.error('Failed to persist table expiration update:', error))
-          );
-        }
-      }
-    }
-  }
-  if (updates.length > 0) {
-    await Promise.all(updates);
-  }
-  if (changed) {
-    renderTableLayout();
-    saveTableLayoutToStorage();
   }
 }
 
@@ -1227,6 +1299,7 @@ function loadMenu() {
       filteredMenuItems = [...menuItems];
       buildMenuChips();
       renderMenu();
+      processPendingAIDraft();
     }).catch(err => {
       console.warn('Failed to load /api/menu, using sample', err);
       menuItems = SAMPLE_MENU_ITEMS.map(item => ({ ...item }));
@@ -1237,6 +1310,7 @@ function loadMenu() {
       filteredMenuItems = [...menuItems];
       buildMenuChips();
       renderMenu();
+      processPendingAIDraft();
     });
 }
 
@@ -1452,7 +1526,35 @@ function showLaunchpad() {
 }
 
 function bulkGenerateMenuReport() {
-  showNotification('Menu analytics report generated');
+  const rows = filteredMenuItems.map(item => ({
+    name: item.name || '',
+    category: item.category || '',
+    subtype: item.subtype || '',
+    price: item.price != null ? `$${item.price.toFixed(2)}` : '',
+    available: item.available ? 'Yes' : 'No',
+    stock: item.stock != null ? item.stock : (item.inventory != null ? item.inventory : 0),
+    tags: (item.tags || []).join(', '),
+    description: item.description || ''
+  }));
+
+  if (rows.length === 0) {
+    return showNotification('No menu items available for report');
+  }
+
+  const csvHeader = Object.keys(rows[0]).join(',');
+  const csvRows = rows.map(row => Object.values(row).map(value => '"' + String(value).replace(/"/g, '""') + '"').join(','));
+  const csv = [csvHeader, ...csvRows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `menu-report-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showNotification(`Menu report downloaded (${rows.length} items)`);
 }
 
 // Menu item modal handlers

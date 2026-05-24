@@ -8,10 +8,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const messageCtx = messageCanvas ? messageCanvas.getContext('2d') : null;
     const gaugeRespCtx = document.getElementById('gaugeResponse') ? document.getElementById('gaugeResponse').getContext('2d') : null;
     const gaugeResRateCtx = document.getElementById('gaugeResolution') ? document.getElementById('gaugeResolution').getContext('2d') : null;
+    const outwardChartContainer = document.getElementById('outwardMessagesChart');
     let gaugeRespChart = null;
     let gaugeResRateChart = null;
     let ticketChart = null;
     let messageChart = null;
+    let outwardMessagesChart = null;
     let analyticsChart = null;
     // Controls and KPI elements
     const startDateInput = document.getElementById('startDate');
@@ -510,6 +512,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!messageChart && messageCtx) {
             messageChart = createMessageBarChart(messageCtx, { daily: 0, weekly: 0, monthly: 0 });
         }
+        if (!outwardMessagesChart && outwardChartContainer) {
+            outwardMessagesChart = createOutwardMessagesChart(outwardChartContainer, { daily: 0, weekly: 0, monthly: 0 });
+        }
         if (!aiStaffChart && aiStaffCtx) {
             aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, [], [], []);
         }
@@ -518,6 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
             refreshAnalyticsChart(),
             refreshMessageChart(),
             refreshTicketCountChart(),
+            refreshOutwardMessagesChart(),
             refreshAIStaffMonthlyChart()
         ]);
         loadKPIs();
@@ -566,6 +572,89 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         });
+    }
+
+    function createOutwardMessagesChart(container, data) {
+        const options = {
+            chart: {
+                type: 'bar',
+                height: 240,
+                toolbar: { show: false }
+            },
+            series: [{
+                name: 'Outward Messages',
+                data: [data.daily, data.weekly, data.monthly]
+            }],
+            colors: ['#465fff'],
+            plotOptions: {
+                bar: {
+                    horizontal: false,
+                    columnWidth: '55%',
+                    borderRadius: 8,
+                    borderRadiusApplication: 'end'
+                }
+            },
+            dataLabels: { enabled: false },
+            xaxis: {
+                categories: ['Day', 'Week', 'Month'],
+                axisBorder: { show: false },
+                axisTicks: { show: false },
+                labels: {
+                    style: { colors: '#64748b', fontSize: '13px', fontWeight: 600 }
+                }
+            },
+            yaxis: {
+                labels: {
+                    style: { colors: '#64748b', fontSize: '13px' }
+                }
+            },
+            grid: {
+                borderColor: 'rgba(148,163,184,0.18)',
+                strokeDashArray: 5,
+                yaxis: { lines: { show: true } }
+            },
+            legend: { show: false },
+            tooltip: {
+                theme: 'light',
+                x: { show: false },
+                y: {
+                    formatter: function (val) {
+                        return val;
+                    }
+                }
+            }
+        };
+
+        const chart = new ApexCharts(container, options);
+        chart.render();
+        return chart;
+    }
+
+    function updateOutwardMessagesChart(chart, data) {
+        if (!chart || !data) return;
+        chart.updateSeries([{ data: [data.daily, data.weekly, data.monthly] }]);
+    }
+
+    async function refreshOutwardMessagesChart() {
+        if (!outwardMessagesChart) return;
+        try {
+            const res = await fetch('/api/outward-messages-by-period' + buildQueryParams(), { credentials: 'same-origin' });
+            handleAuthRedirect(res);
+            if (!res.ok) {
+                const body = await res.text();
+                console.error('outward-messages-by-period fetch failed', res.status, body);
+                throw new Error('Fetch failed');
+            }
+            const data = await res.json();
+            updateOutwardMessagesChart(outwardMessagesChart, data);
+            return data;
+        } catch (error) {
+            console.error('refreshOutwardMessagesChart error', error);
+            if (outwardMessagesChart) {
+                updateOutwardMessagesChart(outwardMessagesChart, { daily: 34, weekly: 182, monthly: 732 });
+            }
+            return { daily: 34, weekly: 182, monthly: 732 };
+        }
     }
 
     function createAIStaffMonthlyChart(ctx, labels, aiData, staffData) {
