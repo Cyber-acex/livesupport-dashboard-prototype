@@ -863,15 +863,9 @@ app.get('/api/messages-last7', (req, res) => {
             FROM (
                 SELECT sender, created_at, NULL AS user_id FROM messages
                 UNION ALL
-                SELECT sender, created_at, user_id FROM replies
-                UNION ALL
                 SELECT sender, created_at, user_id FROM ai_messages
                 UNION ALL
                 SELECT sender, created_at, user_id FROM staff_messages
-                UNION ALL
-                SELECT sender, created_at, user_id FROM "ai replies"
-                UNION ALL
-                SELECT sender, created_at, user_id FROM "staff replies"
             ) AS all_msgs
             WHERE DATE(created_at) BETWEEN CURRENT_DATE - INTERVAL '6 days' AND CURRENT_DATE
             GROUP BY DATE(created_at)
@@ -883,15 +877,9 @@ app.get('/api/messages-last7', (req, res) => {
             FROM (
                 SELECT sender, created_at, NULL AS user_id FROM messages
                 UNION ALL
-                SELECT sender, created_at, user_id FROM replies
-                UNION ALL
                 SELECT sender, created_at, user_id FROM ai_messages
                 UNION ALL
                 SELECT sender, created_at, user_id FROM staff_messages
-                UNION ALL
-                SELECT sender, created_at, user_id FROM \`ai replies\`
-                UNION ALL
-                SELECT sender, created_at, user_id FROM \`staff replies\`
             ) AS all_msgs
             WHERE DATE(created_at) BETWEEN DATE_SUB(CURDATE(), INTERVAL 6 DAY) AND CURDATE()
             GROUP BY DATE(created_at)
@@ -4674,6 +4662,34 @@ app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
     } catch (error) {
         console.error('Error fetching messages by period:', error);
         res.status(500).json({ error: 'Failed to fetch messages by period' });
+    }
+});
+
+app.get('/api/outward-messages-by-period', isAuthenticated, async (req, res) => {
+    try {
+        const messageCountsSql = isPg
+            ? `SELECT
+                    SUM(CASE WHEN sender = 'sent' AND created_at::date = CURRENT_DATE THEN 1 ELSE 0 END) AS daily,
+                    SUM(CASE WHEN sender = 'sent' AND DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE) THEN 1 ELSE 0 END) AS weekly,
+                    SUM(CASE WHEN sender = 'sent' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END) AS monthly
+                FROM messages`
+            : `SELECT
+                    SUM(CASE WHEN sender = 'sent' AND DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS daily,
+                    SUM(CASE WHEN sender = 'sent' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) THEN 1 ELSE 0 END) AS weekly,
+                    SUM(CASE WHEN sender = 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS monthly
+                FROM messages`;
+
+        const [rows] = await db.promise().query(messageCountsSql);
+        const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
+
+        res.json({
+            daily: Number(counts.daily) || 0,
+            weekly: Number(counts.weekly) || 0,
+            monthly: Number(counts.monthly) || 0
+        });
+    } catch (error) {
+        console.error('Error fetching outward messages by period:', error);
+        res.status(500).json({ error: 'Failed to fetch outward messages by period' });
     }
 });
 
