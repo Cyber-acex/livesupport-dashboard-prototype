@@ -528,16 +528,23 @@ function createConversationElement(conv, filter = 'all') {
     const platform = String(conv.platform || 'whatsapp').toLowerCase();
     const platformLabel = platform.charAt(0).toUpperCase() + platform.slice(1);
     const platformBadgeHtml = `<span class="platform-badge platform-${platform}">${platformLabel}</span>`;
-    let unreadCount = Number(conv.unread_count) || 0;
+    // Show only "new" unread messages (difference between total incoming
+    // messages and the last seen count we stored locally).
+    const totalIncoming = Number(conv.unread_count) || 0;
+    let newUnread = totalIncoming;
     try {
+        const lastSeenMap = JSON.parse(localStorage.getItem('lastSeenCounts') || '{}');
         const viewed = JSON.parse(localStorage.getItem('viewedChats') || '[]');
+        const lastSeen = Number((lastSeenMap && lastSeenMap[String(conv.id)]) || 0);
+        newUnread = Math.max(0, totalIncoming - lastSeen);
         if (Array.isArray(viewed) && viewed.map(String).includes(String(conv.id))) {
-            unreadCount = 0;
+            newUnread = 0;
         }
     } catch (e) {
         // ignore localStorage parse errors
+        newUnread = totalIncoming;
     }
-    const unreadBadgeHtml = unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : '';
+    const unreadBadgeHtml = newUnread > 0 ? `<div class="unread-badge">${newUnread}</div>` : '';
     div.classList.add(`platform-${platform}`);
     div.innerHTML = `
         <div class="avatar">${initials}</div>
@@ -650,8 +657,14 @@ function createConversationElement(conv, filter = 'all') {
         currentConversationId = conv.id;
         window.currentConversationId = conv.id;
         window.currentConversation = conv.id;
-        if (conv.unread_count) {
-            conv.unread_count = 0;
+        // Persist that we've seen up to the current total incoming count so
+        // future renders only show messages that arrived after this point.
+        try {
+            const lastSeenMap = JSON.parse(localStorage.getItem('lastSeenCounts') || '{}');
+            lastSeenMap[String(conv.id)] = Number(conv.unread_count) || 0;
+            localStorage.setItem('lastSeenCounts', JSON.stringify(lastSeenMap));
+        } catch (e) {
+            // ignore localStorage errors
         }
         try {
             const viewed = JSON.parse(localStorage.getItem('viewedChats') || '[]');
@@ -663,6 +676,7 @@ function createConversationElement(conv, filter = 'all') {
         } catch (e) {
             // ignore localStorage errors
         }
+        // reflect locally that there are no new unread messages for this conv
         clearConversationUnreadBadge(conv.id);
         markConversationViewed(conv.id);
         loadMessages(conv.id, filter === 'escalated');
