@@ -101,6 +101,23 @@ function shouldAIRespond(conversationId) {
     return should;
 }
 
+function getConversationAutopilotMode(conversationId) {
+    const convId = Number(conversationId);
+    if (Number.isNaN(convId)) return 'assist';
+
+    for (const record of onlineAgents.values()) {
+        if (Number(record.activeConversation) === convId) {
+            return record.autopilotMode ? String(record.autopilotMode).toLowerCase() : 'assist';
+        }
+    }
+
+    return 'assist';
+}
+
+function isAIAutoSendEnabled(conversationId) {
+    return getConversationAutopilotMode(conversationId) === 'auto';
+}
+
 function emitNewMessageEvent(conversationId, messageData) {
     const id = Number(conversationId);
     db.query("SELECT phone, name FROM conversations WHERE id = ? LIMIT 1", [id], (err, rows) => {
@@ -940,27 +957,30 @@ async function ensureDefaultRestaurantTables() {
 
 app.get('/api/tables', async (req, res) => {
     try {
-        if (isPg) {
-            db.query(`UPDATE restaurant_tables SET status = 'occupied', updated_at = NOW() WHERE status = 'reserved' AND reserved_until <= NOW()`, (updateErr) => {
-                if (updateErr) console.error('Failed to update expired reservations:', updateErr);
+        const updateReservedToOccupiedSql = `UPDATE restaurant_tables SET status = 'occupied', updated_at = NOW() WHERE status = 'reserved' AND reserved_until <= NOW()`;
+        const updateExpiredOccupiedSql = `UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, updated_at = NOW() WHERE status = 'occupied' AND reserved_until <= NOW() AND is_booking = FALSE`;
+
+        db.query(updateReservedToOccupiedSql, (updateErr) => {
+            if (updateErr) console.error('Failed to update expired reservations:', updateErr);
+            db.query(updateExpiredOccupiedSql, (expiredErr) => {
+                if (expiredErr) console.error('Failed to update expired occupied table states:', expiredErr);
+                db.query('SELECT id, number, label, status, customer_name, reserved_until, is_booking FROM restaurant_tables ORDER BY number', (err, rows) => {
+                    if (err) {
+                        console.error('GET /api/tables db error', err);
+                        return res.status(500).json({ error: 'internal' });
+                    }
+                    const tables = rows.map(row => ({
+                        id: row.id,
+                        number: row.number,
+                        label: row.label,
+                        status: row.status,
+                        customerName: row.customer_name || undefined,
+                        reservedUntil: row.reserved_until ? new Date(row.reserved_until).toISOString() : undefined,
+                        isBooking: !!row.is_booking
+                    }));
+                    res.json(tables);
+                });
             });
-        }
-        await ensureDefaultRestaurantTables();
-        db.query('SELECT id, number, label, status, customer_name, reserved_until, is_booking FROM restaurant_tables ORDER BY number', (err, rows) => {
-            if (err) {
-                console.error('GET /api/tables db error', err);
-                return res.status(500).json({ error: 'internal' });
-            }
-            const tables = rows.map(row => ({
-                id: row.id,
-                number: row.number,
-                label: row.label,
-                status: row.status,
-                customerName: row.customer_name || undefined,
-                reservedUntil: row.reserved_until ? new Date(row.reserved_until).toISOString() : undefined,
-                isBooking: !!row.is_booking
-            }));
-            res.json(tables);
         });
     } catch (e) {
         console.error('GET /api/tables error', e);
@@ -1322,7 +1342,7 @@ app.post('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
     console.log('POST /api/admin/users body=', req.body);
     if (!email || !password) return res.status(400).json({ error: 'email_and_password_required' });
     const sql = isPg
-        ? 'INSERT INTO users (name, email, password, role, disabled) VALUES (?, ?, ?, ?, 0) RETURNING id'
+        ? 'INSERT INTO users (name, email, password, role, disabled) VALUES (?, ?, ?, ?, false) RETURNING id'
         : 'INSERT INTO users (name, email, password, role, disabled) VALUES (?, ?, ?, ?, 0)';
     db.query(sql, [name || email.split('@')[0], email, password, role || 'agent'], (err, result) => {
         if (err) {
@@ -1341,7 +1361,7 @@ app.put('/api/admin/users/:id', isAuthenticated, isAdmin, (req, res) => {
     const id = req.params.id;
     const { name, role, disabled } = req.body;
     const sql = 'UPDATE users SET name = COALESCE(?, name), role = COALESCE(?, role), disabled = COALESCE(?, disabled) WHERE id = ?';
-    db.query(sql, [name, role, (disabled ? 1 : 0), id], (err) => {
+    db.query(sql, [name, role, (disabled ? true : false), id], (err) => {
         if (err) return res.status(500).json({ error: 'db_error' });
         try { io.emit('admin:users:changed', { action: 'update', id }); } catch (e) { console.error('Emit admin users changed error', e); }
         res.json({ success: true });
@@ -2410,6 +2430,10 @@ function extractOrderTotal(text) {
 function extractOrderItems(text) {
     if (!text) return null;
 
+    const normalizedText = String(text)
+        .replace(/\s+and\s+/gi, ', ')
+        .replace(/\s*&\s*/g, ', ');
+
     // Try specific order statement patterns first
     const itemPatterns = [
         /(?:i(?:'d| would)? like to order|i(?:'d| would)? like|i want to order|i want|can i get|please order|send me|i need|order|give me|add|deliver)\s+(.+?)(?:\s+(?:for|comes to|total|totals?|cost|price|amount)|\s*\$|\s*\(|$)/i,
@@ -2417,7 +2441,7 @@ function extractOrderItems(text) {
     ];
 
     for (const pattern of itemPatterns) {
-        const match = text.match(pattern);
+        const match = normalizedText.match(pattern);
         if (match && match[1]) {
             let itemText = match[1].trim();
             // Remove trailing phrases
@@ -2433,7 +2457,7 @@ function extractOrderItems(text) {
     if (/(pizza|burger|meal|combo|sandwich|taco|drink|food|fries|salad|sushi|pasta|rice|noodles|wrap)/i.test(lowerText)) {
         // Extract quantity + food items pattern: "3 Cheese Burgers", "Large Pizza", etc.
         const foodPattern = /(\d+\s+)?(?:large|small|medium|extra|with)?\s*([a-zA-Z\s&]+(?:pizza|burger|meal|combo|sandwich|taco|drink|food|fries|salad|sushi|pasta|rice|noodles|wrap)[a-zA-Z\s&]*)/gi;
-        const foodMatches = text.match(foodPattern);
+        const foodMatches = normalizedText.match(foodPattern);
         
         if (foodMatches && foodMatches.length > 0) {
             // Join all matched food items
@@ -2441,8 +2465,8 @@ function extractOrderItems(text) {
         }
 
         // If pattern still doesn't work, extract up to the price marker
-        const beforePrice = text.split(/\$|total|comes to|for a total|cost/i)[0];
-        if (beforePrice && beforePrice.length < text.length - 5) {
+        const beforePrice = normalizedText.split(/\$|total|comes to|for a total|cost/i)[0];
+        if (beforePrice && beforePrice.length < normalizedText.length - 5) {
             let cleaned = beforePrice.trim()
                 .replace(/^(?:i(?:'d|'m)?\s+(?:want|like|need|order|order me|please|please order)\s+)/i, '')
                 .replace(/\s*(?:please|thanks|thank you)\s*$/i, '')
@@ -2941,15 +2965,16 @@ app.post("/webhook", async (req, res) => {
                                 // Only process customer messages for AI response
                                 // Check if this is an order confirmation
                                 const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                                const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                                 if (orderConfirmed) {
                                     await sendAutoReply(phone, "Your order has been confirmed an your order is now being prepared for delivery🚚✅");
                                 } else {
                                     const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                    if (forceAI || shouldAIRespond(convoId)) {
+                                    if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
                                         const reply = await getMistralReply(text, phone, convoId);
                                         await sendAutoReply(phone, reply);
                                     } else {
-                                        console.log(`AI response skipped for conversation ${convoId} - agent recently active`);
+                                        console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
                                     }
                                 }
 
@@ -3022,15 +3047,16 @@ app.post("/webhook", async (req, res) => {
                             // Only process customer messages for AI response
                             // Check if this is an order confirmation
                             const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                             if (orderConfirmed) {
                                 await sendAutoReply(phone, "Your order has been confirmed an your order is now being prepared for delivery🚚✅");
                             } else {
                                 const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                if (forceAI || shouldAIRespond(convoId)) {
+                                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
                                     const reply = await getMistralReply(text, phone, convoId);
                                     await sendAutoReply(phone, reply);
                                 } else {
-                                    console.log(`AI response skipped for conversation ${convoId} - agent recently active`);
+                                    console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
                                 }
                             }
 
@@ -3087,15 +3113,16 @@ app.post("/api/test-message", (req, res) => {
 
                         // Check if this is an order confirmation
                         const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                        const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                         if (orderConfirmed) {
                             await sendAutoReply(phone, "Your order has been confirmed an your order is now being prepared for delivery🚚✅");
                         } else {
                             // Check if AI should respond
-                            if (shouldAIRespond(convoId)) {
+                            if (aiAutoAllowed && shouldAIRespond(convoId)) {
                                 const reply = await getMistralReply(text, phone, convoId);
                                 await sendAutoReply(phone, reply);
                             } else {
-                                console.log(`AI response skipped for conversation ${convoId} - agent recently active`);
+                                console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
                             }
                         }
                         res.json({ success: true, conversation_id: convoId });
@@ -3121,15 +3148,16 @@ app.post("/api/test-message", (req, res) => {
                         enableAIForConversation(convoId);
                     }
                     const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                    const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                     if (orderConfirmed) {
                         await sendAutoReply(phone, "Your order has been confirmed an your food is now being prepared for delivery🚚✅");
                     } else {
                         const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                        if (forceAI || shouldAIRespond(convoId)) {
+                        if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
                             const reply = await getMistralReply(text, phone, convoId);
                             await sendAutoReply(phone, reply);
                         } else {
-                            console.log(`AI response skipped for conversation ${convoId} - agent recently active`);
+                            console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
                         }
                     }
                     res.json({ success: true, conversation_id: convoId });
@@ -3320,14 +3348,35 @@ app.post('/api/tickets/delete', (req, res) => {
 // Escalate Ticket
 // ---------------------------
 app.post("/api/escalate-ticket", (req, res) => {
-    const { ticket_id } = req.body;
-    db.query("UPDATE tickets SET escalated = 1 WHERE id = ?", [ticket_id], (err) => {
+    const { ticket_id, ticket_ids } = req.body || {};
+    const ids = Array.isArray(ticket_ids)
+        ? ticket_ids.map(id => Number(id)).filter(id => Number.isFinite(id))
+        : ticket_id !== undefined && ticket_id !== null
+            ? [Number(ticket_id)].filter(id => Number.isFinite(id))
+            : [];
+
+    if (ids.length === 0) {
+        return res.status(400).json({ error: 'Missing ticket_id or ticket_ids' });
+    }
+
+    const placeholders = ids.map(() => '?').join(',');
+    db.query(`UPDATE tickets SET escalated = TRUE WHERE id IN (${placeholders})`, ids, (err) => {
         if (err) {
-            console.error('Error escalating ticket:', err);
-            return res.status(500).json({ error: 'Failed to escalate ticket' });
+            console.error('Error escalating ticket(s):', err);
+            return res.status(500).json({ error: 'Failed to escalate ticket(s)' });
         }
-        io.emit("ticketEscalated", { ticket_id });
-        res.json({ success: true });
+        const notificationPayload = {
+            message: ids.length === 1
+                ? `Ticket #${ids[0]} escalated and needs attention.`
+                : `Tickets ${ids.join(', ')} escalated and need attention.`,
+            from: 'System',
+            type: 'ticket-escalation',
+            ticket_ids: ids,
+            time: new Date().toISOString()
+        };
+        io.emit('staffNotification', notificationPayload);
+        ids.forEach(ticket_id => io.emit('ticketEscalated', { ticket_id }));
+        res.json({ success: true, escalated_ids: ids });
     });
 });
 
@@ -3338,7 +3387,7 @@ app.post("/api/resolve-ticket", (req, res) => {
     const { ticket_id } = req.body;
     if (!req.session || !req.session.user) return res.status(401).json({ error: 'not_logged_in' });
     const resolverName = req.session.user && req.session.user.name ? req.session.user.name : 'Staff';
-    db.query("UPDATE tickets SET status = 'Resolved', sla_due = NULL WHERE id = ?", [ticket_id], (err) => {
+    db.query("UPDATE tickets SET status = 'Resolved', sla_due = NULL, escalated = ? WHERE id = ?", [false, ticket_id], (err) => {
         if (err) {
             console.error('Error resolving ticket:', err);
             return res.status(500).json({ error: 'Failed to resolve ticket' });
@@ -3381,7 +3430,7 @@ app.post('/api/broadcast-notification', (req, res) => {
 // ---------------------------
 app.post("/api/escalate-receipt", (req, res) => {
     const { receipt_id } = req.body;
-    db.query("UPDATE receipts SET escalated = 1 WHERE id = ?", [receipt_id], (err) => {
+    db.query("UPDATE receipts SET escalated = TRUE WHERE id = ?", [receipt_id], (err) => {
         if (err) {
             console.error('Error escalating receipt:', err);
             return res.status(500).json({ error: 'Failed to escalate receipt' });
@@ -4252,12 +4301,22 @@ io.on("connection", (socket) => {
             }
         } catch (e) {}
 
-        const record = Object.assign({}, agent, { socketId: socket.id, lastActive: Date.now(), activeConversation: null });
+        const record = Object.assign({}, agent, { socketId: socket.id, lastActive: Date.now(), activeConversation: null, autopilotMode: agent.autopilotMode || 'auto' });
         onlineAgents.set(socket.id, record);
         // Broadcast presence list to all clients
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
         io.emit("presenceUpdate", list);
         console.log("Agent registered for presence:", record);
+    });
+
+    socket.on('agent:updateAutopilotMode', (data) => {
+        const record = onlineAgents.get(socket.id);
+        if (record && data && data.autopilotMode) {
+            record.autopilotMode = String(data.autopilotMode).toLowerCase();
+            record.lastActive = Date.now();
+            onlineAgents.set(socket.id, record);
+            console.log(`Agent ${record.userId} updated autopilotMode to ${record.autopilotMode}`);
+        }
     });
 
     // Agent notifies which conversation they're viewing/active on
@@ -4453,11 +4512,9 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
             SELECT
                 (SELECT COUNT(*) FROM conversations) AS chats,
                 (SELECT COUNT(*) FROM tickets) AS tickets,
-                (SELECT COUNT(*) FROM tickets WHERE escalated = 1) AS escalatedTickets,
+                (SELECT COUNT(*) FROM tickets WHERE escalated = TRUE) AS escalatedTickets,
                 (SELECT COUNT(*) FROM receipts) AS receipts,
-                (SELECT COUNT(*) FROM receipts WHERE escalated = 1) AS escalatedReceipts,
-                (SELECT COUNT(*) FROM escalations) AS escalatedChats,
-                (SELECT COUNT(*) FROM resolved) AS resolvedChats
+                (SELECT COUNT(*) FROM receipts WHERE escalated = TRUE) AS escalatedReceipts
         `);
 
         const [feedbackRows] = await db.promise().query(`
@@ -4512,8 +4569,6 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
 
         const summary = (Array.isArray(countsRows) ? countsRows[0] : countsRows) || {};
         const fb = (Array.isArray(feedbackRows) ? feedbackRows[0] : feedbackRows) || {};
-        const avgResp = (Array.isArray(avgResponseRows) ? avgResponseRows[0] : avgResponseRows) || {};
-        const avgRes = (Array.isArray(avgResolutionRows) ? avgResolutionRows[0] : avgResolutionRows) || {};
 
         const numChats = Number(summary.chats) || 0;
         const numResolvedChats = Number(summary.resolvedChats) || 0;
@@ -4641,7 +4696,8 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
                 UNION ALL
                 SELECT sender, created_at, user_id FROM "staff replies"
             ) AS all_msgs
-            WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE) - INTERVAL '11 months'
+            WHERE created_at >= DATE_TRUNC('year', CURRENT_DATE)
+                AND created_at < DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year'
             GROUP BY ym
             ORDER BY ym;
         ` : `
@@ -4661,7 +4717,8 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
                 UNION ALL
                 SELECT sender, created_at, user_id FROM \`staff replies\`
             ) AS all_msgs
-            WHERE created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 11 MONTH)
+            WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01')
+                AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR)
             GROUP BY ym
             ORDER BY ym;
         `;
@@ -4681,8 +4738,8 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
             const ai = [];
             const staff = [];
 
-            for (let i = 11; i >= 0; i--) {
-                const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            for (let month = 0; month < 12; month++) {
+                const d = new Date(now.getFullYear(), month, 1);
                 const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
                 labels.push(monthNames[d.getMonth()]);
                 const row = rowMap[ym] || {};

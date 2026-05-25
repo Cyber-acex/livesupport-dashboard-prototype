@@ -494,6 +494,27 @@ function clearFilters() {
   displayOrders();
 }
 // Open new order modal
+function updateOrderTableOptions(selectedTableNumber) {
+  const tableSelect = document.getElementById('orderTableNumber');
+  if (!tableSelect) return;
+
+  let tables = Array.isArray(tableLayout) && tableLayout.length ? tableLayout : [];
+  if (tables.length === 0) {
+    tables = Array.from({ length: 40 }, (_, i) => ({ number: i + 1, label: `Table ${i + 1}`, status: 'vacant' }));
+  }
+
+  const sortedTables = tables.slice().sort((a, b) => Number(a.number) - Number(b.number));
+  const options = ['<option value="">-- No table / Takeaway --</option>'];
+  sortedTables.forEach(table => {
+    const statusLabel = table.status ? ` — ${String(table.status).charAt(0).toUpperCase() + String(table.status).slice(1)}` : '';
+    options.push(`<option value="${Number(table.number)}">Table ${Number(table.number)}${statusLabel}</option>`);
+  });
+  tableSelect.innerHTML = options.join('');
+  if (selectedTableNumber !== undefined && selectedTableNumber !== null) {
+    tableSelect.value = String(selectedTableNumber);
+  }
+}
+
 function openNewOrderModal(orderData = {}) {
   const container = document.getElementById('orderItemsContainer');
   container.innerHTML = '';
@@ -506,6 +527,12 @@ function openNewOrderModal(orderData = {}) {
 
   const customerNameInput = document.getElementById('customerName');
   if (customerNameInput) customerNameInput.value = orderData.customerName || '';
+  const tableSelect = document.getElementById('orderTableNumber');
+  if (tableLayout.length === 0) {
+    loadTableLayout().then(() => updateOrderTableOptions(orderData.tableNumber || null));
+  } else {
+    updateOrderTableOptions(orderData.tableNumber || null);
+  }
   const statusSelect = document.getElementById('orderStatus');
   if (statusSelect) statusSelect.value = orderData.status || 'pending';
 
@@ -588,13 +615,17 @@ async function handleCreateOrder(event) {
   }
   
   try {
-    const response = await fetch('/api/orders', {
+    const tableNumberValue = document.getElementById('orderTableNumber')?.value;
+  const tableNumber = tableNumberValue ? Number(tableNumberValue) : null;
+
+  const response = await fetch('/api/orders', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
           customerName,
+          tableNumber,
           product: items.map(i=>i.name).join(', '),
           menuItemId: items[0] ? items[0].menuItemId : null,
           quantity: totalQuantity,
@@ -610,6 +641,14 @@ async function handleCreateOrder(event) {
           const mi = menuItems.find(m=>m.id===it.menuItemId);
           if (mi) mi.stock -= it.quantity;
         });
+
+      const tableNumberValue = document.getElementById('orderTableNumber')?.value;
+      const tableNumber = tableNumberValue ? Number(tableNumberValue) : null;
+      if (tableNumber) {
+        const expiration = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+        await persistTableState(tableNumber, 'occupied', customerName, expiration, false);
+      }
+
       applyMenuFilters();
       renderMenu();
       showNotification('Order created successfully!');

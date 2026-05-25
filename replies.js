@@ -575,6 +575,7 @@ function formatOrderStatusResponse(order) {
 
 function extractOrderItemsFromMessage(message) {
     const lowerMessage = message.toLowerCase();
+    const normalizedMessage = lowerMessage.replace(/\s+and\s+/gi, ', ').replace(/\s*&\s*/g, ', ');
     const orderItems = [];
     let total = 0;
 
@@ -611,13 +612,21 @@ function extractOrderItemsFromMessage(message) {
     const friesPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*fries/gi;
     let friesMatch;
     let friesCount = 0;
-    while ((friesMatch = friesPattern.exec(lowerMessage)) !== null) {
+    while ((friesMatch = friesPattern.exec(normalizedMessage)) !== null) {
         friesCount += parseQuantity(friesMatch[1]);
+    }
+
+    const waterPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:bottles?|bottle)\s+of\s+sparkling\s+water/gi;
+    let waterMatch;
+    while ((waterMatch = waterPattern.exec(normalizedMessage)) !== null) {
+        const quantity = parseQuantity(waterMatch[1]);
+        addItems(quantity, 'sparkling water');
+        total += quantity * MENU_ITEMS.ordersPageMenu.Drinks.sparkling_water.price;
     }
 
     const pizzaPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(small|medium|large)\s*pizza/gi;
     let pizzaMatch;
-    while ((pizzaMatch = pizzaPattern.exec(lowerMessage)) !== null) {
+    while ((pizzaMatch = pizzaPattern.exec(normalizedMessage)) !== null) {
         const quantity = parseQuantity(pizzaMatch[1]);
         const size = pizzaMatch[2];
         if (pizzaSizes[size]) {
@@ -626,15 +635,24 @@ function extractOrderItemsFromMessage(message) {
         }
     }
 
-    const burgerPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(classic|cheese|double)\s*burger/gi;
+    const burgerPattern = /(?:\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(classic|cheese|double|bacon|spicy|grilled|crispy)?\s*burger\b/gi;
     let burgerMatch;
-    while ((burgerMatch = burgerPattern.exec(lowerMessage)) !== null) {
+    while ((burgerMatch = burgerPattern.exec(normalizedMessage)) !== null) {
         const quantity = parseQuantity(burgerMatch[1]);
-        const type = burgerMatch[2];
-        if (burgerTypes[type]) {
-            addItems(quantity, burgerTypes[type]);
-            total += quantity * MENU_ITEMS.burger[type].price;
-        }
+        const type = burgerMatch[2] ? burgerMatch[2].trim() : '';
+        const itemKey = type ? `${type} burger` : 'burger';
+        addItems(quantity, itemKey);
+        total += quantity * (MENU_ITEMS.burger[type] ? MENU_ITEMS.burger[type].price : MENU_ITEMS.burger.cheese.price);
+    }
+
+    const wrapPattern = /(?:\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?([a-zA-Z][a-zA-Z\s]*?)\s*wraps?\b/gi;
+    let wrapMatch;
+    while ((wrapMatch = wrapPattern.exec(normalizedMessage)) !== null) {
+        const quantity = parseQuantity(wrapMatch[1]);
+        const wrapType = wrapMatch[2] ? wrapMatch[2].trim() : '';
+        const itemKey = wrapType ? `${wrapType} wrap` : 'wrap';
+        addItems(quantity, itemKey);
+        total += quantity * 10.25;
     }
 
     if (orderItems.length === 0) {
@@ -652,6 +670,22 @@ function extractOrderItemsFromMessage(message) {
             const quantity = parseQuantity(genericBurgerMatch[1]);
             addItems(quantity, 'burger');
             total += quantity * MENU_ITEMS.burger.cheese.price;
+        }
+
+        const genericWrapPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*wraps?\b/gi;
+        let genericWrapMatch;
+        while ((genericWrapMatch = genericWrapPattern.exec(lowerMessage)) !== null) {
+            const quantity = parseQuantity(genericWrapMatch[1]);
+            addItems(quantity, 'wrap');
+            total += quantity * 10.25;
+        }
+
+        const genericWaterPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:bottles?|bottle)\s+of\s+water\b/gi;
+        let genericWaterMatch;
+        while ((genericWaterMatch = genericWaterPattern.exec(lowerMessage)) !== null) {
+            const quantity = parseQuantity(genericWaterMatch[1]);
+            addItems(quantity, 'sparkling water');
+            total += quantity * MENU_ITEMS.ordersPageMenu.Drinks.sparkling_water.price;
         }
     }
 

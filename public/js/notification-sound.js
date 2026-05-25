@@ -335,8 +335,3 @@ notificationSocket.on('handoffAlert', () => {
         notifyDesktop('AI has handed off the chat to staff.', 'LiveSupport - Handoff Alert');
     }
 });
-
-notificationSocket.on('playHandoffAudio', data => {
-    console.log('Playing handoff audio for conversation:', data.conversationId);
-    playHandoffAudio();
-});

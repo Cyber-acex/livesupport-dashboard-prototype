@@ -275,6 +275,11 @@ input:checked + .slider {
       border-bottom: 1px solid rgba(255,255,255,0.06);
       box-shadow: 0 6px 18px rgba(2,6,23,0.45);
     }
+
+    /* Staff name column uses white text for better visibility */
+    #adminUsers #usersList table td.staffNameCell {
+      color: #ffffff;
+    }
   </style>
   <script>
     // Apply theme from localStorage immediately to prevent flash
@@ -575,12 +580,17 @@ input:checked + .slider {
         <div id="tickets" class="settings-section">
           <h2>AI Settings</h2>
           <div class="form-group">
-            <label for="autopilotMode">Autopilot Mode</label>
-            <select id="autopilotMode">
-              <option value="assist">Assist Mode: AI suggests replies, Human sends</option>
-              <option value="auto">Auto Mode: AI replies automatically, Only escalates risky cases</option>
-              <option value="manual">Manual Mode: AI disabled</option>
-            </select>
+            <label>Autopilot Mode</label>
+            <div style="display: flex; gap: 12px; margin-top: 12px;">
+              <button id="autopilotMode-assist" class="autopilot-mode-btn" data-mode="assist" style="flex: 1; padding: 12px 16px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); color: #e2e8f0; font-weight: 600; cursor: pointer; transition: all 0.22s ease;">Assist</button>
+              <button id="autopilotMode-auto" class="autopilot-mode-btn" data-mode="auto" style="flex: 1; padding: 12px 16px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); color: #e2e8f0; font-weight: 600; cursor: pointer; transition: all 0.22s ease;">Auto</button>
+              <button id="autopilotMode-manual" class="autopilot-mode-btn" data-mode="manual" style="flex: 1; padding: 12px 16px; border-radius: 12px; border: 2px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.04); color: #e2e8f0; font-weight: 600; cursor: pointer; transition: all 0.22s ease;">Manual</button>
+            </div>
+          </div>
+          <div class="form-group" style="background: rgba(255,255,255,0.04); padding: 16px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.08);">
+            <strong id="autopilotModeTitle">Mode details</strong>
+            <p id="autopilotModeSummary" style="margin:10px 0 8px; color:#cbd5e1;">Select an AI mode to see how it behaves.</p>
+            <ul id="autopilotModeDetails" style="margin:0; padding-left:20px; color:#94a3b8;"></ul>
           </div>
           <div class="form-group">
             <label for="autoAssign">Auto Assign</label>
@@ -774,6 +784,97 @@ input:checked + .slider {
     console.log('Notification settings applied:', settings);
   }
 
+  function getAutopilotModeInfo(mode) {
+    const modes = {
+      assist: {
+        title: 'Assist Mode',
+        summary: 'AI generates suggested replies, while a human agent reviews and sends them.',
+        details: [
+          'AI suggests reply drafts for staff review',
+          'Human sends the final message',
+          'Best for supervised, high-accuracy support'
+        ]
+      },
+      auto: {
+        title: 'Auto Mode',
+        summary: 'AI replies automatically for routine conversations and escalates risky cases to staff.',
+        details: [
+          'AI sends replies automatically for normal requests',
+          'High-risk or refund conversations are escalated',
+          'Ideal for high-volume, low-risk support'
+        ]
+      },
+      manual: {
+        title: 'Manual Mode',
+        summary: 'AI is disabled. All responses are handled by staff manually.',
+        details: [
+          'No AI suggestions are generated',
+          'Agents compose and send every response',
+          'Perfect for full human control and compliance'
+        ]
+      }
+    };
+    return modes[mode] || modes.assist;
+  }
+
+  function applyAutopilotMode(mode) {
+    const info = getAutopilotModeInfo(mode);
+    const titleEl = document.getElementById('autopilotModeTitle');
+    const summaryEl = document.getElementById('autopilotModeSummary');
+    const detailsEl = document.getElementById('autopilotModeDetails');
+    if (titleEl) titleEl.textContent = info.title;
+    if (summaryEl) summaryEl.textContent = info.summary;
+    if (detailsEl) {
+      detailsEl.innerHTML = info.details.map(item => `<li>${item}</li>`).join('');
+    }
+    console.log('Applied autopilot mode settings for:', mode);
+  }
+
+  function initAutopilotModeSettings() {
+    const buttons = document.querySelectorAll('.autopilot-mode-btn');
+    if (buttons.length === 0) return;
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        
+        // Deselect all buttons
+        buttons.forEach(b => {
+          b.style.background = 'rgba(255,255,255,0.04)';
+          b.style.borderColor = 'rgba(255,255,255,0.2)';
+          b.style.color = '#e2e8f0';
+        });
+
+        // Select clicked button
+        btn.style.background = 'rgba(56, 189, 248, 0.2)';
+        btn.style.borderColor = 'rgba(56, 189, 248, 0.6)';
+        btn.style.color = '#ffffff';
+
+        // Store as hidden value for form submission
+        let hiddenInput = document.getElementById('autopilotModeValue');
+        if (!hiddenInput) {
+          hiddenInput = document.createElement('input');
+          hiddenInput.type = 'hidden';
+          hiddenInput.id = 'autopilotModeValue';
+          document.body.appendChild(hiddenInput);
+        }
+        hiddenInput.value = mode;
+
+        applyAutopilotMode(mode);
+      });
+    });
+
+    // Load current mode and highlight the active button
+    const currentMode = localStorage.getItem('autopilotMode') || 'assist';
+    const activeBtn = document.getElementById(`autopilotMode-${currentMode}`);
+    if (activeBtn) {
+      activeBtn.style.background = 'rgba(56, 189, 248, 0.2)';
+      activeBtn.style.borderColor = 'rgba(56, 189, 248, 0.6)';
+      activeBtn.style.color = '#ffffff';
+      document.getElementById('autopilotModeValue').value = currentMode;
+    }
+  }
+
   // Load theme and user settings
   async function loadSettings() {
     // Theme from localStorage
@@ -806,7 +907,17 @@ input:checked + .slider {
       document.getElementById('ticketAlert').checked = data.ticketAlert || false;
       document.getElementById('soundAlert').checked = data.soundAlert || false;
       document.getElementById('autoAssign').value = data.autoAssign || 'on';
-      document.getElementById('autopilotMode').value = data.autopilotMode || 'assist';
+      
+      // Set autopilot mode button state
+      const savedMode = data.autopilotMode || 'assist';
+      const modeBtn = document.getElementById(`autopilotMode-${savedMode}`);
+      if (modeBtn) {
+        modeBtn.style.background = 'rgba(56, 189, 248, 0.2)';
+        modeBtn.style.borderColor = 'rgba(56, 189, 248, 0.6)';
+        modeBtn.style.color = '#ffffff';
+        document.getElementById('autopilotModeValue').value = savedMode;
+      }
+      applyAutopilotMode(savedMode);
 
       // Apply notification settings on load
       applyNotificationSettings({
@@ -881,7 +992,7 @@ input:checked + .slider {
       msgAlert: document.getElementById('msgAlert').checked,
       ticketAlert: document.getElementById('ticketAlert').checked,
       soundAlert: document.getElementById('soundAlert').checked,
-      autopilotMode: document.getElementById('autopilotMode').value,
+      autopilotMode: document.getElementById('autopilotModeValue').value || 'assist',
       autoAssign: document.getElementById('autoAssign').value,
       theme: document.getElementById('theme').value,
       fontSize: document.getElementById('fontSizeRange')?.value || '100'
@@ -902,6 +1013,7 @@ input:checked + .slider {
         body: JSON.stringify(settings)
       });
 
+      localStorage.setItem('autopilotMode', settings.autopilotMode);
       // Apply notification settings effects
       applyNotificationSettings(settings);
 
@@ -949,6 +1061,7 @@ input:checked + .slider {
 
   // Populate settings on page load
   window.addEventListener('DOMContentLoaded', () => {
+    initAutopilotModeSettings();
     loadSettings();
     initSettingsSection();
   });

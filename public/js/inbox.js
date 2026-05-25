@@ -10,6 +10,11 @@ function applyInboxTheme() {
 applyInboxTheme();
 window.addEventListener('storage', function(e) {
     if (e.key === 'theme') applyInboxTheme();
+    if (e.key === 'autopilotMode') {
+        const mode = e.newValue || 'auto';
+        setInboxAutopilotMode(mode);
+        try { socket.emit('agent:updateAutopilotMode', { autopilotMode: mode }); } catch (err) { console.warn('Failed to emit updated autopilot mode', err); }
+    }
 });
 window.addEventListener('focus', applyInboxTheme);
 // Connect to Socket.IO server
@@ -17,11 +22,24 @@ const socket = io();
 
 // Register agent presence after Socket.IO connects
 socket.on('connect', () => {
-    fetch('/api/user').then(r => r.json()).then(u => {
+    Promise.all([
+        fetch('/api/user').then(r => r.json()).catch(() => ({})),
+        fetch('/api/settings').then(r => r.json()).catch(() => ({}))
+    ]).then(([u, settings]) => {
+        const autopilotMode = settings.autopilotMode || localStorage.getItem('autopilotMode') || 'auto';
+        setInboxAutopilotMode(autopilotMode);
         if (u && (u.id || u.name)) {
-            socket.emit('agent:register', { userId: u.id, name: u.name || u.role || 'Agent', role: u.role || 'agent' });
+            socket.emit('agent:register', {
+                userId: u.id,
+                name: u.name || u.role || 'Agent',
+                role: u.role || 'agent',
+                autopilotMode
+            });
         }
-    }).catch(() => {});
+    }).catch(() => {
+        const autopilotMode = localStorage.getItem('autopilotMode') || 'auto';
+        setInboxAutopilotMode(autopilotMode);
+    });
 });
 
 // Listen for staff-wide notifications
@@ -57,9 +75,20 @@ socket.on('stopTyping', (data) => {
     }
 });
 
+// Track conversations that have already played handoff audio
+const handoffAudioPlayed = new Set(JSON.parse(localStorage.getItem('handoffAudioPlayed') || '[]'));
+
+function saveHandoffAudioState() {
+    localStorage.setItem('handoffAudioPlayed', JSON.stringify(Array.from(handoffAudioPlayed)));
+}
+
 socket.on('playHandoffAudio', (data) => {
     console.log('Received playHandoffAudio event in inbox.js', data);
-    playHandoffAudio();
+    const conversationId = data && data.conversationId;
+    // Only play audio if we haven't already played it for this conversation
+    if (conversationId && !handoffAudioPlayed.has(String(conversationId))) {
+        playHandoffAudio(conversationId);
+    }
 });
 
 function updatePresenceUI(agents) {
@@ -75,12 +104,17 @@ function updatePresenceUI(agents) {
     });
 }
 
-function playHandoffAudio() {
+function playHandoffAudio(conversationId) {
     const audio = new Audio('/uploads/handoff.mp3');
     audio.volume = 0.7;
     audio.play().catch(error => {
         console.log('Failed to play handoff audio:', error);
     });
+    // Mark this conversation as having played handoff audio
+    if (conversationId) {
+        handoffAudioPlayed.add(String(conversationId));
+        saveHandoffAudioState();
+    }
 }
 
 let typingTimeout = null;
@@ -161,10 +195,30 @@ const sendButton = document.getElementById("staff-send");
 const voiceRecordBtn = document.getElementById("voice-record-btn");
 const aiSuggestionField = document.getElementById("ai-text");
 const aiUseButton = document.getElementById("ai-send");
+const aiSuggestionPanel = document.querySelector('.ai-suggestion');
 const fileInput = document.getElementById("internalFileInput");
 const addFileButton = document.getElementById("add-file");
 const selectedFileDisplay = document.getElementById("selected-file-display");
 const testHandoffAudioBtn = document.getElementById("test-handoff-audio-btn");
+let currentAutopilotMode = localStorage.getItem('autopilotMode') || 'auto';
+
+function setInboxAutopilotMode(mode) {
+    currentAutopilotMode = mode || 'auto';
+    localStorage.setItem('autopilotMode', currentAutopilotMode);
+    if (aiSuggestionField) {
+        aiSuggestionField.disabled = currentAutopilotMode === 'manual';
+        aiSuggestionField.value = currentAutopilotMode === 'manual'
+            ? 'AI suggestions are disabled in Manual Mode.'
+            : aiSuggestionField.value;
+    }
+    if (aiUseButton) {
+        aiUseButton.disabled = currentAutopilotMode === 'manual';
+    }
+    if (aiSuggestionPanel) {
+        aiSuggestionPanel.style.opacity = currentAutopilotMode === 'manual' ? '0.55' : '1';
+    }
+    console.log('Inbox autopilot mode applied:', currentAutopilotMode);
+}
 const editChatNameBtn = document.getElementById('editChatNameBtn');
 const saveChatNameBtn = document.getElementById('saveChatNameBtn');
 const cancelChatNameBtn = document.getElementById('cancelChatNameBtn');
@@ -399,7 +453,14 @@ function updateConfidenceLabel() {
 
 async function fetchAISuggestion(conversationId) {
     if (!conversationId || !aiSuggestionField) return;
+    if (currentAutopilotMode === 'manual') {
+        aiSuggestionField.value = 'AI suggestions are disabled in Manual Mode.';
+        if (aiUseButton) aiUseButton.disabled = true;
+        return;
+    }
 
+    if (aiUseButton) aiUseButton.disabled = false;
+    aiSuggestionField.disabled = false;
     aiSuggestionField.value = "Listening for the latest customer message...";
     updateConfidenceLabel();
 
@@ -448,7 +509,7 @@ if (placeOrderBtn) {
 
 if (testHandoffAudioBtn) {
     testHandoffAudioBtn.addEventListener("click", () => {
-        playHandoffAudio();
+        playHandoffAudio(currentConversationId);
         console.log("Local handoff audio test triggered");
     });
 }

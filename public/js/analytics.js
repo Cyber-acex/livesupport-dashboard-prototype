@@ -224,8 +224,6 @@ document.addEventListener('DOMContentLoaded', () => {
             ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
             ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
             ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
             ctx.createRadialGradient(200, 200, 50, 200, 200, 200)
         ];
         colors[0].addColorStop(0, '#00bcd4'); colors[0].addColorStop(1, '#006064');
@@ -233,13 +231,11 @@ document.addEventListener('DOMContentLoaded', () => {
         colors[2].addColorStop(0, '#2196f3'); colors[2].addColorStop(1, '#0d47a1');
         colors[3].addColorStop(0, '#f44336'); colors[3].addColorStop(1, '#b71c1c');
         colors[4].addColorStop(0, '#9c27b0'); colors[4].addColorStop(1, '#4a148c');
-        colors[5].addColorStop(0, '#5ce460'); colors[5].addColorStop(1, '#1b5e20');
-        colors[6].addColorStop(0, '#ff9800'); colors[6].addColorStop(1, '#e65100');
 
         return new Chart(ctx, {
             type: 'pie',
             data: {
-                labels: ['Chats', 'Escalated Chats', 'Tickets', 'Escalated Tickets', 'Receipts', 'Resolved Chats'],
+                labels: ['Chats', 'Escalated Chats', 'Tickets', 'Escalated Tickets', 'Receipts'],
                 datasets: [{
                     label: 'Overview',
                     data: [
@@ -247,18 +243,21 @@ document.addEventListener('DOMContentLoaded', () => {
                         data.numEscalatedChats,
                         data.numTickets,
                         data.numEscalatedTickets,
-                        data.numReceipts,
-                        data.numResolvedChats
+                        data.numReceipts
                     ],
                     backgroundColor: colors,
                     borderColor: [
-                        '#0097a7', '#ff9800', '#1976d2', '#d32f2f', '#7b1fa2', '#5CE460', '#ef6c00'
+                        '#0097a7', '#ff9800', '#1976d2', '#d32f2f', '#7b1fa2'
                     ],
                     borderWidth: 3
                 }]
             },
             options: {
                 responsive: true,
+                interaction: {
+                    mode: 'nearest',
+                    intersect: false
+                },
                 plugins: {
                     legend: {
                         display: true,
@@ -273,11 +272,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                     },
                     tooltip: {
+                        intersect: false,
+                        position: 'nearest',
                         callbacks: {
                             label: function(context) {
                                 const label = context.label || '';
-                                const value = context.raw;
-                                return `${label}: ${value}`;
+                                const value = Number(context.raw || 0);
+                                const sum = context.dataset.data.reduce((total, item) => total + Number(item || 0), 0);
+                                const percent = sum ? ((value / sum) * 100).toFixed(1) : '0.0';
+                                return `${label}: ${value} (${percent}%)`;
                             }
                         }
                     }
@@ -447,17 +450,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    const chart5Labels = ['Chats', 'Escalated Chats', 'Tickets', 'Escalated Tickets', 'Receipts'];
+
+    function updateChart5Summary(data) {
+        if (!data) return;
+        const updates = [
+            { id: 'summaryChats', value: data.numChats },
+            { id: 'summaryEscalatedChats', value: data.numEscalatedChats },
+            { id: 'summaryTickets', value: data.numTickets },
+            { id: 'summaryEscalatedTickets', value: data.numEscalatedTickets },
+            { id: 'summaryReceipts', value: data.numReceipts }
+        ];
+        updates.forEach(item => {
+            const el = document.getElementById(item.id);
+            if (!el) return;
+            el.textContent = typeof item.value === 'number' ? item.value : '—';
+        });
+    }
+
     function updateAnalyticsChart(chart, data) {
         if (!chart) return;
+        chart.data.labels = chart5Labels;
         chart.data.datasets[0].data = [
             data.numChats,
             data.numEscalatedChats,
             data.numTickets,
             data.numEscalatedTickets,
-            data.numReceipts,
-            data.numResolvedChats
+            data.numReceipts
         ];
         chart.update();
+        updateChart5Summary(data);
     }
 
     function refreshAnalyticsChart() {
@@ -480,6 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else {
                     updateAnalyticsChart(analyticsChart, data);
                 }
+                updateChart5Summary(data);
                 loadKPIs();
             })
             .catch(() => {
@@ -489,8 +512,14 @@ document.addEventListener('DOMContentLoaded', () => {
                         numEscalatedChats: 8,
                         numTickets: 12,
                         numEscalatedTickets: 3,
-                        numReceipts: 20,
-                        numResolvedChats: 15
+                        numReceipts: 20
+                    });
+                    updateChart5Summary({
+                        numChats: 10,
+                        numEscalatedChats: 8,
+                        numTickets: 12,
+                        numEscalatedTickets: 3,
+                        numReceipts: 20
                     });
                 }
                 loadKPIs();
@@ -504,8 +533,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 numEscalatedChats: 0,
                 numTickets: 0,
                 numEscalatedTickets: 0,
-                numReceipts: 0,
-                numResolvedChats: 0
+                numReceipts: 0
+            });
+            updateChart5Summary({
+                numChats: 0,
+                numEscalatedChats: 0,
+                numTickets: 0,
+                numEscalatedTickets: 0,
+                numReceipts: 0
             });
         }
 
@@ -673,7 +708,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         pointBackgroundColor: '#ffffff',
                         pointBorderColor: '#3b82f6',
                         pointRadius: 5,
-                        pointHitRadius: 14,
+                        hitRadius: 24,
+                        pointHitRadius: 24,
                         pointHoverRadius: 10,
                         pointHoverBorderWidth: 3,
                         pointHoverBackgroundColor: '#3b82f6',
@@ -743,7 +779,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 interaction: {
                     mode: 'index',
                     intersect: false,
-                    axis: 'x'
+                    axis: 'x',
+                    radius: 30
                 },
                 hover: {
                     mode: 'index',

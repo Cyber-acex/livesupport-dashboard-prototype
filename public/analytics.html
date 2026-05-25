@@ -208,6 +208,34 @@ fetch("/api/user")
       max-width: 420px;
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
     }
+    .chart-summary-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: space-between;
+      margin-top: 20px;
+    }
+    .chart-summary-item {
+      flex: 1 1 150px;
+      min-width: 140px;
+      background: #f8fbff;
+      border-radius: 18px;
+      padding: 16px 18px;
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+      text-align: center;
+    }
+    .chart-summary-item h4 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+      color: #334155;
+      font-weight: 600;
+    }
+    .chart-summary-item p {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #0f172a;
+    }
     .main { color: #2c2c2c; }
 
     /* Responsive chart layout */
@@ -743,6 +771,35 @@ fetch("/api/user")
       <h3>Tickets Created by Day, Week, Month</h3>
       <canvas id="ticketBarChart" width="800" height="340"></canvas>
       <div id="ticketBarHoverDetails" class="chart-hover-details">Hover over a bar to see details</div>
+    </div>
+  </div>
+  <div class="chart-container chart-fullwidth fixed-chart-container">
+    <div class="chart-item bar-chart-card">
+      <h3>Chats, Escalations, Tickets & Receipts</h3>
+      <canvas id="chart5" width="800" height="340"></canvas>
+      <div class="chart-hover-details">Overview of total chats, escalations, tickets and receipts</div>
+      <div id="chart5Summary" class="chart-summary-row">
+        <div class="chart-summary-item">
+          <h4>Chats</h4>
+          <p id="summaryChats">—</p>
+        </div>
+        <div class="chart-summary-item">
+          <h4>Escalated Chats</h4>
+          <p id="summaryEscalatedChats">—</p>
+        </div>
+        <div class="chart-summary-item">
+          <h4>Tickets</h4>
+          <p id="summaryTickets">—</p>
+        </div>
+        <div class="chart-summary-item">
+          <h4>Escalated Tickets</h4>
+          <p id="summaryEscalatedTickets">—</p>
+        </div>
+        <div class="chart-summary-item">
+          <h4>Receipts</h4>
+          <p id="summaryReceipts">—</p>
+        </div>
+      </div>
     </div>
   </div>
   <div class="chart-container chart-fullwidth fixed-chart-container">

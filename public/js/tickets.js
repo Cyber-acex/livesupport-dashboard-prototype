@@ -25,9 +25,10 @@ function initTickets() {
         }
     }
 
-    function showTicketNotification(message) {
+    function showTicketNotification(message, variant = 'success') {
         if (!ticketNotificationBar || !ticketNotificationText) return;
         ticketNotificationText.textContent = message;
+        ticketNotificationBar.style.background = variant === 'error' ? '#ef4444' : variant === 'warning' ? '#f59e0b' : '#10b981';
         ticketNotificationBar.style.display = "block";
         clearTimeout(showTicketNotification.timeout);
         showTicketNotification.timeout = setTimeout(() => {
@@ -44,6 +45,7 @@ function initTickets() {
         const statusText = ticket.status ? ticket.status : 'Open';
         const assigneeText = ticket.assignee ? `Assigned to: ${ticket.assignee}` : 'Unassigned';
         div.innerHTML = `
+            <div class="ticket-escalated-banner" style="display: ${ticket.escalated ? 'block' : 'none'}; background:#fee2e2; color:#991b1c; border-left:4px solid #b91c1c; padding:12px 16px; margin-bottom:12px; border-radius:12px; font-weight:700; text-align:center; letter-spacing:0.04em; ">ESCALATED</div>
             <div class="ticket-header" style="display: flex; justify-content: space-between; align-items: center;">
                 <div style="display:flex;align-items:center;gap:10px">
                   <h4 style="margin:0">Ticket #${ticket.id} (${new Date(ticket.created_at).toLocaleString()})</h4>
@@ -51,7 +53,7 @@ function initTickets() {
                   <span class="assignee-badge" title="${assigneeText}" style="font-size:12px;padding:6px 8px;border-radius:999px;background:#dbeafe;color:#1e40af">${assigneeText}</span>
                 </div>
                 <div>
-                    <button class="escalateBtn" style="background: red; color: white; border: none; padding: 5px 10px; margin-right: 5px;">Escalate</button>
+                    <button class="escalateBtn" ${ticket.escalated ? 'disabled title="Already escalated"' : ''} style="background: ${ticket.escalated ? '#9f1239' : 'red'}; color: white; border: none; padding: 5px 10px; margin-right: 5px;">${ticket.escalated ? 'Escalated' : 'Escalate'}</button>
                     <button class="printTicketBtn" style="background: blue; color: white; border: none; padding: 5px 10px;">Print</button>
                     <button class="deleteTicketBtn" style="background: darkred; color: white; border: none; padding: 5px 10px; margin-left: 5px;">Delete</button>
                 </div>
@@ -60,12 +62,31 @@ function initTickets() {
             <pre>${ticket.content}</pre>
         `;
 
-        div.querySelector(".escalateBtn").onclick = async () => {
-            await fetch("/api/escalate-ticket", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ticket_id: ticket.id })
-            });
+        const escalateBtn = div.querySelector('.escalateBtn');
+        escalateBtn.onclick = async () => {
+            if (ticket.escalated) return;
+            try {
+                const response = await fetch("/api/escalate-ticket", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ticket_id: ticket.id })
+                });
+                const result = await response.json();
+                if (!response.ok) {
+                    showTicketNotification(result.error || 'Failed to escalate ticket.', 'error');
+                    return;
+                }
+                ticket.escalated = true;
+                const banner = div.querySelector('.ticket-escalated-banner');
+                if (banner) banner.style.display = 'block';
+                escalateBtn.disabled = true;
+                escalateBtn.textContent = 'Escalated';
+                escalateBtn.style.background = '#9f1239';
+                showTicketNotification(`Ticket #${ticket.id} escalated.`, 'warning');
+            } catch (error) {
+                console.error('Escalate ticket error:', error);
+                showTicketNotification('Failed to escalate ticket.', 'error');
+            }
         };
 
         div.querySelector(".printTicketBtn").onclick = () => {
@@ -124,13 +145,27 @@ function initTickets() {
     socket.on("ticketEscalated", (data) => {
         const ticket = ticketsData.find(t => t.id === data.ticket_id);
         if (ticket) {
-            ticket.escalated = 1;
+            ticket.escalated = true;
             const ticketElement = document.getElementById(`ticket-${ticket.id}`);
             if (ticketElement) {
-                const escalatedLabel = ticketElement.querySelector(".escalated-label");
-                if (escalatedLabel) escalatedLabel.style.display = "block";
+                const escalatedBanner = ticketElement.querySelector('.ticket-escalated-banner');
+                const escalatedLabel = ticketElement.querySelector('.escalated-label');
+                const escalateBtn = ticketElement.querySelector('.escalateBtn');
+                if (escalatedBanner) escalatedBanner.style.display = 'block';
+                if (escalatedLabel) escalatedLabel.style.display = 'block';
+                if (escalateBtn) {
+                    escalateBtn.disabled = true;
+                    escalateBtn.textContent = 'Escalated';
+                    escalateBtn.style.background = '#9f1239';
+                }
             }
-            showTicketNotification(`Ticket #${data.ticket_id} escalated!`);
+        }
+    });
+
+    socket.on('staffNotification', (data) => {
+        if (data && data.message) {
+            const variant = data.type === 'ticket-escalation' ? 'error' : 'success';
+            showTicketNotification(data.message, variant);
         }
     });
 

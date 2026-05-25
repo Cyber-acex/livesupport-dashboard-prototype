@@ -271,8 +271,21 @@ model Ticket {
   sla_due       DateTime? @db.Timestamp(0)
   escalated     Boolean? @db.Boolean
   created_at    DateTime  @default(now()) @db.Timestamp(0)
+  escalatedTicket EscalatedTicket?
 
   @@map("tickets")
+}
+
+model EscalatedTicket {
+  id            Int      @id @default(autoincrement())
+  ticket_id     Int      @unique
+  ticket        Ticket   @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  escalated_at  DateTime @default(now()) @db.Timestamp(0)
+  escalated_by  String?  @db.VarChar(255)
+  reason        String?  @db.Text
+  resolved_at   DateTime? @db.Timestamp(0)
+
+  @@map("escalated_tickets")
 }
 
 model Food {

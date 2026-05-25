@@ -861,6 +861,7 @@
         <div style="display:flex;align-items:flex-start;gap:12px;">
           <input type="checkbox" class="ticket-checkbox" data-id="${t.id}" style="margin-top:6px;" />
           <div style="flex:1">
+            <div class="ticket-escalated-banner" style="display:${escalated ? 'block' : 'none'}; background:#fee2e2; color:#991b1c; border-left:4px solid #b91c1c; padding:12px 14px; margin-bottom:12px; border-radius:12px; font-weight:800; text-transform:uppercase; letter-spacing:0.05em;">Escalated</div>
             <div class="ticket-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
               <div style="flex:1">
                 <div style="display:flex;align-items:center;gap:10px">
@@ -878,7 +879,7 @@
                 </div>
                 <div style="display:flex;gap:8px;align-items:center">
                   <button class="viewBtn" data-id="${t.id}" style="padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;background:#fff">View</button>
-                  <button class="escalateBtn" data-id="${t.id}" style="padding:6px 10px;border-radius:8px;background:#ef4444;color:#fff;border:none">Escalate</button>
+                  <button class="escalateBtn" data-id="${t.id}" style="padding:6px 10px;border-radius:8px;background:${escalated ? '#9ca3af' : '#ef4444'};color:#fff;border:none" ${escalated ? 'disabled' : ''}>${escalated ? 'Escalated' : 'Escalate'}</button>
                   <button class="resolveBtn" data-id="${t.id}" style="padding:6px 10px;border-radius:8px;background:#06b6d4;color:#fff;border:none">Resolved</button>
                   <button class="printTicketBtn" data-id="${t.id}" style="padding:6px 10px;border-radius:8px;background:#10b981;color:#fff;border:none">Print</button>
                 </div>
@@ -945,10 +946,30 @@
         viewModal.style.display = 'flex';
         viewModal.classList.add('active');
       });
-      card.querySelector('.escalateBtn').addEventListener('click', async ()=>{
-        await fetch('/api/escalate-ticket', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ticket_id: t.id})});
-        await fetchTickets();
-      });
+      const escalateBtn = card.querySelector('.escalateBtn');
+      if (escalateBtn) {
+        escalateBtn.addEventListener('click', async ()=>{
+          if (escalated) return;
+          try {
+            const res = await fetch('/api/escalate-ticket', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ticket_id: t.id })});
+            if (!res.ok) {
+              const body = await res.json().catch(()=>({ error:'Escalation failed' }));
+              throw new Error(body.error || 'Escalation failed');
+            }
+            escalateBtn.disabled = true;
+            escalateBtn.textContent = 'Escalated';
+            escalateBtn.style.background = '#9ca3af';
+            const banner = card.querySelector('.ticket-escalated-banner');
+            if (banner) banner.style.display = 'block';
+            notify(`Ticket #${t.id} escalated`);
+            broadcastStaffNotification(`Ticket #${t.id} escalated`);
+            await fetchTickets();
+          } catch (err) {
+            console.error('Escalate ticket error', err);
+            alert('Failed to escalate ticket. Please try again.');
+          }
+        });
+      }
       // Resolve button: mark ticket as Resolved
       const resolveBtnEl = card.querySelector('.resolveBtn');
       if(resolveBtnEl){
@@ -966,6 +987,14 @@
               broadcastStaffNotification(note);
             } else if(json && json.error){
               alert('Resolve failed: ' + json.error);
+            }
+            const banner = card.querySelector('.ticket-escalated-banner');
+            if (banner) banner.style.display = 'none';
+            const escalateBtn = card.querySelector('.escalateBtn');
+            if (escalateBtn) {
+              escalateBtn.disabled = false;
+              escalateBtn.textContent = 'Escalate';
+              escalateBtn.style.background = '#ef4444';
             }
             await fetchTickets();
           }catch(e){ console.error('resolve failed', e); }
@@ -991,10 +1020,20 @@
   // bulk actions
   bulkEscalateBtn.addEventListener('click', async ()=>{
     if(visibleTicketIds.size===0){ alert('Select tickets first'); return; }
+    if(!confirm('Escalate selected tickets? This will mark them as escalated.')) return;
     const ids = Array.from(visibleTicketIds);
-    await fetch('/api/escalate-ticket', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ticket_ids: ids })});
-    notify('Escalation requested for selected tickets');
-    await fetchTickets();
+    try {
+      const res = await fetch('/api/escalate-ticket', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ ticket_ids: ids })});
+      if(!res.ok){
+        const body = await res.json().catch(()=>({ error:'Escalation failed' }));
+        throw new Error(body.error || 'Escalation failed');
+      }
+      notify('Escalation requested for selected tickets');
+      await fetchTickets();
+    } catch(e) {
+      console.error(e);
+      alert('Failed to escalate selected tickets. Please try again.');
+    }
   });
   bulkDeleteBtn.addEventListener('click', async ()=>{
     if(!confirm('Delete selected tickets?')) return;

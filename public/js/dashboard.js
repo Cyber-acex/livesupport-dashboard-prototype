@@ -709,8 +709,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: true },
-        hover: { mode: 'nearest', intersect: true },
+        interaction: { mode: 'nearest', intersect: false },
+        hover: { mode: 'nearest', intersect: false },
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -751,7 +751,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     const chart = new Chart(ctx, cfg);
     
     canvas.addEventListener('mousemove', (event) => {
-      const elements = chart.getElementsAtEventForMode(event, 'nearest', {intersect:true}, true);
+      const elements = chart.getElementsAtEventForMode(event, 'nearest', {intersect:false}, true);
       if(elements && elements.length > 0) {
         const idx = elements[0].index;
         const label = chart.data.labels[idx];
