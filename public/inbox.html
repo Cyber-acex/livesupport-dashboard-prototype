@@ -116,9 +116,8 @@
         </div>
         <!-- CONTENT -->
 <section class="content">
-    <div class="page-switcher" role="tablist" aria-label="Inbox and Instagram tabs">
-        <button class="page-tab active" data-page="inbox" type="button" onclick="switchInboxSection('inbox')" aria-selected="true">Inbox</button>
-        <button class="page-tab" data-page="instagram" type="button" onclick="switchInboxSection('instagram')" aria-selected="false">Instagram</button>
+    <div class="page-switcher" role="tablist" aria-label="Inbox tabs">
+      <button class="page-tab active" data-page="inbox" type="button" onclick="switchInboxSection('inbox')" aria-selected="true">Inbox</button>
     </div>
     <h1 id="pageTitle">Inbox</h1>
     <div id="inboxSection">
@@ -132,7 +131,7 @@
                 </div>
             </div>
             <button class="filter active" data-filter="all"><span class="filter-icon">🆕</span><span>New</span></button>
-            <button class="filter" data-filter="instagram"><span class="filter-icon">📷</span><span>Instagram</span></button>
+            
             <button class="filter" data-filter="receipts"><span class="filter-icon">🧾</span><span>Receipts</span></button>
             <button class="filter" data-filter="escalated"><span class="filter-icon">🚨</span><span>Escalated</span></button>
             <button class="filter" data-filter="resolved"><span class="filter-icon">✅</span><span>Resolved</span></button>
@@ -150,12 +149,12 @@
         </div>
     </div>
     <div class="conversation">
-        <div class="avatar">C1</div>
-        <div class="conv-meta">
-            <div class="name">Customer 1</div>
-            <div class="preview">I want a refund</div>
-            <div class="meta">Instagram • 5m ago</div>
-        </div>
+      <div class="avatar">C1</div>
+      <div class="conv-meta">
+        <div class="name">Customer 1</div>
+        <div class="preview">I want a refund</div>
+        <div class="meta">Social • 5m ago</div>
+      </div>
     </div>
 </div>
         <!-- CHAT PANEL -->
@@ -257,15 +256,7 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
 </div>
     </div>
 </div>
-    <div id="instagramSection" style="display:none;">
-        <div class="iframe-wrapper">
-            <iframe id="instagramFrame" src="" title="Instagram Inbox" loading="lazy"></iframe>
-            <div class="iframe-fallback">
-                <p>Loading Instagram inbox...</p>
-                <p>If the iframe does not load, <a href="/instagram.html" target="_blank" rel="noopener">open Instagram page</a>.</p>
-            </div>
-        </div>
-    </div>
+    
 </section>
     </div>
 </div>
@@ -1086,33 +1077,19 @@ if (quickEscalateBtn) quickEscalateBtn.onclick = escalateCurrentChat;
 </div>
 <script>
 function switchInboxSection(section) {
-    const inboxSection = document.getElementById('inboxSection');
-    const instagramSection = document.getElementById('instagramSection');
-    const pageTitle = document.getElementById('pageTitle');
-    const buttons = document.querySelectorAll('.page-switcher .page-tab');
+  const inboxSection = document.getElementById('inboxSection');
+  const pageTitle = document.getElementById('pageTitle');
+  const buttons = document.querySelectorAll('.page-switcher .page-tab');
 
-    buttons.forEach(btn => {
-        const isActive = btn.dataset.page === section;
-        btn.classList.toggle('active', isActive);
-        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
-    });
+  buttons.forEach(btn => {
+    const isActive = btn.dataset.page === section;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
 
-    if (section === 'instagram') {
-        pageTitle.textContent = 'Instagram';
-        if (inboxSection) inboxSection.style.display = 'none';
-        if (instagramSection) {
-            instagramSection.style.display = 'block';
-            const frame = document.getElementById('instagramFrame');
-            if (frame && !frame.dataset.loaded) {
-                frame.src = '/instagram.html';
-                frame.dataset.loaded = 'true';
-            }
-        }
-    } else {
-        pageTitle.textContent = 'Inbox';
-        if (inboxSection) inboxSection.style.display = 'block';
-        if (instagramSection) instagramSection.style.display = 'none';
-    }
+  // Only Inbox view is supported on this page now
+  pageTitle.textContent = 'Inbox';
+  if (inboxSection) inboxSection.style.display = 'block';
 }
 
 window.addEventListener('DOMContentLoaded', () => {

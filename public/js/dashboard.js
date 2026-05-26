@@ -619,15 +619,17 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
       if (!loginTimeEl || !sessionDurationEl || !lastActivityEl) return;
 
-      // Get or set login time
+      // Get login time
       let loginTime = currentSessionInfo.loginTime || localStorage.getItem('loginTime');
+      const now = new Date();
       if (!loginTime) {
-        loginTime = new Date().toISOString();
-        localStorage.setItem('loginTime', loginTime);
+        loginTimeEl.textContent = '--:--';
+        sessionDurationEl.textContent = '0h 0m';
+        lastActivityEl.textContent = '--:--';
+        return;
       }
 
       const loginDate = new Date(loginTime);
-      const now = new Date();
 
       // Format login time
       const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: false };

@@ -286,15 +286,6 @@ function computeSlaDue(assignee, ticketType) {
 // Use `npm run migrate` or `npx prisma db push` to apply the schema defined in `prisma/schema.prisma`.
 console.log('Runtime SQL/DDL blocks in server.js are disabled. Apply Prisma migrations to create tables.');
 
-async function storeInstagramToken(token, expiresInSeconds = null) {
-    const expiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
-    try {
-        await prisma.instagramToken.create({ data: { token, expires_at: expiresAt } });
-    } catch (err) {
-        console.error('Error storing Instagram token:', err);
-    }
-}
-
 async function storeWhatsAppToken(token, expiresInSeconds = null) {
     const expiresAt = expiresInSeconds ? new Date(Date.now() + expiresInSeconds * 1000) : null;
     try {
@@ -443,16 +434,7 @@ if (isPg) {
         );
     `, (err) => { if (err) console.log('Error creating messages table (pg):', err); });
 
-    db.query(`
-        CREATE TABLE IF NOT EXISTS instagram_conversations (
-            id SERIAL PRIMARY KEY,
-            conversation_id INTEGER UNIQUE,
-            ig_id VARCHAR(255),
-            ig_username VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-        );
-    `, (err) => { if (err) console.log('Error creating instagram_conversations table (pg):', err); });
+    
 
     db.query(`
         CREATE TABLE IF NOT EXISTS replies (
@@ -527,16 +509,7 @@ if (isPg) {
         )
     `, (err) => { if (err) console.log('Error creating messages table:', err); });
 
-    db.query(`
-        CREATE TABLE IF NOT EXISTS instagram_conversations (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            conversation_id INT UNIQUE,
-            ig_id VARCHAR(255),
-            ig_username VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `, (err) => { if (err) console.log('Error creating instagram_conversations table:', err); });
+    
 
     db.query(`
         CREATE TABLE IF NOT EXISTS replies (
@@ -593,6 +566,16 @@ app.use(session({
     resave: false,
     saveUninitialized: true
 }));
+
+// Update lastActivity timestamp for authenticated sessions on each request
+app.use((req, res, next) => {
+    try {
+        if (req.session && req.session.user) {
+            req.session.lastActivity = new Date().toISOString();
+        }
+    } catch (e) {}
+    next();
+});
 
 // Middleware to protect HTML pages
 app.use((req, res, next) => {
@@ -701,6 +684,8 @@ app.post("/login", (req, res) => {
             // Normalize role to lowercase to avoid case-sensitivity issues (e.g., 'Admin' vs 'admin')
             try { result[0].role = (result[0].role || '').toString().toLowerCase(); } catch(e) {}
             req.session.user = result[0];
+                // record login time for session info
+                try { req.session.loginTime = new Date().toISOString(); } catch (e) {}
                 req.session.userId = result[0].id;
                 // Track this session id for the logged-in user to allow force-logout
                 try {
@@ -713,7 +698,8 @@ app.post("/login", (req, res) => {
                 } catch (e) {
                     console.error('Failed to track user session', e);
                 }
-            res.redirect("/dashboard");
+            // Redirect to dashboard and indicate a fresh login so client can show welcome animation
+            res.redirect("/dashboard?welcome=1");
         } else {
             res.redirect("/login.html?error=invalid");
         }
@@ -768,6 +754,8 @@ app.post('/auth/google', async (req, res) => {
             const finishLogin = (user) => {
                 try {
                     req.session.user = user;
+                    // record login time for session info
+                    try { req.session.loginTime = new Date().toISOString(); } catch (e) {}
                     req.session.userId = user.id;
                     const sid = req.sessionID;
                     const uid = String(user.id);
@@ -776,7 +764,8 @@ app.post('/auth/google', async (req, res) => {
                     userSessions.set(uid, set);
                     try { io.emit('admin:users:changed', { action: 'login', id: uid }); } catch (e) { console.error('Emit admin users changed error', e); }
                 } catch (e) { console.error('Failed to finalize session for Google user', e); }
-                return res.json({ success: true, redirect: '/dashboard' });
+                // Tell client to redirect to dashboard with welcome flag for animation
+                return res.json({ success: true, redirect: '/dashboard?welcome=1' });
             };
 
             if (rows && rows.length > 0) {
@@ -1294,6 +1283,16 @@ app.get("/api/user", (req, res) => {
     });
 });
 
+// Return minimal session info for UI (login time and last activity)
+app.get('/api/session', (req, res) => {
+    if (!req.session || !req.session.user) return res.status(401).json({ error: 'not_logged_in' });
+    try {
+        return res.json({ loginTime: req.session.loginTime || null, lastActivity: req.session.lastActivity || null });
+    } catch (e) {
+        return res.json({ loginTime: null, lastActivity: null });
+    }
+});
+
 // Admin middleware
 function isAdmin(req, res, next) {
     if (req.session && req.session.user && req.session.user.role === 'admin') return next();
@@ -1737,7 +1736,6 @@ app.delete('/api/conversations', isAuthenticated, (req, res) => {
     const tables = [
         'messages',
         'replies',
-        'instagram_conversations',
         'ai_messages',
         'staff_messages',
         'ai replies',
@@ -1842,37 +1840,7 @@ app.get('/api/recent-tickets', (req, res) => {
         });
     });
 
-// New endpoint: Instagram conversations (joined info)
-app.get('/api/instagram/conversations', (req, res) => {
-    const sql = `
-        SELECT ic.conversation_id AS id,
-            ic.ig_id,
-            ic.ig_username,
-            c.phone,
-            c.name,
-            c.platform,
-            COALESCE(
-                (SELECT message FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
-                (SELECT message FROM replies WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1)
-            ) AS last_message,
-            COALESCE(
-                (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1),
-                (SELECT created_at FROM replies WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1)
-            ) AS last_activity_at,
-            (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = c.id AND m2.sender <> 'sent') AS unread_count,
-            c.created_at
-        FROM instagram_conversations ic
-        JOIN conversations c ON c.id = ic.conversation_id
-        ORDER BY last_activity_at DESC, c.created_at DESC
-    `;
-    db.query(sql, (err, rows) => {
-        if (err) {
-            console.error('/api/instagram/conversations db error', err);
-            return res.status(500).json({ error: 'DB error' });
-        }
-        res.json(rows);
-    });
-});
+// Instagram conversations API removed
 
 app.get("/api/messages/:id", (req, res) => {
     const id = req.params.id;
@@ -2026,242 +1994,7 @@ function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
     });
 }
 
-// ---------------------------
-// Instagram Messaging Integration
-// Requires env: INSTAGRAM_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, INSTAGRAM_VERIFY_TOKEN
-// ---------------------------
-const IG_ACCESS_TOKEN = process.env.INSTAGRAM_ACCESS_TOKEN || null;
-const IG_ACCOUNT_ID = process.env.INSTAGRAM_ACCOUNT_ID || null;
-const IG_VERIFY_TOKEN = process.env.INSTAGRAM_VERIFY_TOKEN || 'livesupport_verify';
-
-// Webhook verification endpoint for Meta (Instagram)
-app.get('/webhook/instagram', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-    if (mode && token) {
-        if (mode === 'subscribe' && token === IG_VERIFY_TOKEN) {
-            console.log('✅ Instagram webhook verified');
-            return res.status(200).send(challenge);
-        } else {
-            return res.sendStatus(403);
-        }
-    }
-    res.sendStatus(400);
-});
-
-// Webhook receiver for Instagram messaging events
-app.post('/webhook/instagram', (req, res) => {
-    const body = req.body;
-    if (body && body.object) {
-        // Example structure: body.entry[].messaging[] or body.entry[].changes
-        console.log('📷 Instagram webhook received:', JSON.stringify(body, null, 2).substring(0, 500));
-        try {
-            const processInstagramMessage = (value, m) => {
-                const senderId = m.from?.id || m.from || m.sender?.id || m.sender || value?.sender_id || null;
-                const text = m.message?.text || m.message?.body || (m.text && m.text.body) || m.text || null;
-                if (!senderId) {
-                    console.log('⚠️ Instagram message skipped - no senderId. Message:', JSON.stringify(m).substring(0, 200));
-                    return;
-                }
-                console.log('✅ Processing Instagram message from', senderId, ':', text?.substring(0, 50));
-                const messageText = text || '[non-text]';
-                const timestamp = m.timestamp ? new Date(Number(m.timestamp) * (String(m.timestamp).length === 10 ? 1000 : 1)).toISOString() : new Date().toISOString();
-
-                const upsertInstagramLink = (convId) => {
-                    db.query('SELECT id FROM instagram_conversations WHERE conversation_id = ? LIMIT 1', [convId], (icErr, icRows) => {
-                        if (icErr) return console.error('instagram_conversations lookup error', icErr);
-                        if (!icRows || icRows.length === 0) {
-                            db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [convId, senderId, value?.from?.username || null], (insErr) => {
-                                if (insErr) console.error('Error inserting instagram_conversations link', insErr);
-                            });
-                        }
-                    });
-                };
-
-                const insertMessage = (conversationId) => {
-                    db.query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, ?)', [conversationId, 'instagram', messageText, timestamp], (iErr) => {
-                        if (iErr) return console.error('Error inserting IG message', iErr);
-                        io.emit('newMessage', { conversation_id: conversationId, sender: 'instagram', message: messageText, created_at: timestamp });
-                        checkAndCreateTicket(conversationId, senderId, text);
-                    });
-                };
-
-                db.query('SELECT id FROM conversations WHERE phone = ? OR name = ? LIMIT 1', [senderId, senderId], (err, rows) => {
-                    if (err) return console.error('Instagram webhook DB lookup error', err);
-                    if (rows && rows.length > 0) {
-                        const convId = rows[0].id;
-                        console.log('💬 Found existing Instagram conversation:', convId);
-                        insertMessage(convId);
-                        upsertInstagramLink(convId);
-                    } else {
-                        console.log('📝 Creating new Instagram conversation for sender:', senderId);
-                        const insertSql = isPg
-                            ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
-                            : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
-                        db.query(insertSql, [senderId, senderId, 'instagram'], (cErr, result) => {
-                            if (cErr) return console.error('Error creating IG conversation', cErr);
-                            const newId = isPg ? (result?.rows?.[0]?.id || result?.[0]?.id) : result.insertId;
-                            if (!newId) return console.error('Error determining new conversation id for IG conversation');
-                            console.log('✅ Created new Instagram conversation with ID:', newId);
-                            insertMessage(newId);
-                            upsertInstagramLink(newId);
-                        });
-                    }
-                });
-            };
-
-            const entries = body.entry || [];
-            console.log('📋 Processing', entries.length, 'entries');
-            entries.forEach(entry => {
-                const changes = entry.changes || [];
-                console.log('🔄 Entry has', changes.length, 'changes');
-                changes.forEach(change => {
-                    const value = change.value || {};
-                    const messages = value.messages || (value.message ? [value.message] : []);
-                    console.log('📨 Found', messages.length, 'messages in change.value');
-                    messages.forEach(m => processInstagramMessage(value, m));
-                });
-
-                const messaging = entry.messaging || [];
-                console.log('💭 Entry has', messaging.length, 'messaging items (legacy format)');
-                messaging.forEach(item => {
-                    const msg = item.message || item;
-                    processInstagramMessage(item, msg);
-                });
-            });
-        } catch (err) {
-            console.error('Instagram webhook processing error', err);
-        }
-
-        // Respond quickly to Meta
-        return res.status(200).send('EVENT_RECEIVED');
-    }
-    // Not a page subscription
-    return res.sendStatus(404);
-});
-
-    // OAuth: Redirect user to Facebook/Instagram for login
-    app.get('/auth/instagram', (req, res) => {
-        const clientId = process.env.INSTAGRAM_APP_ID;
-        const redirectBase = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-        const redirectUri = `${redirectBase}/auth/instagram/callback`;
-        if (!clientId) return res.status(500).send('Missing INSTAGRAM_APP_ID in .env');
-        const scope = encodeURIComponent('instagram_basic,instagram_manage_messages,pages_manage_metadata');
-        const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code`;
-        res.redirect(authUrl);
-    });
-
-    // OAuth callback: exchange code for access token and store it
-    app.get('/auth/instagram/callback', async (req, res) => {
-        const code = req.query.code;
-        const clientId = process.env.INSTAGRAM_APP_ID;
-        const clientSecret = process.env.INSTAGRAM_APP_SECRET;
-        const redirectBase = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
-        const redirectUri = `${redirectBase}/auth/instagram/callback`;
-        if (!code) return res.status(400).send('Missing code');
-        if (!clientId || !clientSecret) return res.status(500).send('Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET in .env');
-
-        try {
-            // Exchange code for short-lived token
-            const tokenUrl = `https://graph.facebook.com/v17.0/oauth/access_token?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&client_secret=${clientSecret}&code=${code}`;
-            const tokenResp = await fetch(tokenUrl);
-            const tokenData = await tokenResp.json();
-            if (!tokenResp.ok) {
-                console.error('Error exchanging code:', tokenData);
-                return res.status(500).send('Token exchange failed: ' + JSON.stringify(tokenData));
-            }
-            const shortLived = tokenData.access_token;
-
-            // Exchange for long-lived token
-            const exchangeUrl = `https://graph.facebook.com/v17.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${clientId}&client_secret=${clientSecret}&fb_exchange_token=${encodeURIComponent(shortLived)}`;
-            const exchResp = await fetch(exchangeUrl);
-            const exchData = await exchResp.json();
-            if (!exchResp.ok) {
-                console.error('Error exchanging token for long-lived:', exchData);
-                // still store short-lived as fallback
-                storeInstagramToken(shortLived, tokenData.expires_in || null);
-                return res.send('Stored short-lived token (long-lived exchange failed).');
-            }
-            const longToken = exchData.access_token;
-            const expiresIn = exchData.expires_in || null;
-            storeInstagramToken(longToken, expiresIn);
-
-            // Optionally set environment var at runtime (only for this process)
-            process.env.INSTAGRAM_ACCESS_TOKEN = longToken;
-
-            res.send('<html><body><h3>Instagram login successful.</h3><p>Token saved. You may close this window.</p></body></html>');
-        } catch (err) {
-            console.error('OAuth callback error', err);
-            res.status(500).send('OAuth callback error');
-        }
-    });
-
-// Endpoint for sending messages via Instagram Graph API (agent action)
-app.post('/api/instagram/send', isAuthenticated, async (req, res) => {
-    const { recipient, message } = req.body; // recipient: instagram user id or external id
-    if (!recipient || (!message && !req.body.attachment)) return res.status(400).json({ error: 'Missing recipient or message/attachment.' });
-    if (!IG_ACCESS_TOKEN || !IG_ACCOUNT_ID) return res.status(500).json({ error: 'Instagram not configured. Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_ACCOUNT_ID in .env.' });
-
-    try {
-        const url = `https://graph.facebook.com/v17.0/${IG_ACCOUNT_ID}/messages`;
-        const body = { recipient: { id: recipient }, message: {} };
-        if (message) body.message.text = message;
-        if (req.body.attachment) body.message.attachment = req.body.attachment; // pass-through attachment object (type/url)
-
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${IG_ACCESS_TOKEN}` },
-            body: JSON.stringify(body)
-        });
-        const data = await resp.json();
-
-        // Store outgoing message in DB (map recipient -> conversation)
-        db.query('SELECT id FROM conversations WHERE phone = ? OR name = ? LIMIT 1', [recipient, recipient], (err, rows) => {
-            if (err) console.error('IG send DB lookup error', err);
-            const ensureInstagramLink = (convId) => {
-                db.query('SELECT id FROM instagram_conversations WHERE conversation_id = ? LIMIT 1', [convId], (icErr, icRows) => {
-                    if (icErr) return console.error('IG send instagram_conversations lookup error', icErr);
-                    if (!icRows || icRows.length === 0) {
-                        db.query('INSERT INTO instagram_conversations (conversation_id, ig_id, ig_username) VALUES (?, ?, ?)', [convId, recipient, req.body.ig_username || null], (insErr) => {
-                            if (insErr) console.error('Error inserting instagram_conversations link for IG send', insErr);
-                        });
-                    }
-                });
-            };
-            const doInsert = (convId) => {
-                ensureInstagramLink(convId);
-                db.query('INSERT INTO replies (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'sent', message || '[attachment]'], (iErr) => {
-                    if (iErr) console.error('Error inserting IG outgoing reply', iErr);
-                });
-                db.query('INSERT INTO staff_messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convId, 'sent', message || '[attachment]'], (iErr) => {
-                    if (iErr) console.error('Error inserting IG outgoing staff message', iErr);
-                    else io.emit('newMessage', { conversation_id: convId, sender: 'sent', message: message || '[attachment]', created_at: new Date().toISOString() });
-                });
-            };
-            if (rows && rows.length > 0) {
-                doInsert(rows[0].id);
-            } else {
-                const insertSql = isPg
-                    ? 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW()) RETURNING id'
-                    : 'INSERT INTO conversations (phone, name, platform, created_at) VALUES (?, ?, ?, NOW())';
-                db.query(insertSql, [recipient, recipient, 'instagram'], (cErr, result) => {
-                    if (cErr) {
-                        console.error('Error creating conv for IG send', cErr);
-                    } else {
-                        const newId = isPg ? (result?.rows?.[0]?.id || result?.[0]?.id) : result.insertId;
-                        if (newId) doInsert(newId);
-                    }
-                });
-            }
-        });
-
-        res.json({ success: true, data });
-    } catch (error) {
-        console.error('Error sending Instagram message', error);
-        res.status(500).json({ error: 'Failed to send message via Instagram.' });
-    }
-});
+// Instagram Messaging Integration removed
 
 function isOrderConfirmation(text) {
     const confirmKeywords = ['yes', 'yep', 'yup', 'confirm', 'ok', 'okay', 'sure', 'go', 'order it', 'proceed', 'do it'];

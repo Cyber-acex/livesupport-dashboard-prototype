@@ -59,6 +59,14 @@
 </head>
 <body>
   <div class="dash-wrap">
+    <!-- Welcome animation overlay shown once after login -->
+    <div id="welcomeOverlay" class="welcome-overlay hidden" aria-hidden="true">
+      <div class="welcome-inner">
+        <div class="welcome-sparkles" aria-hidden="true"></div>
+        <h2 id="welcomeText">Welcome</h2>
+        <p id="welcomeSub">Good to see you back</p>
+      </div>
+    </div>
     <aside class="sidebar">
       <div class="side-brand">
         <svg viewBox="0 0 24 24" class="logo" aria-hidden><circle cx="12" cy="12" r="10"/></svg>
@@ -311,6 +319,52 @@
   <script src="./js/notification-sound.js"></script>
   <script src="js/theme.js" defer></script>
   <script src="js/sidebar.js" defer></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function(){
+      try{
+        const params = new URLSearchParams(window.location.search);
+        if (!params.has('welcome')) return;
+        const val = params.get('welcome');
+        if (!val || (val !== '1' && val.toLowerCase() !== 'true')) return;
+
+        const overlay = document.getElementById('welcomeOverlay');
+        const welcomeText = document.getElementById('welcomeText');
+        if (!overlay) return;
+
+        (async function(){
+          try{
+            // Try server-side user info first for accuracy
+            let user = null;
+            try{
+              const res = await fetch('/api/user', { credentials: 'same-origin' });
+              if (res.ok) user = await res.json();
+            }catch(e){}
+
+            // Fallback to client-side stored user
+            if (!user) user = window.currentUser || await window.getCurrentUser();
+
+            // Prefer displayName, then name, then email local-part
+            let name = null;
+            if (user) {
+              name = user.displayName || user.name || user.username || null;
+              if (!name && user.email) {
+                name = String(user.email).split('@')[0];
+              }
+            }
+            if (name) welcomeText.textContent = `Welcome, ${name}`;
+          }catch(e){ console.warn('Welcome name lookup failed', e); }
+          overlay.classList.remove('hidden');
+          overlay.setAttribute('aria-hidden','false');
+          try{
+            const u = new URL(window.location.href);
+            u.searchParams.delete('welcome');
+            history.replaceState({}, document.title, u.pathname + (u.search ? ('?' + u.searchParams.toString()) : ''));
+          }catch(e){}
+          setTimeout(()=>{ overlay.classList.add('hide'); setTimeout(()=>{ overlay.remove(); }, 600); }, 3500);
+        })();
+      }catch(e){ console.error(e); }
+    });
+  </script>
 </body>
 </html>
 

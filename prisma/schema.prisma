@@ -29,7 +29,7 @@ model Conversation {
   aiFeedback       AiFeedback[]
   deliveryIssues   DeliveryIssue[]
   orders           Order[]
-  instagramConversation InstagramConversation?
+  
 
   @@map("conversations")
 }
@@ -339,26 +339,6 @@ model WhatsappToken {
   created_at DateTime @default(now()) @db.Timestamp(0)
 
   @@map("whatsapp_tokens")
-}
-
-model InstagramToken {
-  id         Int      @id @default(autoincrement())
-  token      String?  @db.Text
-  expires_at DateTime?
-  created_at DateTime @default(now()) @db.Timestamp(0)
-
-  @@map("instagram_tokens")
-}
-
-model InstagramConversation {
-  id              Int          @id @default(autoincrement())
-  conversation_id Int          @unique
-  ig_id           String?      @db.VarChar(255)
-  ig_username     String?      @db.VarChar(255)
-  created_at      DateTime     @default(now()) @db.Timestamp(0)
-  conversation    Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-
-  @@map("instagram_conversations")
 }
 
 model UserAvatar {

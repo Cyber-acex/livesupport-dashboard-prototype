@@ -257,27 +257,7 @@ CREATE TABLE "whatsapp_tokens" (
 
     CONSTRAINT "whatsapp_tokens_pkey" PRIMARY KEY ("id")
 );
-
--- CreateTable
-CREATE TABLE "instagram_tokens" (
-    "id" SERIAL NOT NULL,
-    "token" TEXT,
-    "expires_at" TIMESTAMP(3),
-    "created_at" TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "instagram_tokens_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "instagram_conversations" (
-    "id" SERIAL NOT NULL,
-    "conversation_id" INTEGER NOT NULL,
-    "ig_id" VARCHAR(255),
-    "ig_username" VARCHAR(255),
-    "created_at" TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "instagram_conversations_pkey" PRIMARY KEY ("id")
-);
+ 
 
 -- CreateTable
 CREATE TABLE "user_avatars" (
@@ -333,8 +313,7 @@ CREATE INDEX "deliveries_order_id_idx" ON "deliveries"("order_id");
 -- CreateIndex
 CREATE UNIQUE INDEX "foods_category_key_name_key" ON "foods"("category", "key_name");
 
--- CreateIndex
-CREATE UNIQUE INDEX "instagram_conversations_conversation_id_key" ON "instagram_conversations"("conversation_id");
+-- Instagram conversation index removed
 
 -- CreateIndex
 CREATE INDEX "user_avatars_user_id_idx" ON "user_avatars"("user_id");
@@ -381,8 +360,7 @@ ALTER TABLE "orders" ADD CONSTRAINT "orders_conversation_id_fkey" FOREIGN KEY ("
 -- AddForeignKey
 ALTER TABLE "deliveries" ADD CONSTRAINT "deliveries_order_id_fkey" FOREIGN KEY ("order_id") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- AddForeignKey
-ALTER TABLE "instagram_conversations" ADD CONSTRAINT "instagram_conversations_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Instagram conversation foreign key removed
 
 -- AddForeignKey
 ALTER TABLE "user_avatars" ADD CONSTRAINT "user_avatars_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;

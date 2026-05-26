@@ -448,18 +448,6 @@ async function migrateWhatsappTokens(connection) {
   console.log(`✅ Migrated whatsapp_tokens: ${count}`);
 }
 
-async function migrateInstagramTokens(connection) {
-  const rows = await fetchRows(connection, 'instagram_tokens');
-  const data = rows.map((row) => ({
-    id: row.id,
-    token: row.token,
-    expires_at: cleanDate(row.expires_at),
-    created_at: cleanDate(row.created_at),
-  }));
-  const count = await bulkCreate('instagramToken', data);
-  console.log(`✅ Migrated instagram_tokens: ${count}`);
-}
-
 async function migrateReceipts(connection) {
   const rows = await fetchRows(connection, 'receipts');
   const data = rows.map((row) => ({
@@ -594,7 +582,6 @@ async function migrateAll(connection) {
   await migrateUsers(connection);
   await migrateConversations(connection);
   await migrateSettings(connection);
-  await migrateInstagramConversations(connection);
   await migrateMessages(connection);
   await migrateReplies(connection);
   await migrateAiMessages(connection);
@@ -607,7 +594,6 @@ async function migrateAll(connection) {
   await migrateAiFeedback(connection);
   await migrateDeliveryIssues(connection);
   await migrateWhatsappTokens(connection);
-  await migrateInstagramTokens(connection);
   await migrateReceipts(connection);
   await migrateTickets(connection);
   await migrateFoods(connection);
@@ -630,10 +616,8 @@ async function resetAllSequences() {
     'ai_feedback',
     'delivery_issues',
     'whatsapp_tokens',
-    'instagram_tokens',
     'settings',
     'messages',
-    'instagram_conversations',
     'replies',
     'receipts',
     'tickets',

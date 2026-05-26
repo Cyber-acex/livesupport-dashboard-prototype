@@ -833,6 +833,14 @@ input:checked + .slider {
   function initAutopilotModeSettings() {
     const buttons = document.querySelectorAll('.autopilot-mode-btn');
     if (buttons.length === 0) return;
+    // ensure hidden input exists for storing the selected mode
+    let hiddenInput = document.getElementById('autopilotModeValue');
+    if (!hiddenInput) {
+      hiddenInput = document.createElement('input');
+      hiddenInput.type = 'hidden';
+      hiddenInput.id = 'autopilotModeValue';
+      document.body.appendChild(hiddenInput);
+    }
 
     buttons.forEach(btn => {
       btn.addEventListener('click', () => {
@@ -851,13 +859,6 @@ input:checked + .slider {
         btn.style.color = '#ffffff';
 
         // Store as hidden value for form submission
-        let hiddenInput = document.getElementById('autopilotModeValue');
-        if (!hiddenInput) {
-          hiddenInput = document.createElement('input');
-          hiddenInput.type = 'hidden';
-          hiddenInput.id = 'autopilotModeValue';
-          document.body.appendChild(hiddenInput);
-        }
         hiddenInput.value = mode;
 
         applyAutopilotMode(mode);
@@ -871,7 +872,7 @@ input:checked + .slider {
       activeBtn.style.background = 'rgba(56, 189, 248, 0.2)';
       activeBtn.style.borderColor = 'rgba(56, 189, 248, 0.6)';
       activeBtn.style.color = '#ffffff';
-      document.getElementById('autopilotModeValue').value = currentMode;
+      hiddenInput.value = currentMode;
     }
   }
 
@@ -1025,12 +1026,13 @@ input:checked + .slider {
     }
   }
 
-  // Highlight sidebar
+  // Highlight sidebar: compare basenames so './dashboard.html' and 'dashboard.html' both match
   const sidebarLinks = document.querySelectorAll('.sidebar .menu a');
-  const currentPath = window.location.pathname.split("/").pop();
+  const currentPath = window.location.pathname.split('/').pop() || '';
   sidebarLinks.forEach(link => {
     link.classList.remove('active');
-    if (link.getAttribute('href') === currentPath || (currentPath === '' && link.getAttribute('href') === 'dashboard.html')) {
+    const href = (link.getAttribute('href') || '').split('/').pop();
+    if (href === currentPath || (currentPath === '' && href === 'dashboard.html')) {
       link.classList.add('active');
     }
   });

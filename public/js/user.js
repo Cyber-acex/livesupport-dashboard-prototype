@@ -165,13 +165,16 @@
       if (!loginTimeEl || !sessionDurationEl || !lastActivityEl) return;
 
       let loginTime = currentSessionInfo.loginTime || localStorage.getItem('loginTime');
+      const now = new Date();
       if (!loginTime) {
-        loginTime = new Date().toISOString();
-        localStorage.setItem('loginTime', loginTime);
+        // No login time recorded — treat as logged out
+        loginTimeEl.textContent = '--:--';
+        sessionDurationEl.textContent = '0h 0m';
+        lastActivityEl.textContent = '--:--';
+        return;
       }
 
       const loginDate = new Date(loginTime);
-      const now = new Date();
       loginTimeEl.textContent = formatTime(loginDate);
 
       const durationMs = now - loginDate;
@@ -224,6 +227,26 @@
         }, { passive: true });
       });
     }
+
+    // Listen for logout/force-logout events via Socket.IO and clear session info immediately
+    try {
+      if (typeof io !== 'undefined') {
+        const socket = io();
+        socket.on('admin:users:changed', (info) => {
+          try {
+            if (!info || !info.action) return;
+            const myId = (window.currentUser && window.currentUser.id) || (localStorage.getItem(storageKey) ? JSON.parse(localStorage.getItem(storageKey)).id : null);
+            if (!myId) return;
+            if ((info.action === 'logout' || info.action === 'force-logout') && String(info.id) === String(myId)) {
+              localStorage.removeItem('loginTime');
+              localStorage.removeItem('lastActivity');
+              currentSessionInfo = { loginTime: null, lastActivity: null };
+              updateSessionInfo();
+            }
+          } catch (e) {}
+        });
+      }
+    } catch (e) {}
 
     loadProfileData().catch(() => {});
   }
