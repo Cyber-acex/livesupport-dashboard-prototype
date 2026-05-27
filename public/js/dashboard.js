@@ -682,7 +682,11 @@ document.addEventListener('DOMContentLoaded', ()=>{
       });
     }
   }
-  initProfile();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initProfile);
+  } else {
+    initProfile();
+  }
 
   // --- Monthly outward messages chart ---
   function initMessagesChart(){
