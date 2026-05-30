@@ -9,7 +9,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
-const FALLBACK_REPLY = "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
 const CLARIFICATION_OPTIONS = "If you are not sure, reply with 0 for menu, 1 for your last order, or 2 to connect with staff.";
 
 let knowledgeBase = [];
@@ -244,7 +243,7 @@ ${CLARIFICATION_OPTIONS}`;
         return `I am connecting you with our staff now. One of our agents will assist you shortly.`;
     }
 
-    return FALLBACK_REPLY;
+    return "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
 }
 
 async function getMenuItemsFromDb() {
@@ -1302,14 +1301,14 @@ The customer appears to be placing an order but I couldn't identify the specific
 
         if (!response.ok) {
             console.log("Mistral API error:", response.status, await response.text());
-            return FALLBACK_REPLY;
+            return "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
         }
 
         const data = await response.json();
         const reply = data.choices?.[0]?.message?.content?.trim();
 
         if (!reply) {
-            return FALLBACK_REPLY;
+            return "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
         }
 
         if (isHandoffReply(reply)) {
@@ -1331,7 +1330,7 @@ The customer appears to be placing an order but I couldn't identify the specific
         return reply;
     } catch (error) {
         console.log("Mistral reply error:", error.message);
-        return FALLBACK_REPLY;
+        return "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
     }
 }
 
