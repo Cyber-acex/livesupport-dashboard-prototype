@@ -9,8 +9,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
-const FALLBACK_REPLY = "I'm sorry, I couldn't understand that clearly. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr just tell me more about your question and I will help you.";
-const CLARIFICATION_OPTIONS = "If you are not sure, reply with 0 for menu, 1 for your last order, or 2 to connect with staff.";
 
 let knowledgeBase = [];
 let cannedResponses = [];
@@ -222,7 +220,7 @@ ${CLARIFICATION_OPTIONS}`;
         }
         const orderHistory = await getOrderHistory(phone);
         if (orderHistory && orderHistory.count > 0) {
-            return `Here is your recent order summary:\n${orderHistory.summary}\n\nIf you'd like, I can also help you with the menu or connect you with staff. Reply 0 for menu, 2 for staff, or ask another question.
+            return `Here is your recent order summary:\n${orderHistory.summary}
 
 ${CLARIFICATION_OPTIONS}`;
         }
@@ -244,7 +242,6 @@ ${CLARIFICATION_OPTIONS}`;
         return `I am connecting you with our staff now. One of our agents will assist you shortly.`;
     }
 
-    return FALLBACK_REPLY;
 }
 
 async function getMenuItemsFromDb() {
@@ -1250,8 +1247,6 @@ async function getMistralReply(message, phone = null, conversationId = null) {
         // Craft a system prompt and user prompt for the support agent
         const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.`;
         let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}
-
-If the customer reports a problem, ask clarifying questions and gather details before suggesting a solution. Only offer a human agent connection if the customer explicitly requests a live agent. If the message is unclear, ask for clarification and offer the customer the options 0 for menu, 1 for last order, or 2 for staff. Keep the response helpful, follow up naturally, and avoid sending the customer to a human unless absolutely necessary.
 
 ${CLARIFICATION_OPTIONS}`;
 

@@ -9,6 +9,7 @@ import session from "express-session";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -33,6 +34,67 @@ const onlineAgents = new Map(); // socketId -> { userId, name, role, socketId, l
 const typingIndicators = new Map(); // conversationId -> Set of agent names
 // Track user sessions to support force-logout
 const userSessions = new Map(); // userId -> Set of sessionIDs
+
+// Voice infrastructure
+const voiceUsers = new Map(); // socketId -> { userId, name, role, socketId, avatarUrl, status, voiceSessionId, muted, speaking, currentChannelId }
+const voiceSessions = new Map(); // sessionId -> { id, type, createdBy, status, room, channelId, participants: Map<socketId, {...}>, startedAt, endedAt }
+const voiceChannels = new Map(); // channelId -> { id, name, description, createdAt, members: Set<socketId>, activeSessionId }
+
+const defaultVoiceChannels = [
+    { id: 1, name: 'General Staff', description: 'Open staff channel for general coordination', createdAt: new Date().toISOString() },
+    { id: 2, name: 'Support Team', description: 'Support staff only', createdAt: new Date().toISOString() },
+    { id: 3, name: 'Sales Team', description: 'Sales and upsell coordination', createdAt: new Date().toISOString() },
+    { id: 4, name: 'Management', description: 'Leadership and escalation channel', createdAt: new Date().toISOString() }
+];
+
+function ensureDefaultVoiceChannels() {
+    if (voiceChannels.size) return;
+    defaultVoiceChannels.forEach(channel => {
+        voiceChannels.set(channel.id, Object.assign({}, channel, { members: new Set(), activeSessionId: null }));
+    });
+}
+
+function broadcastVoicePresence() {
+    const list = Array.from(voiceUsers.values()).map(u => ({
+        userId: u.userId,
+        name: u.name,
+        role: u.role,
+        status: u.status || 'offline',
+        voiceSessionId: u.voiceSessionId || null,
+        muted: !!u.muted,
+        speaking: !!u.speaking,
+        currentChannelId: u.currentChannelId || null,
+        avatarUrl: u.avatarUrl || null
+    }));
+    io.emit('voice:presenceUpdate', list);
+}
+
+function getVoiceChannelList() {
+    ensureDefaultVoiceChannels();
+    return Array.from(voiceChannels.values()).map(ch => ({
+        id: ch.id,
+        name: ch.name,
+        description: ch.description,
+        memberCount: ch.members.size,
+        hasActiveSession: !!ch.activeSessionId
+    }));
+}
+
+function normalizeVoiceUser(socket, data) {
+    if (!socket || !data) return null;
+    return {
+        userId: data.userId,
+        name: data.name || data.displayName || 'Staff',
+        role: data.role || 'agent',
+        avatarUrl: data.avatarUrl || null,
+        socketId: socket.id,
+        status: data.status || 'online',
+        voiceSessionId: data.voiceSessionId || null,
+        muted: !!data.muted,
+        speaking: !!data.speaking,
+        currentChannelId: data.currentChannelId || null
+    };
+}
 
 // Disable AI responses for 15 minutes after agent sends a message or after an AI handoff
 function disableAIForConversation(conversationId, source = 'agent') {
@@ -99,6 +161,122 @@ function shouldAIRespond(conversationId) {
         mapKeys: Array.from(agentActivity.keys())
     });
     return should;
+}
+
+async function initVoiceChannelsFromDb() {
+    ensureDefaultVoiceChannels();
+    try {
+        const channels = await prisma.voiceChannel.findMany();
+        if (Array.isArray(channels) && channels.length > 0) {
+            voiceChannels.clear();
+            channels.forEach(channel => {
+                voiceChannels.set(channel.id, Object.assign({}, channel, { members: new Set(), activeSessionId: null }));
+            });
+        }
+    } catch (err) {
+        console.warn('Voice channel DB load failed, using defaults', err?.message || err);
+    }
+}
+
+async function persistVoiceSession(session) {
+    if (!prisma || !session) return null;
+    try {
+        const created = await prisma.voiceSession.create({
+            data: {
+                type: session.type.toUpperCase(),
+                createdBy: session.createdBy || null,
+                startedAt: session.startedAt ? new Date(session.startedAt) : null,
+                endedAt: session.endedAt ? new Date(session.endedAt) : null,
+                status: session.status.toUpperCase(),
+                channelId: session.channelId || null
+            }
+        });
+        return created;
+    } catch (err) {
+        console.warn('persistVoiceSession failed', err?.message || err);
+        return null;
+    }
+}
+
+async function persistVoiceParticipants(sessionId, participants) {
+    if (!prisma || !sessionId || !Array.isArray(participants)) return [];
+    try {
+        return await Promise.all(participants.map(p => prisma.voiceParticipant.create({
+            data: {
+                sessionId,
+                userId: p.userId,
+                joinedAt: p.joinedAt ? new Date(p.joinedAt) : new Date(),
+                leftAt: p.leftAt ? new Date(p.leftAt) : null,
+                muted: !!p.muted
+            }
+        })));
+    } catch (err) {
+        console.warn('persistVoiceParticipants failed', err?.message || err);
+        return [];
+    }
+}
+
+function saveVoiceActivity(socketId, data) {
+    const user = voiceUsers.get(socketId);
+    if (!user) return;
+    user.speaking = !!data.speaking;
+    user.muted = !!data.muted;
+    user.status = data.status || user.status || 'online';
+    voiceUsers.set(socketId, user);
+    broadcastVoicePresence();
+}
+
+function getSocketByUserId(userId) {
+    for (const [socketId, record] of voiceUsers.entries()) {
+        if (String(record.userId) === String(userId)) return socketId;
+    }
+    return null;
+}
+
+function getVoiceSessionById(sessionId) {
+    return voiceSessions.get(sessionId) || null;
+}
+
+function endVoiceSession(sessionId, reason = 'ended') {
+    const session = voiceSessions.get(sessionId);
+    if (!session) return;
+    session.status = 'ended';
+    session.endedAt = new Date().toISOString();
+    session.participants.forEach((participant, socketId) => {
+        const user = voiceUsers.get(socketId);
+        if (user) {
+            user.voiceSessionId = null;
+            user.status = 'online';
+            voiceUsers.set(socketId, user);
+        }
+    });
+    voiceSessions.delete(sessionId);
+    broadcastVoicePresence();
+}
+
+function getRoomName(sessionId) {
+    return `voice-session-${sessionId}`;
+}
+
+function getVoiceSessionSummary(session) {
+    return {
+        id: session.id,
+        type: session.type,
+        status: session.status,
+        createdBy: session.createdBy,
+        channelId: session.channelId || null,
+        startedAt: session.startedAt || null,
+        endedAt: session.endedAt || null,
+        participants: Array.from(session.participants.values()).map(participant => ({
+            userId: participant.userId,
+            name: participant.name,
+            role: participant.role,
+            muted: !!participant.muted,
+            speaking: !!participant.speaking,
+            joinedAt: participant.joinedAt,
+            leftAt: participant.leftAt || null
+        }))
+    };
 }
 
 function getConversationAutopilotMode(conversationId) {
@@ -2293,7 +2471,7 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                                 console.error('Exception while auto-starting delivery for order', orderId, ex);
                             }
 
-                            resolve(true);
+                            resolve({ orderId, product, amount, status });
                         }
                     }
                 );
@@ -2687,8 +2865,8 @@ app.post("/webhook", async (req, res) => {
                                 // Check if this is an order confirmation
                                 const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
                                 const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                                if (orderConfirmed) {
-                                    await sendAutoReply(phone, "Your order has been confirmed an your order is now being prepared for delivery🚚✅");
+                                if (orderConfirmed && orderConfirmed.orderId) {
+                                    await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                                 } else {
                                     const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                                     if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
@@ -2769,8 +2947,8 @@ app.post("/webhook", async (req, res) => {
                             // Check if this is an order confirmation
                             const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
                             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                            if (orderConfirmed) {
-                                await sendAutoReply(phone, "Your order has been confirmed an your order is now being prepared for delivery🚚✅");
+                            if (orderConfirmed && orderConfirmed.orderId) {
+                                await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                             } else {
                                 const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                                 if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
@@ -2835,8 +3013,8 @@ app.post("/api/test-message", (req, res) => {
                         // Check if this is an order confirmation
                         const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
                         const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                        if (orderConfirmed) {
-                            await sendAutoReply(phone, "Your order has been confirmed an your order is now being prepared for delivery🚚✅");
+                        if (orderConfirmed && orderConfirmed.orderId) {
+                            await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                         } else {
                             // Check if AI should respond
                             if (aiAutoAllowed && shouldAIRespond(convoId)) {
@@ -2870,8 +3048,8 @@ app.post("/api/test-message", (req, res) => {
                     }
                     const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
                     const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                    if (orderConfirmed) {
-                        await sendAutoReply(phone, "Your order has been confirmed an your food is now being prepared for delivery🚚✅");
+                    if (orderConfirmed && orderConfirmed.orderId) {
+                        await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                     } else {
                         const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                         if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
@@ -4064,8 +4242,231 @@ io.on("connection", (socket) => {
         socket.broadcast.emit("stopTyping", data);
     });
 
+    socket.on('voice:register', (data) => {
+        const record = normalizeVoiceUser(socket, Object.assign({}, data, { status: 'online', socketId: socket.id }));
+        if (!record || !record.userId) return;
+        voiceUsers.set(socket.id, record);
+        broadcastVoicePresence();
+        socket.emit('voice:channels', getVoiceChannelList());
+    });
+
+    socket.on('voice:getChannels', () => {
+        socket.emit('voice:channels', getVoiceChannelList());
+    });
+
+    socket.on('voice:private:request', (data) => {
+        if (!data || !data.targetUserId || !data.sessionId) return;
+        const caller = voiceUsers.get(socket.id);
+        const targetSocketId = getSocketByUserId(data.targetUserId);
+        if (!caller || !targetSocketId) return;
+        const sessionId = data.sessionId;
+        const session = {
+            id: sessionId,
+            type: 'private',
+            createdBy: caller.userId,
+            status: 'pending',
+            room: getRoomName(sessionId),
+            channelId: null,
+            participants: new Map(),
+            startedAt: null,
+            endedAt: null
+        };
+        session.participants.set(socket.id, { userId: caller.userId, name: caller.name, role: caller.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
+        voiceSessions.set(sessionId, session);
+        io.to(targetSocketId).emit('voice:private:incoming', {
+            sessionId,
+            from: { userId: caller.userId, name: caller.name, role: caller.role }
+        });
+    });
+
+    socket.on('voice:private:response', async (data) => {
+        if (!data || !data.sessionId || typeof data.accepted === 'undefined') return;
+        const session = getVoiceSessionById(data.sessionId);
+        if (!session || session.type !== 'private' || session.status !== 'pending') return;
+        const responder = voiceUsers.get(socket.id);
+        if (!responder) return;
+        const callerSocketId = Array.from(session.participants.keys())[0];
+        const caller = voiceUsers.get(callerSocketId);
+        if (!caller) return;
+
+        if (data.accepted) {
+            session.status = 'active';
+            session.startedAt = new Date().toISOString();
+            session.participants.set(socket.id, { userId: responder.userId, name: responder.name, role: responder.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
+            voiceSessions.set(session.id, session);
+            [callerSocketId, socket.id].forEach(id => {
+                const user = voiceUsers.get(id);
+                if (user) {
+                    user.voiceSessionId = session.id;
+                    user.status = 'in voice chat';
+                    voiceUsers.set(id, user);
+                }
+            });
+            broadcastVoicePresence();
+            io.to(callerSocketId).emit('voice:private:accepted', { sessionId: session.id, peer: { userId: responder.userId, name: responder.name } });
+            io.to(socket.id).emit('voice:private:started', { sessionId: session.id, peer: { userId: caller.userId, name: caller.name } });
+            const dbSession = await persistVoiceSession(session);
+            if (dbSession) {
+                await persistVoiceParticipants(dbSession.id, Array.from(session.participants.values()));
+            }
+        } else {
+            io.to(callerSocketId).emit('voice:private:rejected', { sessionId: session.id, by: responder.userId });
+            voiceSessions.delete(session.id);
+        }
+    });
+
+    socket.on('voice:signal', (data) => {
+        if (!data || !data.targetUserId || !data.sessionId || !data.signal) return;
+        const targetSocketId = getSocketByUserId(data.targetUserId);
+        if (!targetSocketId) return;
+        io.to(targetSocketId).emit('voice:signal', {
+            sessionId: data.sessionId,
+            fromUserId: voiceUsers.get(socket.id)?.userId || null,
+            signal: data.signal,
+            type: data.type || 'offer'
+        });
+    });
+
+    socket.on('voice:end', (data) => {
+        if (!data || !data.sessionId) return;
+        const session = getVoiceSessionById(data.sessionId);
+        if (!session) return;
+        session.participants.forEach((participant, participantSocketId) => {
+            io.to(participantSocketId).emit('voice:ended', { sessionId: session.id, by: voiceUsers.get(socket.id)?.userId || null });
+        });
+        endVoiceSession(session.id);
+    });
+
+    socket.on('voice:activity', (data) => {
+        if (!data) return;
+        saveVoiceActivity(socket.id, data);
+    });
+
+    socket.on('voice:broadcast:start', (data) => {
+        const host = voiceUsers.get(socket.id);
+        if (!host) return;
+        const sessionId = data.sessionId || randomUUID();
+        const session = {
+            id: sessionId,
+            type: 'broadcast',
+            createdBy: host.userId,
+            status: 'active',
+            room: getRoomName(sessionId),
+            channelId: null,
+            participants: new Map(),
+            startedAt: new Date().toISOString(),
+            endedAt: null
+        };
+        session.participants.set(socket.id, { userId: host.userId, name: host.name, role: host.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
+        voiceSessions.set(sessionId, session);
+        host.voiceSessionId = sessionId;
+        host.status = 'broadcasting';
+        voiceUsers.set(socket.id, host);
+        broadcastVoicePresence();
+        Array.from(voiceUsers.values()).forEach(user => {
+            if (user.socketId === socket.id) return;
+            io.to(user.socketId).emit('voice:broadcast:incoming', { sessionId, from: { userId: host.userId, name: host.name } });
+        });
+    });
+
+    socket.on('voice:broadcast:join', (data) => {
+        if (!data || !data.sessionId) return;
+        const session = getVoiceSessionById(data.sessionId);
+        if (!session || session.type !== 'broadcast' || session.status !== 'active') return;
+        const listener = voiceUsers.get(socket.id);
+        if (!listener) return;
+        session.participants.set(socket.id, { userId: listener.userId, name: listener.name, role: listener.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
+        voiceSessions.set(session.id, session);
+        listener.voiceSessionId = session.id;
+        listener.status = 'in voice chat';
+        voiceUsers.set(socket.id, listener);
+        broadcastVoicePresence();
+        const hostSocketId = getSocketByUserId(session.createdBy);
+        if (hostSocketId) {
+            io.to(hostSocketId).emit('voice:broadcast:joinRequest', { sessionId: session.id, user: { userId: listener.userId, name: listener.name } });
+        }
+        socket.emit('voice:broadcast:joined', { sessionId: session.id, hostUserId: session.createdBy });
+    });
+
+    socket.on('voice:broadcast:leave', (data) => {
+        if (!data || !data.sessionId) return;
+        const session = getVoiceSessionById(data.sessionId);
+        if (!session) return;
+        session.participants.delete(socket.id);
+        const user = voiceUsers.get(socket.id);
+        if (user) {
+            user.voiceSessionId = null;
+            user.status = 'online';
+            voiceUsers.set(socket.id, user);
+        }
+        voiceSessions.set(session.id, session);
+        broadcastVoicePresence();
+        if (session.participants.size === 0) {
+            endVoiceSession(session.id);
+        }
+    });
+
+    socket.on('voice:channel:join', (data) => {
+        if (!data || !data.channelId) return;
+        const user = voiceUsers.get(socket.id);
+        const channel = voiceChannels.get(data.channelId);
+        if (!user || !channel) return;
+        channel.members.add(socket.id);
+        voiceChannels.set(data.channelId, channel);
+        user.currentChannelId = data.channelId;
+        user.status = 'in channel';
+        voiceUsers.set(socket.id, user);
+        broadcastVoicePresence();
+        socket.emit('voice:channel:joined', {
+            channel: { id: channel.id, name: channel.name, description: channel.description },
+            members: Array.from(channel.members).map(id => {
+                const m = voiceUsers.get(id);
+                return m ? { userId: m.userId, name: m.name, role: m.role, muted: m.muted, speaking: m.speaking } : null;
+            }).filter(Boolean)
+        });
+        channel.members.forEach(memberSocketId => {
+            if (memberSocketId !== socket.id) {
+                io.to(memberSocketId).emit('voice:channel:memberUpdate', { channelId: channel.id, user: { userId: user.userId, name: user.name, role: user.role, muted: user.muted, speaking: user.speaking } });
+            }
+        });
+    });
+
+    socket.on('voice:channel:leave', (data) => {
+        if (!data || !data.channelId) return;
+        const user = voiceUsers.get(socket.id);
+        const channel = voiceChannels.get(data.channelId);
+        if (!user || !channel) return;
+        channel.members.delete(socket.id);
+        voiceChannels.set(data.channelId, channel);
+        user.currentChannelId = null;
+        user.status = 'online';
+        voiceUsers.set(socket.id, user);
+        broadcastVoicePresence();
+        channel.members.forEach(memberSocketId => {
+            io.to(memberSocketId).emit('voice:channel:memberLeft', { channelId: channel.id, userId: user.userId });
+        });
+    });
+
+    socket.on('voice:channel:signal', (data) => {
+        if (!data || !data.targetUserId || !data.signal || !data.channelId) return;
+        const targetSocketId = getSocketByUserId(data.targetUserId);
+        if (!targetSocketId) return;
+        io.to(targetSocketId).emit('voice:channel:signal', {
+            channelId: data.channelId,
+            fromUserId: voiceUsers.get(socket.id)?.userId || null,
+            signal: data.signal
+        });
+    });
+
     socket.on("disconnect", () => {
         onlineAgents.delete(socket.id);
+        voiceUsers.delete(socket.id);
+        for (const channel of voiceChannels.values()) {
+            if (channel.members.has(socket.id)) {
+                channel.members.delete(socket.id);
+            }
+        }
+        broadcastVoicePresence();
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
         io.emit("presenceUpdate", list);
         console.log("Client disconnected:", socket.id);
@@ -4597,7 +4998,16 @@ httpServer.listen(PORT, () => {
                         const safe = { code: err.code || 'UNKNOWN', errno: err.errno || null, message: err.message || 'DB error' };
                         console.error('DB connection test failed at startup:', safe);
                     }
-                } else console.log('DB connection test succeeded');
+                } else {
+                    console.log('DB connection test succeeded');
+                }
+                initVoiceChannelsFromDb().catch(err => {
+                    console.warn('Voice channel initialization failed:', err?.message || err);
+                });
+            });
+        } else {
+            initVoiceChannelsFromDb().catch(err => {
+                console.warn('Voice channel initialization failed:', err?.message || err);
             });
         }
 

@@ -174,9 +174,11 @@ model User {
   disabled    Boolean? @default(false)
   created_at  DateTime @default(now()) @db.Timestamp(0)
 
-  settings    Setting?
-  avatars     UserAvatar[]
-  profile     StaffProfile?
+  settings            Setting?
+  avatars             UserAvatar[]
+  profile             StaffProfile?
+  voiceSessionsCreated VoiceSession[] @relation("VoiceSessionCreator")
+  voiceParticipations  VoiceParticipant[] @relation("VoiceParticipantUser")
 
   @@map("users")
 }
@@ -351,6 +353,64 @@ model UserAvatar {
 
   @@map("user_avatars")
   @@index([user_id])
+}
+
+enum VoiceSessionType {
+  PRIVATE
+  CHANNEL
+  BROADCAST
+}
+
+enum VoiceSessionStatus {
+  PENDING
+  ACTIVE
+  ENDED
+  CANCELLED
+}
+
+model VoiceChannel {
+  id         Int            @id @default(autoincrement())
+  name       String         @db.VarChar(255)
+  description String?       @db.Text
+  createdAt  DateTime       @default(now()) @db.Timestamp(0)
+  sessions   VoiceSession[]
+
+  @@map("voice_channels")
+}
+
+model VoiceSession {
+  id          Int                @id @default(autoincrement())
+  type        VoiceSessionType   @default(PRIVATE)
+  createdBy   Int?
+  startedAt   DateTime?          @db.Timestamp(0)
+  endedAt     DateTime?          @db.Timestamp(0)
+  status      VoiceSessionStatus @default(PENDING)
+  createdAt   DateTime           @default(now()) @db.Timestamp(0)
+  channelId   Int?
+
+  participants VoiceParticipant[]
+  channel      VoiceChannel?      @relation(fields: [channelId], references: [id])
+  creator      User?              @relation("VoiceSessionCreator", fields: [createdBy], references: [id])
+
+  @@map("voice_sessions")
+  @@index([channelId])
+  @@index([createdBy])
+}
+
+model VoiceParticipant {
+  id         Int       @id @default(autoincrement())
+  sessionId  Int
+  userId     Int
+  joinedAt   DateTime  @default(now()) @db.Timestamp(0)
+  leftAt     DateTime? @db.Timestamp(0)
+  muted      Boolean   @default(false)
+
+  voiceSession VoiceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user         User         @relation("VoiceParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("voice_participants")
+  @@index([sessionId])
+  @@index([userId])
 }
 
 model DeliveryIssue {

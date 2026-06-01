@@ -14,9 +14,20 @@ async function seedUsers() {
     ];
 
     for (const user of usersToCreate) {
-      const existing = await prisma.user.findFirst({ where: { email: user.email } });
+      const existing = await prisma.user.findUnique({ where: { email: user.email } });
       if (existing) {
-        console.log(`✅ User already exists: ${user.email}`);
+        const updatedData = {};
+        if (existing.password !== user.password) updatedData.password = user.password;
+        if ((existing.role || '').toLowerCase() !== (user.role || 'agent').toLowerCase()) updatedData.role = user.role;
+        if (existing.disabled !== false) updatedData.disabled = false;
+        if (existing.name !== user.name) updatedData.name = user.name;
+
+        if (Object.keys(updatedData).length > 0) {
+          await prisma.user.update({ where: { email: user.email }, data: updatedData });
+          console.log(`✅ Updated user: ${user.email}`);
+        } else {
+          console.log(`✅ User already exists: ${user.email}`);
+        }
         continue;
       }
       const created = await prisma.user.create({ data: user });
