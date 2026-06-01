@@ -22,6 +22,62 @@ if (window.inboxAppLoaded) {
             if(u && (u.id || u.name)) socket.emit('agent:register', { userId: u.id, name: u.name || u.role || 'Agent', role: u.role || 'agent' });
         }).catch(()=>{});
     });
+
+    // Handle status changes from profile dropdown
+    function setupStatusButtons() {
+        const statusBtns = document.querySelectorAll('.status-btn');
+        const statusIndicator = document.getElementById('statusIndicator');
+        
+        statusBtns.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const newStatus = btn.dataset.status;
+                
+                // Update UI
+                statusBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                if (statusIndicator) {
+                    const dotClass = {
+                        'online': 'online',
+                        'away': 'away',
+                        'busy': 'busy',
+                        'offline': 'offline'
+                    }[newStatus] || 'offline';
+                    
+                    const statusText = {
+                        'online': 'Online',
+                        'away': 'Away',
+                        'busy': 'Busy',
+                        'offline': 'Offline'
+                    }[newStatus] || 'Offline';
+                    
+                    const dot = statusIndicator.querySelector('.status-dot');
+                    if (dot) {
+                        dot.className = `status-dot ${dotClass}`;
+                    }
+                    
+                    const text = statusIndicator.querySelector('.status-text');
+                    if (text) {
+                        text.textContent = statusText;
+                    }
+                }
+                
+                // Emit status update via Socket.IO
+                if (socket && socket.connected) {
+                    socket.emit('agent:updateStatus', { status: newStatus });
+                    console.log('Status changed to:', newStatus);
+                }
+            });
+        });
+    }
+
+    // Setup status buttons when DOM is ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', setupStatusButtons);
+    } else {
+        setupStatusButtons();
+    }
+    
     const aiSendBtn = document.getElementById("ai-send");
     const aiText = document.getElementById("ai-text");
     const chatMessages = document.getElementById("chat-messages");

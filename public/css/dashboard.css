@@ -127,7 +127,8 @@ html,body{min-height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,A
 @keyframes pulse-mini{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.8;transform:scale(1.1)}}
 .status-dot-mini.online{background:linear-gradient(135deg, #10b981, #059669);box-shadow:0 0 4px rgba(16, 185, 129, 0.6)}
 .status-dot-mini.away{background:linear-gradient(135deg, #f59e0b, #d97706);box-shadow:0 0 4px rgba(245, 158, 11, 0.6)}
-.status-dot-mini.offline{background:linear-gradient(135deg, #ef4444, #dc2626);box-shadow:0 0 4px rgba(239, 68, 68, 0.6)}
+.status-dot-mini.busy{background:linear-gradient(135deg, #ef4444, #dc2626);box-shadow:0 0 4px rgba(239, 68, 68, 0.6)}
+.status-dot-mini.offline{background:linear-gradient(135deg, #9ca3af, #6b7280);box-shadow:0 0 4px rgba(156, 163, 175, 0.6)}
 .profile-btn::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:linear-gradient(45deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));border-radius:inherit;opacity:0;transition:opacity 0.2s ease}
 .profile-btn:hover::before{opacity:1}
 .profile-btn:hover{transform:scale(1.05);box-shadow:0 4px 12px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.1)}
@@ -143,7 +144,8 @@ html,body{min-height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,A
 .status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;transition:all 0.3s ease;animation:pulse 2s infinite}
 .status-dot.online{background:linear-gradient(135deg, #10b981, #059669);box-shadow:0 0 8px rgba(16, 185, 129, 0.4)}
 .status-dot.away{background:linear-gradient(135deg, #f59e0b, #d97706);box-shadow:0 0 8px rgba(245, 158, 11, 0.4)}
-.status-dot.offline{background:linear-gradient(135deg, #ef4444, #dc2626);box-shadow:0 0 8px rgba(239, 68, 68, 0.4)}
+.status-dot.busy{background:linear-gradient(135deg, #ef4444, #dc2626);box-shadow:0 0 8px rgba(239, 68, 68, 0.4)}
+.status-dot.offline{background:linear-gradient(135deg, #9ca3af, #6b7280);box-shadow:0 0 8px rgba(156, 163, 175, 0.4)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.7}}
 .status-text{font-size:12px;font-weight:500;color:var(--muted);transition:color 0.3s ease}
 .status-toggle{display:flex;gap:4px}

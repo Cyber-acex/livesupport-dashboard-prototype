@@ -85,6 +85,7 @@
               <div class="status-toggle">
                 <button class="status-btn online active" data-status="online"><span class="status-dot online"></span> Online</button>
                 <button class="status-btn away" data-status="away"><span class="status-dot away"></span> Away</button>
+                <button class="status-btn busy" data-status="busy"><span class="status-dot busy"></span> Busy</button>
                 <button class="status-btn offline" data-status="offline"><span class="status-dot offline"></span> Offline</button>
               </div>
             </div>
@@ -706,6 +707,251 @@ fetch("/api/user")
     .kpi-card h4 { margin:0; color:#333; font-size:14px; font-weight:700; }
     .kpi-card p { margin:6px 0 0 0; font-size:22px; font-weight:800; color:#0b6ad6; }
     .kpi-small { font-size:12px; color:#666; margin-top:6px; }
+
+    /* Live Staff Presence Map Styles */
+    .staff-presence-section {
+      margin: 28px 0 28px 0;
+      padding: 0 0 28px 40px;
+      background: rgba(255,255,255,0.5);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+    }
+
+    .staff-presence-section .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .staff-presence-section h3 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .presence-filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      color: #475569;
+      padding: 8px 16px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .filter-btn:hover {
+      border-color: #2563eb;
+      color: #2563eb;
+      background: rgba(37,99,235,0.06);
+    }
+
+    .filter-btn.active {
+      background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+      color: white;
+      border-color: #0ea5e9;
+      box-shadow: 0 8px 16px rgba(79, 70, 229, 0.2);
+    }
+
+    .presence-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+      background: white;
+      padding: 20px;
+      border-radius: 22px;
+      box-shadow: 0 18px 40px rgba(15,23,42,0.07);
+    }
+
+    .presence-loading {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 32px;
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .presence-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 20px;
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .presence-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px rgba(15,23,42,0.12);
+      border-color: rgba(37,99,235,0.3);
+    }
+
+    .presence-card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .presence-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #0ea5e9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .presence-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-grow: 1;
+    }
+
+    .presence-name {
+      font-weight: 700;
+      color: #0f172a;
+      font-size: 15px;
+    }
+
+    .presence-role {
+      font-size: 12px;
+      color: #64748b;
+      text-transform: capitalize;
+    }
+
+    .presence-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #475569;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-indicator.online {
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+    }
+
+    .status-indicator.away {
+      background: #f59e0b;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+    }
+
+    .status-indicator.busy {
+      background: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+    }
+
+    .status-indicator.offline {
+      background: #9ca3af;
+      box-shadow: 0 0 8px rgba(156, 163, 175, 0.5);
+    }
+
+    .presence-details {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(15,23,42,0.08);
+    }
+
+    .presence-detail-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .presence-detail-label {
+      color: #64748b;
+    }
+
+    .presence-detail-value {
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .presence-activity {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #0ea5e9;
+    }
+
+    .presence-activity-icon {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #0ea5e9;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .presence-empty {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 48px 32px;
+      color: #94a3b8;
+    }
+
+    .presence-empty-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .presence-empty-text {
+      font-size: 14px;
+    }
+
+    @media (max-width: 768px) {
+      .presence-grid {
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      }
+      .staff-presence-section {
+        padding: 0 0 28px 20px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .presence-grid {
+        grid-template-columns: 1fr;
+      }
+      .staff-presence-section .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
 </style>
 <!-- Shiny Blue Stars -->
 
@@ -865,6 +1111,22 @@ fetch("/api/user")
           <h3>AI feedback</h3>
           <div class="metric-value" id="kpi-aiFeedbackAvg">—</div>
           <div class="metric-note">Average quality rating from feedback.</div>
+        </div>
+      </div>
+
+      <!-- Live Staff Presence Map -->
+      <div class="staff-presence-section">
+        <div class="section-header">
+          <h3>📍 Live Staff Presence Map</h3>
+          <div class="presence-filters">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="online">Online</button>
+            <button class="filter-btn" data-filter="away">Away</button>
+            <button class="filter-btn" data-filter="busy">Busy</button>
+          </div>
+        </div>
+        <div class="presence-grid" id="presenceGrid">
+          <div class="presence-loading">Loading staff presence...</div>
         </div>
       </div>
 

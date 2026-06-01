@@ -20,7 +20,8 @@
     timerId: null,
     callStartedAt: null,
     audioElements: {},
-    voiceToasts: []
+    voiceToasts: [],
+    pttSession: null
   };
 
   const ICE_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
@@ -404,6 +405,10 @@
             <div class="voice-meta">${item.role || 'Agent'} · ${item.status || 'online'}</div>
           </div>
           <div class="voice-actions">
+            <button class="voice-btn voice-btn-ptt" title="Push and hold to talk" data-ptt-id="${item.userId}" data-ptt-name="${item.name}">
+              <span class="voice-ptt-icon">🎤</span>
+              <span class="voice-ptt-wave"></span>
+            </button>
             <button class="voice-btn ${isCallActive ? 'voice-btn-danger' : 'voice-btn-secondary'}" data-action="${isCallActive ? 'hangup' : 'private'}" data-id="${item.userId}">${isCallActive ? 'Hang up' : 'Call'}</button>
             ${!isCallActive ? `<button class="voice-btn voice-btn-primary" data-action="channel" data-id="${item.userId}">Invite</button>` : ''}
           </div>
@@ -413,6 +418,11 @@
       staffPanel.querySelectorAll('[data-action="private"]').forEach(btn => btn.addEventListener('click', onPrivateCallClick));
       staffPanel.querySelectorAll('[data-action="hangup"]').forEach(btn => btn.addEventListener('click', onHangupClick));
       staffPanel.querySelectorAll('[data-action="channel"]').forEach(btn => btn.addEventListener('click', onInviteToChannelClick));
+      staffPanel.querySelectorAll('.voice-btn-ptt').forEach(btn => {
+        btn.addEventListener('mousedown', onPTTStart);
+        btn.addEventListener('mouseup', onPTTEnd);
+        btn.addEventListener('mouseleave', onPTTEnd);
+      });
     }
 
     if (channelsPanel) {
@@ -555,6 +565,65 @@
     state.socket.emit('voice:broadcast:start', { sessionId });
     showToast('Broadcast starting...');
     render();
+  }
+
+  async function onPTTStart(event) {
+    event.preventDefault();
+    if (!state.user) {
+      showToast('Please sign in to use push to talk.', 'warning');
+      return;
+    }
+    const button = event.currentTarget;
+    const targetUserId = Number(button.dataset.pttId);
+    const targetName = button.dataset.pttName;
+    
+    if (state.pttSession) return; // Already transmitting
+    
+    try {
+      await getLocalStream();
+      if (!state.localStream) return;
+      
+      // Enable mic for this PTT session
+      state.localStream.getAudioTracks().forEach(track => { track.enabled = true; });
+      
+      const sessionId = `ptt-${Date.now()}-${targetUserId}`;
+      const pc = createPeerConnection(targetUserId, sessionId, attachRemoteAudio);
+      state.peers[targetUserId] = { pc, meta: { userId: targetUserId, name: targetName }, audio: null };
+      state.pttSession = { id: sessionId, targetUserId, targetName, status: 'transmitting' };
+      
+      button.classList.add('active');
+      showToast(`🎤 Transmitting to ${targetName}...`, 'info');
+      
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.socket.emit('voice:signal', { targetUserId, sessionId, signal: offer, type: 'offer' });
+      state.socket.emit('voice:ptt:start', { targetUserId, sessionId });
+    } catch (err) {
+      console.error('PTT start error:', err);
+      showToast('Failed to start push to talk', 'error');
+    }
+  }
+
+  function onPTTEnd(event) {
+    event.preventDefault();
+    if (!state.pttSession) return;
+    
+    const button = event.currentTarget;
+    const targetUserId = Number(button.dataset.pttId);
+    
+    if (state.pttSession.targetUserId !== targetUserId) return;
+    
+    // Disable mic
+    if (state.localStream) {
+      state.localStream.getAudioTracks().forEach(track => { track.enabled = false; });
+    }
+    
+    button.classList.remove('active');
+    showToast('🎤 Stopped transmitting', 'info');
+    
+    // Notify the receiver
+    state.socket.emit('voice:ptt:end', { targetUserId, sessionId: state.pttSession.id });
+    state.pttSession = null;
   }
 
   function toggleMute() {
@@ -733,6 +802,45 @@
     }).catch(() => {});
   }
 
+  async function handlePTTIncoming(payload) {
+    if (!payload || !payload.sessionId || !payload.fromUserId) return;
+    const fromId = payload.fromUserId;
+    const sender = state.staff.find(s => s.userId === fromId);
+    const senderName = sender ? sender.name : 'Staff Member';
+    
+    // Mark sender as speaking
+    if (sender) {
+      sender.speaking = true;
+    }
+    
+    showToast(`🎤 ${senderName} is transmitting...`, 'info');
+    render();
+    
+    // Receiver only marks sender as transmitting and waits for an offer
+    const peerMeta = (state.peers[fromId] && state.peers[fromId].meta) || { userId: fromId, name: senderName };
+    if (!state.peers[fromId]) {
+      state.peers[fromId] = { pc: null, meta: peerMeta, audio: null };
+    }
+    
+    // Receiver will use handleSignal to answer the sender's offer and attach remote audio
+  }
+
+  function handlePTTEnd(payload) {
+    if (!payload || !payload.fromUserId) return;
+    const fromId = payload.fromUserId;
+    const sender = state.staff.find(s => s.userId === fromId);
+    const senderName = sender ? sender.name : 'Staff Member';
+    
+    // Mark sender as not speaking
+    if (sender) {
+      sender.speaking = false;
+    }
+    
+    showToast(`🎤 ${senderName} stopped transmitting`, 'info');
+    render();
+    cleanupPeer(String(fromId));
+  }
+
   function handleChannelJoined(payload) {
     if (!payload || !payload.channel || !Array.isArray(payload.members)) return;
     state.currentSession = { id: `channel-${payload.channel.id}`, type: 'channel', channel: payload.channel, status: 'joined' };
@@ -862,6 +970,8 @@
       state.currentSession = null;
       render();
     });
+    state.socket.on('voice:ptt:start', handlePTTIncoming);
+    state.socket.on('voice:ptt:end', handlePTTEnd);
 
     state.socket.on('disconnect', () => {
       showToast('Voice socket disconnected', 'warning');

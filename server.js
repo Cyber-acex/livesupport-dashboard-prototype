@@ -1694,6 +1694,36 @@ app.get('/api/staff-metrics', isAuthenticated, (req, res) => {
 });
 
 // ---------------------------
+// Staff Presence API
+// ---------------------------
+app.get('/api/staff-presence', isAuthenticated, (req, res) => {
+    // Get live staff presence from onlineAgents map and enrich with status data
+    const staffPresence = Array.from(onlineAgents.values()).map(agent => {
+        const lastActiveMs = agent.lastActive ? Date.now() - agent.lastActive : null;
+        let lastActiveText = '—';
+        if (lastActiveMs !== null) {
+            if (lastActiveMs < 60000) lastActiveText = 'just now';
+            else if (lastActiveMs < 3600000) lastActiveText = Math.floor(lastActiveMs / 60000) + 'm ago';
+            else if (lastActiveMs < 86400000) lastActiveText = Math.floor(lastActiveMs / 3600000) + 'h ago';
+            else lastActiveText = Math.floor(lastActiveMs / 86400000) + 'd ago';
+        }
+        
+        return {
+            userId: agent.userId,
+            name: agent.name || '—',
+            role: agent.role || 'agent',
+            status: agent.status || 'online',
+            activeConversation: agent.activeConversation,
+            lastActive: lastActiveText,
+            lastActiveMs: lastActiveMs,
+            socketId: agent.socketId
+        };
+    });
+    
+    res.json(staffPresence);
+});
+
+// ---------------------------
 // Settings API (per-user)
 // ---------------------------
 // Add columns if missing
@@ -4200,12 +4230,29 @@ io.on("connection", (socket) => {
             }
         } catch (e) {}
 
-        const record = Object.assign({}, agent, { socketId: socket.id, lastActive: Date.now(), activeConversation: null, autopilotMode: agent.autopilotMode || 'auto' });
+        const record = Object.assign({}, agent, { socketId: socket.id, lastActive: Date.now(), activeConversation: null, autopilotMode: agent.autopilotMode || 'auto', status: 'online' });
         onlineAgents.set(socket.id, record);
         // Broadcast presence list to all clients
-        const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
+        const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, status: a.status || 'online', activeConversation: a.activeConversation }));
         io.emit("presenceUpdate", list);
         console.log("Agent registered for presence:", record);
+    });
+
+    socket.on('agent:updateStatus', (data) => {
+        const record = onlineAgents.get(socket.id);
+        if (record && data && data.status) {
+            const validStatuses = ['online', 'away', 'busy', 'offline'];
+            const newStatus = String(data.status).toLowerCase();
+            if (validStatuses.includes(newStatus)) {
+                record.status = newStatus;
+                record.lastActive = Date.now();
+                onlineAgents.set(socket.id, record);
+                // Broadcast updated presence to all clients
+                const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, status: a.status || 'online', activeConversation: a.activeConversation }));
+                io.emit("presenceUpdate", list);
+                console.log(`Agent ${record.userId} (${record.name}) updated status to ${newStatus}`);
+            }
+        }
     });
 
     socket.on('agent:updateAutopilotMode', (data) => {

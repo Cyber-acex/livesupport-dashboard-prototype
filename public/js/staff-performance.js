@@ -166,11 +166,152 @@
 
   function escapeHtml(str){ return String(str).replace(/[&<>\"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'})[m]; }); }
 
+  // ============ Live Staff Presence Map ============
+  let staffPresence = [];
+  let currentPresenceFilter = 'all';
+
+  const $presenceGrid = () => document.getElementById('presenceGrid');
+  const $presenceFilterBtns = () => document.querySelectorAll('.filter-btn');
+
+  function getStatusColor(status) {
+    const colors = {
+      online: '#10b981',
+      away: '#f59e0b',
+      busy: '#ef4444',
+      offline: '#9ca3af'
+    };
+    return colors[status] || '#9ca3af';
+  }
+
+  function getStatusEmoji(status) {
+    const emojis = {
+      online: '🟢',
+      away: '🟡',
+      busy: '🔴',
+      offline: '⚫'
+    };
+    return emojis[status] || '⚫';
+  }
+
+  function fetchPresence() {
+    fetch('/api/staff-presence').then(r=>r.json()).then(data=>{
+      staffPresence = Array.isArray(data) ? data : [];
+      renderPresenceMap();
+    }).catch(err=>{
+      console.error('Failed to load staff presence', err);
+      if ($presenceGrid()) {
+        $presenceGrid().innerHTML = '<div class="presence-empty"><div class="presence-empty-icon">⚠️</div><div class="presence-empty-text">Failed to load staff presence</div></div>';
+      }
+    });
+  }
+
+  function renderPresenceMap() {
+    const grid = $presenceGrid();
+    if (!grid) return;
+
+    let filtered = staffPresence.filter(staff => {
+      if (currentPresenceFilter === 'all') return true;
+      return staff.status === currentPresenceFilter;
+    });
+
+    grid.innerHTML = '';
+    if (filtered.length === 0) {
+      grid.innerHTML = '<div class="presence-empty"><div class="presence-empty-icon">👋</div><div class="presence-empty-text">No staff ' + (currentPresenceFilter === 'all' ? 'online' : 'with status ' + currentPresenceFilter) + '</div></div>';
+      return;
+    }
+
+    filtered.forEach(staff => {
+      const card = document.createElement('div');
+      card.className = 'presence-card';
+      const initials = escapeHtml(staff.name).split(' ').map(n=>n[0]).join('').substring(0,2).toUpperCase();
+      const statusLabel = staff.status ? staff.status.charAt(0).toUpperCase() + staff.status.slice(1) : 'Offline';
+      
+      card.innerHTML = `
+        <div class="presence-card-header">
+          <div class="presence-avatar">${initials}</div>
+          <div class="presence-info">
+            <div class="presence-name">${escapeHtml(staff.name || '—')}</div>
+            <div class="presence-role">${escapeHtml(staff.role || 'agent')}</div>
+          </div>
+        </div>
+        <div class="presence-status">
+          <span class="status-indicator ${staff.status || 'offline'}"></span>
+          <span>${getStatusEmoji(staff.status || 'offline')} ${statusLabel}</span>
+        </div>
+        <div class="presence-details">
+          <div class="presence-detail-item">
+            <span class="presence-detail-label">Last active:</span>
+            <span class="presence-detail-value">${escapeHtml(staff.lastActive || '—')}</span>
+          </div>
+          ${staff.activeConversation ? `
+          <div class="presence-detail-item">
+            <span class="presence-detail-label">On chat:</span>
+            <span class="presence-activity">
+              <span class="presence-activity-icon"></span>
+              <span>Active</span>
+            </span>
+          </div>
+          ` : `
+          <div class="presence-detail-item">
+            <span class="presence-detail-label">Status:</span>
+            <span class="presence-detail-value">Available</span>
+          </div>
+          `}
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+  }
+
+  function setupPresenceFilters() {
+    const filterBtns = $presenceFilterBtns();
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentPresenceFilter = btn.dataset.filter;
+        renderPresenceMap();
+      });
+    });
+  }
+
+  // ============ Socket.IO Real-time Presence Updates ============
+  if (typeof io !== 'undefined') {
+    const socket = io();
+    
+    socket.on('presenceUpdate', (data) => {
+      if (Array.isArray(data)) {
+        // Update staff presence with latest data from socket
+        staffPresence = staffPresence.map(staff => {
+          const updated = data.find(d => d.userId === staff.userId);
+          if (updated) {
+            return {
+              ...staff,
+              status: updated.status || staff.status,
+              activeConversation: updated.activeConversation !== undefined ? updated.activeConversation : staff.activeConversation
+            };
+          }
+          return staff;
+        });
+        renderPresenceMap();
+      }
+    });
+
+    socket.on('connect', () => {
+      console.log('Connected to presence updates');
+    });
+  }
+
   // Wire events
   document.addEventListener('DOMContentLoaded', ()=>{
     if ($search()) $search().addEventListener('input', renderStaffList);
     if ($sort()) $sort().addEventListener('change', renderStaffList);
     if ($refresh()) $refresh().addEventListener('click', fetchMetrics);
+    
+    // Setup presence map
+    setupPresenceFilters();
+    fetchPresence();
+    
     fetchMetrics();
   });
 
