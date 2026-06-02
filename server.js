@@ -3583,6 +3583,29 @@ app.get('/api/orders-summary/:phone', (req, res) => {
     );
 });
 
+app.get('/api/dashboard-stats', (req, res) => {
+    db.query('SELECT COUNT(*) AS orders FROM orders', (err, results) => {
+        if (err) {
+            console.error('Error fetching dashboard stats:', err);
+            return res.status(500).json({ error: "Database error" });
+        }
+        res.json({ orders: Number(results[0]?.orders || 0) });
+    });
+});
+
+app.get('/api/dashboard-snapshot/instant', (req, res) => {
+    res.json({ data: dashboardSnapshots.get('instant') || null });
+});
+
+app.post('/api/dashboard-snapshot', express.json(), (req, res) => {
+    const { name, data } = req.body;
+    if (!name || !data) {
+        return res.status(400).json({ error: 'Missing snapshot name or data' });
+    }
+    dashboardSnapshots.set(name, { ...data, saved_at: new Date().toISOString() });
+    res.json({ success: true, data: dashboardSnapshots.get(name) });
+});
+
 // Get all orders (for Orders page)
 app.get('/api/orders', (req, res) => {
     db.query(
@@ -4416,6 +4439,17 @@ io.on("connection", (socket) => {
         });
     });
 
+    socket.on('voice:broadcast:invite', (data) => {
+        if (!data || !data.targetUserId || !data.sessionId) return;
+        const session = getVoiceSessionById(data.sessionId);
+        if (!session || session.type !== 'broadcast' || session.status !== 'active') return;
+        const inviter = voiceUsers.get(socket.id);
+        if (!inviter || String(inviter.userId) !== String(session.createdBy)) return;
+        const targetSocketId = getSocketByUserId(data.targetUserId);
+        if (!targetSocketId || targetSocketId === socket.id) return;
+        io.to(targetSocketId).emit('voice:broadcast:incoming', { sessionId: session.id, from: { userId: inviter.userId, name: inviter.name } });
+    });
+
     socket.on('voice:broadcast:join', (data) => {
         if (!data || !data.sessionId) return;
         const session = getVoiceSessionById(data.sessionId);
@@ -4683,7 +4717,9 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
                 (SELECT COUNT(*) FROM tickets) AS tickets,
                 (SELECT COUNT(*) FROM tickets WHERE escalated = TRUE) AS escalatedTickets,
                 (SELECT COUNT(*) FROM receipts) AS receipts,
-                (SELECT COUNT(*) FROM receipts WHERE escalated = TRUE) AS escalatedReceipts
+                (SELECT COUNT(*) FROM receipts WHERE escalated = TRUE) AS escalatedReceipts,
+                (SELECT COUNT(*) FROM escalations) AS escalatedChats,
+                (SELECT COUNT(*) FROM resolved) AS resolvedChats
         `);
 
         const [feedbackRows] = await db.promise().query(`
@@ -4882,15 +4918,15 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
                 SUM(CASE WHEN user_id IS NOT NULL OR LOWER(sender) ~ 'agent|staff|sent_by_agent' THEN 1 ELSE 0 END) AS staff_count
             FROM (
                 SELECT sender, created_at, NULL AS user_id FROM messages
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM replies
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM ai_messages
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM staff_messages
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM "ai replies"
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM "staff replies"
             ) AS all_msgs
             WHERE created_at >= DATE_TRUNC('year', CURRENT_DATE)
@@ -4903,15 +4939,15 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
                 SUM(CASE WHEN user_id IS NOT NULL OR LOWER(sender) REGEXP 'agent|staff|sent_by_agent' THEN 1 ELSE 0 END) AS staff_count
             FROM (
                 SELECT sender, created_at, NULL AS user_id FROM messages
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM replies
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM ai_messages
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM staff_messages
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM \`ai replies\`
-                UNION ALL
+                UNION
                 SELECT sender, created_at, user_id FROM \`staff replies\`
             ) AS all_msgs
             WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01')
@@ -5169,4 +5205,58 @@ app.post('/debug/assign-escalation', (req, res) => {
 
         return res.json({ ok: true, conversationId, assignedStaffId, assignedSocketId });
     });
+});
+
+// Translation endpoint used by inbox UI. Accepts { text, target }
+app.post('/api/translate', express.json(), async (req, res) => {
+    try {
+        const { text, target } = req.body || {};
+        if (!text || typeof text !== 'string' || !text.trim()) {
+            return res.status(400).json({ error: 'Missing text' });
+        }
+
+        const trimmed = text.trim().slice(0, 5000); // limit length
+
+        // If Google Cloud Translate API key is provided, prefer it
+        const googleKey = process.env.GOOGLE_TRANSLATE_API_KEY;
+        if (googleKey) {
+            try {
+                const url = `https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(googleKey)}`;
+                const body = { q: trimmed, target: (target && target !== 'auto') ? target : 'en', format: 'text' };
+                const gRes = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const gData = await gRes.json();
+                if (gRes.ok && gData && gData.data && Array.isArray(gData.data.translations) && gData.data.translations.length > 0) {
+                    const t = gData.data.translations[0];
+                    return res.json({ translatedText: t.translatedText, detectedSource: t.detectedSourceLanguage || null });
+                }
+            } catch (err) {
+                console.warn('Google Translate call failed, falling back:', err?.message || err);
+            }
+        }
+
+        // Fallback to LibreTranslate (self-hosted URL via LIBRETRANSLATE_URL or public instance)
+        const libreHost = process.env.LIBRETRANSLATE_URL || 'https://libretranslate.de';
+        // Libre accepts source='auto'
+        const desiredTarget = (target && target !== 'auto') ? target : 'en';
+        const translateRes = await fetch(libreHost + '/translate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ q: trimmed, source: 'auto', target: desiredTarget, format: 'text' })
+        });
+        if (!translateRes.ok) {
+            const txt = await translateRes.text().catch(()=>null);
+            console.error('/translate fallback failed', translateRes.status, txt);
+            return res.status(502).json({ error: 'translator_unavailable' });
+        }
+        const tData = await translateRes.json();
+        // LibreTranslate returns { translatedText }
+        return res.json({ translatedText: tData.translatedText || tData.translated || null });
+    } catch (err) {
+        console.error('POST /api/translate error', err);
+        res.status(500).json({ error: 'internal_error' });
+    }
 });

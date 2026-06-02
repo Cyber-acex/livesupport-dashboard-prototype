@@ -1,20 +1,11 @@
-// Ensure the DOM is fully loaded before initializing the pie chart
-document.addEventListener('DOMContentLoaded', () => {
-    const chart5 = document.getElementById('chart5');
-    const ticketCanvas = document.getElementById('ticketBarChart');
-    const messageCanvas = document.getElementById('messageBarChart');
-    const ctx5 = chart5 ? chart5.getContext('2d') : null;
-    const barCtx = ticketCanvas ? ticketCanvas.getContext('2d') : null;
-    const messageCtx = messageCanvas ? messageCanvas.getContext('2d') : null;
+// Ensure the DOM is fully loaded before initializing the analytics page
+const startAnalytics = () => {
     const gaugeRespCtx = document.getElementById('gaugeResponse') ? document.getElementById('gaugeResponse').getContext('2d') : null;
     const gaugeResRateCtx = document.getElementById('gaugeResolution') ? document.getElementById('gaugeResolution').getContext('2d') : null;
-    const outwardChartContainer = document.getElementById('outwardMessagesChart');
+    const aiStaffCtx = document.getElementById('aiStaffMonthlyChart') ? document.getElementById('aiStaffMonthlyChart').getContext('2d') : null;
     let gaugeRespChart = null;
     let gaugeResRateChart = null;
-    let ticketChart = null;
-    let messageChart = null;
-    let outwardMessagesChart = null;
-    let analyticsChart = null;
+    let aiStaffChart = null;
     // Controls and KPI elements
     const startDateInput = document.getElementById('startDate');
     const endDateInput = document.getElementById('endDate');
@@ -33,139 +24,23 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastTicketsData = null;
     let lastMessagesData = null;
 
-    // Function to create bar chart for tickets by period
-    function createTicketBarChart(ctx, data) {
-        const gradient = ctx.createLinearGradient(0, 0, 0, 340);
-        gradient.addColorStop(0, 'rgba(59, 130, 246, 0.95)');
-        gradient.addColorStop(1, 'rgba(59, 130, 246, 0.7)');
+    // Support activity pie chart
+    const supportPieCanvas = document.getElementById('supportActivityChart');
+    const supportPieCtx = supportPieCanvas ? supportPieCanvas.getContext('2d') : null;
+    let supportPieChart = null;
 
-        return new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: ['Day', 'Week', 'Month'],
-                datasets: [{
-                    label: 'Tickets Created',
-                    data: [data.daily, data.weekly, data.monthly],
-                    backgroundColor: gradient,
-                    hoverBackgroundColor: 'rgba(37, 99, 235, 0.95)',
-                    borderColor: 'rgba(37, 99, 235, 0.9)',
-                    borderWidth: 0,
-                    borderRadius: 24,
-                    borderSkipped: false,
-                    barPercentage: 0.65,
-                    categoryPercentage: 0.7,
-                    maxBarThickness: 84
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: false
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: context => {
-                                const value = context.raw || 0;
-                                return ` ${context.dataset.label}: ${value}`;
-                            }
-                        },
-                        backgroundColor: 'rgba(15, 23, 42, 0.92)',
-                        titleColor: '#fff',
-                        bodyColor: '#fff',
-                        borderRadius: 14,
-                        padding: 12
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: { display: false, drawBorder: false },
-                        ticks: { color: '#334155', font: { size: 14, weight: 600 } }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        min: 0,
-                        max: 20,
-                        grid: { color: 'rgba(148,163,184,0.18)', drawBorder: false },
-                        ticks: {
-                            color: '#64748b',
-                            font: { size: 13 },
-                            autoSkip: false,
-                            values: [0, 1, 5, 7, 9, 10, 20],
-                            callback: value => value.toString()
-                        }
-                    }
-                }
-            }
-        });
-    }
+    // Ticket creation bar chart
+    const ticketCreationCanvas = document.getElementById('ticketCreationBarChart');
+    const ticketCreationBarCtx = ticketCreationCanvas ? ticketCreationCanvas.getContext('2d') : null;
+    const ticketCreationLoading = document.getElementById('ticketCreationBarLoading');
+    const ticketCreationEmpty = document.getElementById('ticketCreationEmpty');
+    const summaryDailyTickets = document.getElementById('summaryDailyTickets');
+    const summaryWeeklyTickets = document.getElementById('summaryWeeklyTickets');
+    const summaryMonthlyTickets = document.getElementById('summaryMonthlyTickets');
+    let ticketCreationBarChart = null;
+    let lastTicketCreationData = null;
 
-    function updateTicketBarChart(chart, data) {
-        if (!chart || !data) return;
-        chart.data.datasets[0].data = [data.daily, data.weekly, data.monthly];
-        chart.update();
-    }
-
-    async function refreshTicketCountChart() {
-        try {
-            const data = await fetchTicketsByPeriod();
-            lastTicketsData = data;
-            updateTicketBarChart(ticketChart, data);
-            return data;
-        } catch (error) {
-            console.error('tickets-by-period fetch error:', error);
-            updateTicketBarChart(ticketChart, { daily: 0, weekly: 0, monthly: 0 });
-            return { daily: 0, weekly: 0, monthly: 0 };
-        }
-    }
-
-    function msUntilNextMidnight() {
-        const now = new Date();
-        const next = new Date(now);
-        next.setHours(24, 0, 0, 0);
-        return next - now;
-    }
-
-    function msUntilNextWeekStart() {
-        const now = new Date();
-        const day = now.getDay();
-        const diff = ((8 - day) % 7) || 7; // Next Monday
-        const next = new Date(now);
-        next.setDate(now.getDate() + diff);
-        next.setHours(0, 0, 0, 0);
-        return next - now;
-    }
-
-    function msUntilNextMonthStart() {
-        const now = new Date();
-        const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        next.setHours(0, 0, 0, 0);
-        return next - now;
-    }
-
-    function scheduleDailyTicketRefresh() {
-        setTimeout(async () => {
-            await refreshTicketCountChart();
-            scheduleDailyTicketRefresh();
-        }, msUntilNextMidnight());
-    }
-
-    function scheduleWeeklyTicketRefresh() {
-        setTimeout(async () => {
-            await refreshTicketCountChart();
-            scheduleWeeklyTicketRefresh();
-        }, msUntilNextWeekStart());
-    }
-
-    function scheduleMonthlyTicketRefresh() {
-        setTimeout(async () => {
-            await refreshTicketCountChart();
-            scheduleMonthlyTicketRefresh();
-        }, msUntilNextMonthStart());
-    }
-
-    // Fetch data for bar chart
+    // Build query params for analytics API requests
     function buildQueryParams() {
         const params = new URLSearchParams();
         if (startDateInput && startDateInput.value) params.set('start', startDateInput.value);
@@ -194,20 +69,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
     }
 
-    // Fetch counts from server and render bar chart (fetchTicketsByPeriod already returns parsed JSON)
-    if (barCtx) {
-        ticketChart = createTicketBarChart(barCtx, { daily: 0, weekly: 0, monthly: 0 });
-        refreshTicketCountChart();
-        scheduleDailyTicketRefresh();
-        scheduleWeeklyTicketRefresh();
-        scheduleMonthlyTicketRefresh();
-    } else {
-        console.warn('Ticket bar chart canvas not found.');
-    }
-    messageChart = null; // created later after the function definition
-    const aiStaffCtx = document.getElementById('aiStaffMonthlyChart') ? document.getElementById('aiStaffMonthlyChart').getContext('2d') : null;
-    let aiStaffChart = null;
-
     let socket = null;
     try {
         if (typeof io !== 'undefined') {
@@ -217,95 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
         socket = null;
     }
 
-    // Fetch live data and render the 3D pie chart
-    function create3DPieChart(ctx, data) {
-        const colors = [
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200),
-            ctx.createRadialGradient(200, 200, 50, 200, 200, 200)
-        ];
-        colors[0].addColorStop(0, '#00bcd4'); colors[0].addColorStop(1, '#006064');
-        colors[1].addColorStop(0, '#ffeb3b'); colors[1].addColorStop(1, '#f57c00');
-        colors[2].addColorStop(0, '#2196f3'); colors[2].addColorStop(1, '#0d47a1');
-        colors[3].addColorStop(0, '#f44336'); colors[3].addColorStop(1, '#b71c1c');
-        colors[4].addColorStop(0, '#9c27b0'); colors[4].addColorStop(1, '#4a148c');
-
-        return new Chart(ctx, {
-            type: 'pie',
-            data: {
-                labels: ['Chats', 'Escalated Chats', 'Tickets', 'Escalated Tickets', 'Receipts'],
-                datasets: [{
-                    label: 'Overview',
-                    data: [
-                        data.numChats,
-                        data.numEscalatedChats,
-                        data.numTickets,
-                        data.numEscalatedTickets,
-                        data.numReceipts
-                    ],
-                    backgroundColor: colors,
-                    borderColor: [
-                        '#0097a7', '#ff9800', '#1976d2', '#d32f2f', '#7b1fa2'
-                    ],
-                    borderWidth: 3
-                }]
-            },
-            options: {
-                responsive: true,
-                interaction: {
-                    mode: 'nearest',
-                    intersect: false
-                },
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top',
-                        labels: {
-                            color: '#2c2c2c',
-                            font: {
-                                size: 14,
-                                weight: 'bold'
-                            },
-                            padding: 20
-                        }
-                    },
-                    tooltip: {
-                        intersect: false,
-                        position: 'nearest',
-                        callbacks: {
-                            label: function(context) {
-                                const label = context.label || '';
-                                const value = Number(context.raw || 0);
-                                const sum = context.dataset.data.reduce((total, item) => total + Number(item || 0), 0);
-                                const percent = sum ? ((value / sum) * 100).toFixed(1) : '0.0';
-                                return `${label}: ${value} (${percent}%)`;
-                            }
-                        }
-                    }
-                },
-                animation: {
-                    animateScale: true,
-                    animateRotate: true
-                }
-            },
-            plugins: [{
-                id: 'shadow',
-                beforeDraw: chart => {
-                    const ctx = chart.ctx;
-                    ctx.save();
-                    ctx.shadowColor = 'rgba(0,0,0,0.4)';
-                    ctx.shadowBlur = 24;
-                    ctx.shadowOffsetX = 10;
-                    ctx.shadowOffsetY = 10;
-                },
-                afterDraw: chart => {
-                    chart.ctx.restore();
-                }
-            }]
-        });
-    }
+    // Pie chart removed: analytics summary and chart were removed per user request.
 
     // Small Chart.js plugin to draw center text inside semi-circle gauges
     const centerTextPlugin = {
@@ -411,6 +184,138 @@ document.addEventListener('DOMContentLoaded', () => {
         chart.update();
     }
 
+    function getChartTextColor() {
+        return document.documentElement.classList.contains('dark-theme') ? '#e2e8f0' : '#334155';
+    }
+
+    function getChartGridColor() {
+        return document.documentElement.classList.contains('dark-theme') ? 'rgba(226,232,240,0.16)' : 'rgba(148,163,184,0.18)';
+    }
+
+    function createTicketCreationBarChart(ctx, counts) {
+        if (!ctx || typeof Chart === 'undefined') return null;
+        const labels = ['Daily', 'Weekly', 'Monthly'];
+        const data = [counts.daily, counts.weekly, counts.monthly];
+        const textColor = getChartTextColor();
+        return new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label: 'Tickets',
+                    data,
+                    backgroundColor: ['#3B82F6', '#22C55E', '#A855F7'],
+                    borderColor: ['#2563eb', '#16a34a', '#7c3aed'],
+                    borderWidth: 2,
+                    hoverBackgroundColor: ['#60a5fa', '#4ade80', '#c084fc'],
+                    borderRadius: 12,
+                    maxBarThickness: 64,
+                    barPercentage: 0.75,
+                    categoryPercentage: 0.72
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: { duration: 700, easing: 'easeOutQuart' },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        enabled: true,
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: context => `${context.dataset.label}: ${context.parsed.y || 0}`
+                        },
+                        backgroundColor: document.documentElement.classList.contains('dark-theme') ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.96)',
+                        titleColor: textColor,
+                        bodyColor: textColor,
+                        borderColor: getChartGridColor(),
+                        borderWidth: 1,
+                        padding: 10,
+                        cornerRadius: 10,
+                        displayColors: false
+                    },
+                    title: { display: false }
+                },
+                interaction: {
+                    mode: 'index',
+                    axis: 'x',
+                    intersect: false
+                },
+                hover: {
+                    mode: 'index',
+                    intersect: false,
+                    onHover: (event, elements) => {
+                        try { event.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default'; } catch (e) {}
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Period', color: textColor, font: { weight: '600' } },
+                        grid: { display: false },
+                        ticks: { color: textColor }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Tickets', color: textColor, font: { weight: '600' } },
+                        ticks: { color: textColor, precision: 0 },
+                        grid: { color: getChartGridColor(), borderDash: [4, 4] }
+                    }
+                }
+            }
+        });
+    }
+
+    function updateTicketCreationBarChart(chart, counts) {
+        if (!chart) return;
+        chart.data.datasets[0].data = [counts.daily, counts.weekly, counts.monthly];
+        chart.options.scales.x.ticks.color = getChartTextColor();
+        chart.options.scales.x.title.color = getChartTextColor();
+        chart.options.scales.y.ticks.color = getChartTextColor();
+        chart.options.scales.y.title.color = getChartTextColor();
+        chart.options.plugins.tooltip.backgroundColor = document.documentElement.classList.contains('dark-theme') ? 'rgba(15,23,42,0.94)' : 'rgba(255,255,255,0.96)';
+        chart.options.plugins.tooltip.titleColor = getChartTextColor();
+        chart.options.plugins.tooltip.bodyColor = getChartTextColor();
+        chart.options.scales.y.grid.color = getChartGridColor();
+        chart.update();
+    }
+
+    async function refreshTicketCreationChart() {
+        if (ticketCreationLoading) ticketCreationLoading.style.display = 'flex';
+        if (ticketCreationEmpty) ticketCreationEmpty.style.display = 'none';
+        try {
+            const counts = await fetchTicketsByPeriod();
+            lastTicketCreationData = counts;
+            const allZero = (!counts || (!counts.daily && !counts.weekly && !counts.monthly));
+            if (!summaryDailyTickets || !summaryWeeklyTickets || !summaryMonthlyTickets) return counts;
+            summaryDailyTickets.textContent = counts.daily;
+            summaryWeeklyTickets.textContent = counts.weekly;
+            summaryMonthlyTickets.textContent = counts.monthly;
+            if (allZero) {
+                if (ticketCreationBarChart) {
+                    ticketCreationBarChart.destroy();
+                    ticketCreationBarChart = null;
+                }
+                if (ticketCreationEmpty) ticketCreationEmpty.style.display = 'block';
+                return counts;
+            }
+            if (!ticketCreationBarChart && ticketCreationBarCtx) {
+                ticketCreationBarChart = createTicketCreationBarChart(ticketCreationBarCtx, counts);
+            } else if (ticketCreationBarChart) {
+                updateTicketCreationBarChart(ticketCreationBarChart, counts);
+            }
+            if (ticketCreationEmpty) ticketCreationEmpty.style.display = 'none';
+            return counts;
+        } catch (error) {
+            console.error('refreshTicketCreationChart error', error);
+            if (ticketCreationEmpty) ticketCreationEmpty.style.display = 'block';
+            return null;
+        } finally {
+            if (ticketCreationLoading) ticketCreationLoading.style.display = 'none';
+        }
+    }
+
     // Fetch metrics for the logged-in user and update gauges
     async function refreshMyMetrics() {
         try {
@@ -450,247 +355,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    const chart5Labels = ['Chats', 'Escalated Chats', 'Tickets', 'Escalated Tickets', 'Receipts'];
-
-    function updateChart5Summary(data) {
-        if (!data) return;
-        const updates = [
-            { id: 'summaryChats', value: data.numChats },
-            { id: 'summaryEscalatedChats', value: data.numEscalatedChats },
-            { id: 'summaryTickets', value: data.numTickets },
-            { id: 'summaryEscalatedTickets', value: data.numEscalatedTickets },
-            { id: 'summaryReceipts', value: data.numReceipts }
-        ];
-        updates.forEach(item => {
-            const el = document.getElementById(item.id);
-            if (!el) return;
-            el.textContent = typeof item.value === 'number' ? item.value : '—';
-        });
-    }
-
-    function updateAnalyticsChart(chart, data) {
-        if (!chart) return;
-        chart.data.labels = chart5Labels;
-        chart.data.datasets[0].data = [
-            data.numChats,
-            data.numEscalatedChats,
-            data.numTickets,
-            data.numEscalatedTickets,
-            data.numReceipts
-        ];
-        chart.update();
-        updateChart5Summary(data);
-    }
-
-    function refreshAnalyticsChart() {
-        if (!ctx5) {
-            loadKPIs();
-            return Promise.resolve();
-        }
-
-        const qp = buildQueryParams();
-        return fetch('/api/analytics' + qp, { credentials: 'same-origin' })
-            .then(handleAuthRedirect)
-            .then(res => {
-                if (!res.ok) return res.text().then(t => { throw new Error(t || 'analytics fetch failed'); });
-                return res.json();
-            })
-            .then(data => {
-                lastAnalyticsData = data;
-                if (!analyticsChart) {
-                    analyticsChart = create3DPieChart(ctx5, data);
-                } else {
-                    updateAnalyticsChart(analyticsChart, data);
-                }
-                updateChart5Summary(data);
-                loadKPIs();
-            })
-            .catch(() => {
-                if (!analyticsChart && ctx5) {
-                    analyticsChart = create3DPieChart(ctx5, {
-                        numChats: 10,
-                        numEscalatedChats: 8,
-                        numTickets: 12,
-                        numEscalatedTickets: 3,
-                        numReceipts: 20
-                    });
-                    updateChart5Summary({
-                        numChats: 10,
-                        numEscalatedChats: 8,
-                        numTickets: 12,
-                        numEscalatedTickets: 3,
-                        numReceipts: 20
-                    });
-                }
-                loadKPIs();
-            });
-    }
+    
 
     async function initializeAnalyticsPage() {
-        if (!analyticsChart && ctx5) {
-            analyticsChart = create3DPieChart(ctx5, {
-                numChats: 0,
-                numEscalatedChats: 0,
-                numTickets: 0,
-                numEscalatedTickets: 0,
-                numReceipts: 0
-            });
-            updateChart5Summary({
-                numChats: 0,
-                numEscalatedChats: 0,
-                numTickets: 0,
-                numEscalatedTickets: 0,
-                numReceipts: 0
-            });
-        }
 
-        if (!messageChart && messageCtx) {
-            messageChart = createMessageBarChart(messageCtx, { daily: 0, weekly: 0, monthly: 0 });
-        }
-        if (!outwardMessagesChart && outwardChartContainer) {
-            outwardMessagesChart = createOutwardMessagesChart(outwardChartContainer, { daily: 0, weekly: 0, monthly: 0 });
-        }
         if (!aiStaffChart && aiStaffCtx) {
             aiStaffChart = createAIStaffMonthlyChart(aiStaffCtx, [], [], []);
         }
 
         await Promise.allSettled([
-            refreshAnalyticsChart(),
-            refreshMessageChart(),
-            refreshTicketCountChart(),
-            refreshOutwardMessagesChart(),
-            refreshAIStaffMonthlyChart()
+            refreshAnalyticsData(),
+            refreshAIStaffMonthlyChart(),
+            refreshTicketCreationChart()
         ]);
         loadKPIs();
     }
 
     initializeAnalyticsPage();
 
-    // Function to create bar chart for message traffic
-    function createMessageBarChart(ctx, data) {
-        return new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: ['Today', 'This Week', 'This Month'],
-                datasets: [{
-                    label: 'Messages Received',
-                    data: [data.daily, data.weekly, data.monthly],
-                    backgroundColor: [
-                        '#4CAF50',
-                        '#2196F3',
-                        '#FF9800'
-                    ],
-                    borderColor: [
-                        '#4CAF50',
-                        '#2196F3',
-                        '#FF9800'
-                    ],
-                    borderWidth: 2
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'top'
-                    },
-                    title: {
-                        display: true,
-                        text: 'Message Traffic by Period'
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true
-                    }
-                }
-            }
-        });
-    }
-
-    function createOutwardMessagesChart(container, data) {
-        const options = {
-            chart: {
-                type: 'bar',
-                height: 240,
-                toolbar: { show: false }
-            },
-            series: [{
-                name: 'Outward Messages',
-                data: [data.daily, data.weekly, data.monthly]
-            }],
-            colors: ['#465fff'],
-            plotOptions: {
-                bar: {
-                    horizontal: false,
-                    columnWidth: '55%',
-                    borderRadius: 8,
-                    borderRadiusApplication: 'end'
-                }
-            },
-            dataLabels: { enabled: false },
-            xaxis: {
-                categories: ['Day', 'Week', 'Month'],
-                axisBorder: { show: false },
-                axisTicks: { show: false },
-                labels: {
-                    style: { colors: '#64748b', fontSize: '13px', fontWeight: 600 }
-                }
-            },
-            yaxis: {
-                labels: {
-                    style: { colors: '#64748b', fontSize: '13px' }
-                }
-            },
-            grid: {
-                borderColor: 'rgba(148,163,184,0.18)',
-                strokeDashArray: 5,
-                yaxis: { lines: { show: true } }
-            },
-            legend: { show: false },
-            tooltip: {
-                theme: 'light',
-                x: { show: false },
-                y: {
-                    formatter: function (val) {
-                        return val;
-                    }
-                }
-            }
-        };
-
-        const chart = new ApexCharts(container, options);
-        chart.render();
-        return chart;
-    }
-
-    function updateOutwardMessagesChart(chart, data) {
-        if (!chart || !data) return;
-        chart.updateSeries([{ data: [data.daily, data.weekly, data.monthly] }]);
-    }
-
-    async function refreshOutwardMessagesChart() {
-        if (!outwardMessagesChart) return;
-        try {
-            const res = await fetch('/api/outward-messages-by-period' + buildQueryParams(), { credentials: 'same-origin' });
-            handleAuthRedirect(res);
-            if (!res.ok) {
-                const body = await res.text();
-                console.error('outward-messages-by-period fetch failed', res.status, body);
-                throw new Error('Fetch failed');
-            }
-            const data = await res.json();
-            updateOutwardMessagesChart(outwardMessagesChart, data);
-            return data;
-        } catch (error) {
-            console.error('refreshOutwardMessagesChart error', error);
-            if (outwardMessagesChart) {
-                updateOutwardMessagesChart(outwardMessagesChart, { daily: 34, weekly: 182, monthly: 732 });
-            }
-            return { daily: 34, weekly: 182, monthly: 732 };
-        }
-    }
 
     function createAIStaffMonthlyChart(ctx, labels, aiData, staffData) {
         return new Chart(ctx, {
@@ -826,6 +508,64 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Create the support activity pie/doughnut chart
+    function createSupportPieChart(ctx, items) {
+        if (!ctx || typeof Chart === 'undefined') return null;
+        const labels = items.map(i => i.name);
+        const data = items.map(i => i.value);
+        const bg = items.map(i => i.color);
+        const cfg = new Chart(ctx, {
+            type: 'doughnut',
+            data: { labels, datasets: [{ data, backgroundColor: bg, borderWidth: 0 }] },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '50%',
+                animation: { animateRotate: true, duration: 800, easing: 'cubicBezier(.2,.8,.2,1)' },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        enabled: true,
+                        callbacks: {
+                            label: function(context) {
+                                const v = context.parsed || 0;
+                                const total = context.chart._metasets ? context.chart._metasets[0].total : context.chart.data.datasets[0].data.reduce((s,a)=>s+(a||0),0);
+                                const pct = total ? Math.round((v/total)*100) : 0;
+                                return `${context.label}: ${v} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        return cfg;
+    }
+
+    function renderSupportLegend(items) {
+        const container = document.getElementById('supportActivityLegend');
+        if (!container) return;
+        container.innerHTML = '';
+        items.forEach(it => {
+            const row = document.createElement('div');
+            row.style.display = 'flex';
+            row.style.alignItems = 'center';
+            row.style.gap = '10px';
+            const sw = document.createElement('span');
+            sw.style.width = '14px';
+            sw.style.height = '14px';
+            sw.style.borderRadius = '4px';
+            sw.style.background = it.color;
+            sw.style.flex = '0 0 14px';
+            const label = document.createElement('div');
+            label.style.fontWeight = '700';
+            label.style.color = getComputedStyle(document.body).color || '#0f172a';
+            label.textContent = `${it.name} — ${it.value}`;
+            row.appendChild(sw);
+            row.appendChild(label);
+            container.appendChild(row);
+        });
+    }
+
     function normalizeMonthlyLabels(labels, aiData, staffData) {
         const monthOrder = {
             Jan: 0, Feb: 1, Mar: 2, Apr: 3,
@@ -857,42 +597,6 @@ document.addEventListener('DOMContentLoaded', () => {
         chart.data.datasets[0].data = normalized.ai;
         chart.data.datasets[1].data = normalized.staff;
         chart.update();
-    }
-
-    function updateMessageChart(chart, data) {
-        if (!chart) return;
-        chart.data.datasets[0].data = [data.daily, data.weekly, data.monthly];
-        chart.update();
-    }
-
-    async function refreshMessageChart() {
-        try {
-            const res = await fetch('/api/messages-by-period' + buildQueryParams(), { credentials: 'same-origin' });
-            handleAuthRedirect(res);
-            if (!res.ok) {
-                const body = await res.text();
-                console.error('messages-by-period fetch failed', res.status, body);
-                throw new Error('Fetch failed');
-            }
-            const data = await res.json();
-            lastMessagesData = data;
-            if (!messageChart) {
-                messageChart = createMessageBarChart(messageCtx, data);
-            } else {
-                updateMessageChart(messageChart, data);
-            }
-            return data;
-        } catch (error) {
-            console.error('refreshMessageChart error', error);
-            if (!messageChart) {
-                messageChart = createMessageBarChart(messageCtx, {
-                    daily: 50,
-                    weekly: 300,
-                    monthly: 1200
-                });
-            }
-            return { daily: 50, weekly: 300, monthly: 1200 };
-        }
     }
 
     async function refreshAIStaffMonthlyChart() {
@@ -930,50 +634,6 @@ document.addEventListener('DOMContentLoaded', () => {
         nextMidnight.setHours(24, 0, 0, 0);
         return nextMidnight - now;
     }
-
-    function msUntilNextWeek() {
-        const now = new Date();
-        const nextWeek = new Date(now);
-        const dayOfWeek = nextWeek.getDay();
-        const daysUntilMonday = ((8 - dayOfWeek) % 7) || 7;
-        nextWeek.setDate(nextWeek.getDate() + daysUntilMonday);
-        nextWeek.setHours(0, 0, 0, 0);
-        return nextWeek - now;
-    }
-
-    function msUntilNextMonth() {
-        const now = new Date();
-        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        nextMonth.setHours(0, 0, 0, 0);
-        return nextMonth - now;
-    }
-
-    function scheduleDailyMessageRefresh() {
-        setTimeout(() => {
-            refreshMessageChart();
-            scheduleDailyMessageRefresh();
-        }, msUntilNextMidnight());
-    }
-
-    function scheduleWeeklyMessageRefresh() {
-        setTimeout(() => {
-            refreshMessageChart();
-            scheduleWeeklyMessageRefresh();
-        }, msUntilNextWeek());
-    }
-
-    function scheduleMonthlyMessageRefresh() {
-        setTimeout(() => {
-            refreshMessageChart();
-            scheduleMonthlyMessageRefresh();
-        }, msUntilNextMonth());
-    }
-
-    /*refreshMessageChart();
-    scheduleDailyMessageRefresh();
-    scheduleWeeklyMessageRefresh();
-    scheduleMonthlyMessageRefresh();
-    setInterval(refreshMessageChart, 10000);*/
 
     // Initialize default date range (last 30 days)
     (function initDefaultDates() {
@@ -1059,6 +719,65 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Simple analytics fetch to populate KPI data (pie chart removed)
+    function refreshAnalyticsData() {
+        const qp = buildQueryParams();
+        const spinner = document.getElementById('supportPieLoading');
+        const empty = document.getElementById('supportPieEmpty');
+        if (spinner) spinner.style.display = 'block';
+        if (empty) empty.style.display = 'none';
+        return fetch('/api/analytics' + qp, { credentials: 'same-origin' })
+            .then(handleAuthRedirect)
+            .then(res => {
+                if (!res.ok) return res.text().then(t => { throw new Error(t || 'analytics fetch failed'); });
+                return res.json();
+            })
+            .then(data => {
+                lastAnalyticsData = data;
+                try { loadKPIs(); } catch (e) {}
+
+                // Build chart data structure
+                const items = [
+                    { name: 'Total Chats', value: Number(data.numChats) || 0, color: '#22C55E' },
+                    { name: 'Escalated Chats', value: Number(data.numEscalatedChats) || 0, color: '#EAB308' },
+                    { name: 'Tickets', value: Number(data.numTickets) || 0, color: '#3B82F6' },
+                    { name: 'Escalated Tickets', value: Number(data.numEscalatedTickets) || 0, color: '#EF4444' },
+                    { name: 'Receipts', value: Number(data.numReceipts) || 0, color: '#A855F7' },
+                    { name: 'Resolved Chats', value: Number(data.numResolvedChats) || 0, color: '#D9F99D' }
+                ];
+
+                const total = items.reduce((s, it) => s + (Number(it.value) || 0), 0);
+                if (total === 0) {
+                    // show empty state
+                    if (supportPieChart) { supportPieChart.destroy(); supportPieChart = null; }
+                    if (empty) empty.style.display = 'block';
+                    if (spinner) spinner.style.display = 'none';
+                    renderSupportLegend(items);
+                    return data;
+                }
+
+                // render or update chart
+                if (!supportPieChart && supportPieCtx) {
+                    supportPieChart = createSupportPieChart(supportPieCtx, items);
+                } else if (supportPieChart) {
+                    supportPieChart.data.labels = items.map(i => i.name);
+                    supportPieChart.data.datasets[0].data = items.map(i => i.value);
+                    supportPieChart.data.datasets[0].backgroundColor = items.map(i => i.color);
+                    supportPieChart.update();
+                }
+                renderSupportLegend(items);
+                if (spinner) spinner.style.display = 'none';
+                if (empty) empty.style.display = 'none';
+                return data;
+            })
+            .catch(err => {
+                console.warn('analytics fetch failed', err);
+                try { loadKPIs(); } catch (e) {}
+                if (spinner) spinner.style.display = 'none';
+                return null;
+            });
+    }
+
     // Wire up filter apply button
     if (applyFiltersBtn) {
         applyFiltersBtn.addEventListener('click', async () => {
@@ -1068,8 +787,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } catch (e) {
                 console.warn('tickets fetch for filters failed', e);
             }
-            refreshAnalyticsChart();
-            refreshMessageChart();
+            await Promise.allSettled([refreshAnalyticsData(), refreshTicketCreationChart()]);
         });
     }
 
@@ -1107,20 +825,25 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshMyMetrics();
     setInterval(refreshMyMetrics, 15000);
 
-    socket.on('newMessage', msg => {
-        if (msg.sender === 'customer' || msg.sender === 'received') {
-            refreshMessageChart();
-        }
-    });
+    const refreshAnalyticsAndTicketCounts = () => {
+        refreshAnalyticsData();
+        refreshTicketCreationChart();
+    };
 
-    socket.on('ticketCreated', refreshAnalyticsChart);
-    socket.on('ticketDeleted', refreshAnalyticsChart);
-    socket.on('ticketEscalated', refreshAnalyticsChart);
-    socket.on('receiptCreated', refreshAnalyticsChart);
-    socket.on('receiptDeleted', refreshAnalyticsChart);
-    socket.on('connect', () => {
-        refreshAnalyticsChart();
-        refreshMessageChart();
-    });
+    if (socket) {
+        socket.on('ticketCreated', refreshAnalyticsAndTicketCounts);
+        socket.on('ticketDeleted', refreshAnalyticsAndTicketCounts);
+        socket.on('ticketEscalated', refreshAnalyticsAndTicketCounts);
+        socket.on('receiptCreated', refreshAnalyticsAndTicketCounts);
+        socket.on('receiptDeleted', refreshAnalyticsAndTicketCounts);
+        socket.on('connect', () => {
+            refreshAnalyticsAndTicketCounts();
+        });
+    }
+};
 
-});
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startAnalytics);
+} else {
+    startAnalytics();
+}

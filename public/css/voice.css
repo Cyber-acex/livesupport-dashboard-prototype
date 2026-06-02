@@ -280,7 +280,7 @@
 .voice-btn-ptt .voice-ptt-wave::after { content: ''; position: absolute; inset: 0; border-radius: 999px; border: 2px solid rgba(255, 255, 255, 0.35); opacity: 0; transform: scale(0.7); }
 .voice-btn-ptt .voice-ptt-wave::after { border-color: rgba(255, 255, 255, 0.18); }
 .voice-btn-ptt:hover { box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4); transform: translateY(-1px); }
-.voice-btn-ptt.active { background-color: #10b981 !important; background-image: linear-gradient(135deg, #10b981, #059669) !important; box-shadow: 0 0 16px rgba(16, 185, 129, 0.8), inset 0 0 8px rgba(255, 255, 255, 0.3); animation: pttPulse 0.6s ease-in-out infinite; }
+.voice-btn-ptt.active { background-color: #ef4444 !important; background-image: linear-gradient(135deg, #ef4444, #dc2626) !important; box-shadow: 0 0 16px rgba(239, 68, 68, 0.8), inset 0 0 8px rgba(255, 255, 255, 0.3); animation: pttPulse 0.6s ease-in-out infinite; }
 .voice-btn-ptt.active .voice-ptt-wave::before,
 .voice-btn-ptt.active .voice-ptt-wave::after { opacity: 1; animation: pttWave 1.2s ease-out infinite; }
 .voice-btn-ptt.active .voice-ptt-wave::after { animation-delay: 0.4s; }

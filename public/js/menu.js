@@ -158,8 +158,38 @@
   if(deleteItemBtn) deleteItemBtn.addEventListener('click', deleteItem);
   if(categoryFilter) categoryFilter.addEventListener('change', renderMenu);
 
-  // profile initializer
-  (function initProfile(){ try{ const name = localStorage.getItem('profileName') || 'Ops'; const avatar = localStorage.getItem('avatarUrl'); if(profileNameEl) profileNameEl.textContent = name; if(avatarImgEl && avatar){ avatarImgEl.src = avatar; avatarImgEl.style.display = 'inline-block'; if(avatarLetterEl) avatarLetterEl.style.display = 'none'; } else if(avatarLetterEl) avatarLetterEl.textContent = (name||'O').charAt(0).toUpperCase(); }catch(e){} if(profileBtn && profileDropdown){ profileBtn.addEventListener('click', ()=>{ const open = profileDropdown.style.display === 'block'; profileDropdown.style.display = open ? 'none' : 'block'; profileBtn.setAttribute('aria-expanded', String(!open)); }); document.addEventListener('click', (ev)=>{ if(!profileBtn.contains(ev.target) && !profileDropdown.contains(ev.target)){ profileDropdown.style.display = 'none'; profileBtn.setAttribute('aria-expanded','false'); } }); } })();
+  // profile initializer (skip if user.js already initialized it)
+  (function initProfile(){
+    if (window._profileWidgetInited) return;
+    try{
+      const name = localStorage.getItem('profileName') || 'Ops';
+      const avatar = localStorage.getItem('avatarUrl');
+      if(profileNameEl) profileNameEl.textContent = name;
+      if(avatarImgEl && avatar){
+        avatarImgEl.src = avatar;
+        avatarImgEl.style.display = 'inline-block';
+        if(avatarLetterEl) avatarLetterEl.style.display = 'none';
+      } else if(avatarLetterEl) {
+        avatarLetterEl.textContent = (name||'O').charAt(0).toUpperCase();
+      }
+    }catch(e){}
+
+    if(profileBtn && profileDropdown){
+      profileBtn.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const isOpen = profileDropdown.classList.toggle('show');
+        profileBtn.setAttribute('aria-expanded', String(!!isOpen));
+        profileDropdown.setAttribute('aria-hidden', String(!isOpen));
+      });
+      document.addEventListener('click', (ev)=>{
+        if(!profileBtn.contains(ev.target) && !profileDropdown.contains(ev.target)){
+          profileDropdown.classList.remove('show');
+          profileBtn.setAttribute('aria-expanded','false');
+          profileDropdown.setAttribute('aria-hidden','true');
+        }
+      });
+    }
+  })();
 
   // init
   initParticles(); render(); initSocket();
@@ -464,24 +494,32 @@
 
   // Profile population & dropdown
   (function initProfile(){
+    if (window._profileWidgetInited) return;
     try{
       const name = localStorage.getItem('profileName') || 'Ops';
       const avatar = localStorage.getItem('avatarUrl');
       if(profileNameEl) profileNameEl.textContent = name;
-      if(avatarImgEl && avatar){ avatarImgEl.src = avatar; avatarImgEl.style.display = 'inline-block'; if(avatarLetterEl) avatarLetterEl.style.display = 'none'; }
-      else if(avatarLetterEl) avatarLetterEl.textContent = (name||'O').charAt(0).toUpperCase();
+      if(avatarImgEl && avatar){
+        avatarImgEl.src = avatar;
+        avatarImgEl.style.display = 'inline-block';
+        if(avatarLetterEl) avatarLetterEl.style.display = 'none';
+      } else if(avatarLetterEl) {
+        avatarLetterEl.textContent = (name||'O').charAt(0).toUpperCase();
+      }
     }catch(e){}
 
     if(profileBtn && profileDropdown){
-      profileBtn.addEventListener('click', ()=>{
-        const open = profileDropdown.style.display === 'block';
-        profileDropdown.style.display = open ? 'none' : 'block';
-        profileBtn.setAttribute('aria-expanded', String(!open));
+      profileBtn.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const isOpen = profileDropdown.classList.toggle('show');
+        profileBtn.setAttribute('aria-expanded', String(!!isOpen));
+        profileDropdown.setAttribute('aria-hidden', String(!isOpen));
       });
       document.addEventListener('click', (ev)=>{
         if(!profileBtn.contains(ev.target) && !profileDropdown.contains(ev.target)){
-          profileDropdown.style.display = 'none';
+          profileDropdown.classList.remove('show');
           profileBtn.setAttribute('aria-expanded','false');
+          profileDropdown.setAttribute('aria-hidden','true');
         }
       });
     }

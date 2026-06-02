@@ -9,6 +9,7 @@
 	<script>document.documentElement.classList.add('ls-js');</script>
 	<link rel="stylesheet" href="./css/style.css">
 	<link rel="stylesheet" href="./css/sidebar.css">
+	<link rel="stylesheet" href="./css/voice.css">
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 	<script>
 		// Apply theme from localStorage immediately to prevent flash
@@ -1365,14 +1366,14 @@
 			        <div class="profile-session">
 			          <div class="session-header">Session Info</div>
 			          <div class="session-details">
-			            <div class="session-item"><span class="session-icon">🕐</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
-			            <div class="session-item"><span class="session-icon">⏱️</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
-			            <div class="session-item"><span class="session-icon">⚡</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
+			            <div class="session-item"><span class="session-icon">⏰</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
+			            <div class="session-item"><span class="session-icon">⏱</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
+			            <div class="session-item"><span class="session-icon">⏳</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
 			          </div>
 			        </div>
 			        <div class="profile-actions">
-			          <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙️</span> Settings</a>
-			          <button id="logoutBtn" class="profile-action"><span class="profile-icon">🚪</span> Logout</button>
+			          <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙</span> Settings</a>
+			          <button id="logoutBtn" class="profile-action"><span class="profile-icon">⎋</span> Logout</button>
 			        </div>
 			      </div>
 			    </div>
@@ -2731,6 +2732,7 @@ fetch("/api/user")
 </script>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="./js/voice.js" defer></script>
 <script src="./js/phone-ui.js" type="module"></script>
 <script src="./js/notification-sound.js"></script>
 <script src="./js/sidebar.js" defer></script>

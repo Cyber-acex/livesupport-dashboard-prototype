@@ -10,6 +10,10 @@ const __dirname = dirname(__filename);
 const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 
+// Friendly fallback and quick-clarification options used when the model/API fails
+const CLARIFICATION_OPTIONS = `0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff`;
+const FALLBACK_REPLY = "Sorry, I'm having trouble processing that right now. Please try again in a moment or type 'help' for assistance.";
+
 let knowledgeBase = [];
 let cannedResponses = [];
 let db = null;

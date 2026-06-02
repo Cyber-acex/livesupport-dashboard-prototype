@@ -107,7 +107,7 @@
     }, 3800);
   }
 
-  function showIncomingNotification({ title, message, acceptLabel = 'Accept', rejectLabel = 'Reject', onAccept, onReject }) {
+  function showIncomingNotification({ title, message, notificationLabel = 'Incoming Call', acceptLabel = 'Accept', rejectLabel = 'Reject', onAccept, onReject }) {
     const panel = document.getElementById('voiceWidget');
     const floatingButton = document.getElementById('voiceFloatingButton');
 
@@ -133,7 +133,7 @@
       <div class="voice-notification-content">
         <div class="voice-notification-avatar">📞</div>
         <div class="voice-notification-info">
-          <div class="voice-notification-label">Incoming Call</div>
+          <div class="voice-notification-label">${notificationLabel}</div>
           <div class="voice-notification-caller">${title.replace(' is calling', '')}</div>
           <div class="voice-notification-description">${message}</div>
         </div>
@@ -238,6 +238,19 @@
     }
   }
 
+  function stopLocalStream() {
+    cleanupNoiseProcessing();
+
+    if (state.rawLocalStream) {
+      state.rawLocalStream.getTracks().forEach(track => track.stop());
+      state.rawLocalStream = null;
+    }
+    if (state.localStream && state.localStream !== state.rawLocalStream) {
+      state.localStream.getTracks().forEach(track => track.stop());
+    }
+    state.localStream = null;
+  }
+
   function createNoiseProcessedStream(rawStream) {
     if (!window.AudioContext || !rawStream) return rawStream;
     cleanupNoiseProcessing();
@@ -247,20 +260,20 @@
 
     const highpass = audioContext.createBiquadFilter();
     highpass.type = 'highpass';
-    highpass.frequency.value = 120;
+    highpass.frequency.value = 100;
     highpass.Q.value = 0.7;
 
     const lowpass = audioContext.createBiquadFilter();
     lowpass.type = 'lowpass';
-    lowpass.frequency.value = 4500;
+    lowpass.frequency.value = 8000;
     lowpass.Q.value = 0.7;
 
     const compressor = audioContext.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-40, audioContext.currentTime);
-    compressor.knee.setValueAtTime(20, audioContext.currentTime);
-    compressor.ratio.setValueAtTime(10, audioContext.currentTime);
-    compressor.attack.setValueAtTime(0.005, audioContext.currentTime);
-    compressor.release.setValueAtTime(0.15, audioContext.currentTime);
+    compressor.threshold.setValueAtTime(-30, audioContext.currentTime);
+    compressor.knee.setValueAtTime(10, audioContext.currentTime);
+    compressor.ratio.setValueAtTime(4, audioContext.currentTime);
+    compressor.attack.setValueAtTime(0.008, audioContext.currentTime);
+    compressor.release.setValueAtTime(0.2, audioContext.currentTime);
 
     const gateGain = audioContext.createGain();
     gateGain.gain.value = 0.01;
@@ -278,9 +291,9 @@
 
     const data = new Float32Array(analyser.fftSize);
     let smoothedGain = 0.01;
-    const threshold = 0.02;
+    const threshold = 0.018;
     const openGain = 1;
-    const closedGain = 0.02;
+    const closedGain = 0.05;
 
     function processGate() {
       analyser.getFloatTimeDomainData(data);
@@ -290,7 +303,7 @@
       }
       const rms = Math.sqrt(sum / data.length);
       const targetGain = rms > threshold ? openGain : closedGain;
-      const smoothing = rms > threshold ? 0.12 : 0.05;
+      const smoothing = rms > threshold ? 0.15 : 0.08;
       smoothedGain += (targetGain - smoothedGain) * smoothing;
       gateGain.gain.setTargetAtTime(smoothedGain, audioContext.currentTime, 0.01);
       if (state.noiseAudioContext === audioContext) {
@@ -396,6 +409,7 @@
       }
       list.forEach(item => {
         const isCallActive = state.currentSession && state.currentSession.type === 'private' && state.currentSession.peer?.userId === item.userId;
+        const isPTTActive = state.pttSession && Number(state.pttSession.targetUserId) === Number(item.userId);
         const card = document.createElement('div');
         card.className = 'voice-staff-card';
         card.innerHTML = `
@@ -405,19 +419,19 @@
             <div class="voice-meta">${item.role || 'Agent'} · ${item.status || 'online'}</div>
           </div>
           <div class="voice-actions">
-            <button class="voice-btn voice-btn-ptt" title="Push and hold to talk" data-ptt-id="${item.userId}" data-ptt-name="${item.name}">
+            <button class="voice-btn voice-btn-ptt ${isPTTActive ? 'active' : ''}" title="Push and hold to talk" data-ptt-id="${item.userId}" data-ptt-name="${item.name}">
               <span class="voice-ptt-icon">🎤</span>
               <span class="voice-ptt-wave"></span>
             </button>
             <button class="voice-btn ${isCallActive ? 'voice-btn-danger' : 'voice-btn-secondary'}" data-action="${isCallActive ? 'hangup' : 'private'}" data-id="${item.userId}">${isCallActive ? 'Hang up' : 'Call'}</button>
-            ${!isCallActive ? `<button class="voice-btn voice-btn-primary" data-action="channel" data-id="${item.userId}">Invite</button>` : ''}
+            ${!isCallActive ? `<button class="voice-btn voice-btn-primary" data-action="broadcast-invite" data-id="${item.userId}">Invite to Broadcast</button>` : ''}
           </div>
         `;
         staffPanel.appendChild(card);
       });
       staffPanel.querySelectorAll('[data-action="private"]').forEach(btn => btn.addEventListener('click', onPrivateCallClick));
       staffPanel.querySelectorAll('[data-action="hangup"]').forEach(btn => btn.addEventListener('click', onHangupClick));
-      staffPanel.querySelectorAll('[data-action="channel"]').forEach(btn => btn.addEventListener('click', onInviteToChannelClick));
+      staffPanel.querySelectorAll('[data-action="broadcast-invite"]').forEach(btn => btn.addEventListener('click', onBroadcastInviteClick));
       staffPanel.querySelectorAll('.voice-btn-ptt').forEach(btn => {
         btn.addEventListener('mousedown', onPTTStart);
         btn.addEventListener('mouseup', onPTTEnd);
@@ -449,11 +463,26 @@
       channelsPanel.querySelectorAll('[data-action="join"]').forEach(btn => btn.addEventListener('click', onChannelToggle));
       channelsPanel.querySelectorAll('[data-action="leave"]').forEach(btn => btn.addEventListener('click', onChannelToggle));
       const isAdmin = ['admin', 'administrator'].includes((state.user?.role || '').toLowerCase());
+      const isBroadcastActive = state.currentSession?.type === 'broadcast';
+      const isBroadcastHost = isBroadcastActive && String(state.currentSession.hostId) === String(state.user?.id);
       const broadcastButton = document.createElement('button');
-      broadcastButton.className = `voice-btn voice-btn-wide ${isAdmin ? '' : 'voice-btn-disabled'}`;
-      broadcastButton.textContent = 'Start Broadcast';
-      broadcastButton.title = isAdmin ? 'Start a live broadcast' : 'Only admins can start broadcasts';
-      broadcastButton.addEventListener('click', onStartBroadcast);
+      broadcastButton.className = 'voice-btn voice-btn-wide';
+      if (!isBroadcastActive) {
+        broadcastButton.textContent = 'Start Broadcast';
+        broadcastButton.title = isAdmin ? 'Start a live broadcast' : 'Only admins can start broadcasts';
+        broadcastButton.disabled = !isAdmin;
+        if (!isAdmin) broadcastButton.classList.add('voice-btn-disabled');
+        broadcastButton.addEventListener('click', onStartBroadcast);
+      } else if (isBroadcastHost) {
+        broadcastButton.textContent = 'End Broadcast';
+        broadcastButton.title = 'End the active broadcast';
+        broadcastButton.addEventListener('click', onEndBroadcast);
+      } else {
+        broadcastButton.textContent = 'Broadcast Active';
+        broadcastButton.title = 'A broadcast is currently active';
+        broadcastButton.disabled = true;
+        broadcastButton.classList.add('voice-btn-disabled');
+      }
       channelsPanel.appendChild(broadcastButton);
     }
 
@@ -521,21 +550,24 @@
   }
 
   function onHangupClick(event) {
-    const userId = event.currentTarget.dataset.id;
-    if (state.currentSession && state.currentSession.peer?.userId === parseInt(userId)) {
-      state.socket.emit('voice:private:end', { sessionId: state.currentSession.id });
-      state.currentSession = null;
-      render();
-      showToast('Call ended', 'info');
-    }
+    leaveCurrentSession();
   }
 
-  function onInviteToChannelClick(event) {
+  function onBroadcastInviteClick(event) {
     event.preventDefault();
     const userId = event.currentTarget.dataset.id;
     const target = state.staff.find(u => String(u.userId) === String(userId));
     if (!target) return;
-    showToast(`Invitation sent to ${target.name}`);
+    if (!state.currentSession || state.currentSession.type !== 'broadcast') {
+      showToast('Start a broadcast first to invite staff.', 'warning');
+      return;
+    }
+    if (state.currentSession.hostId && String(state.currentSession.hostId) !== String(state.user?.id)) {
+      showToast('Only the broadcast host can invite staff.', 'warning');
+      return;
+    }
+    state.socket.emit('voice:broadcast:invite', { targetUserId: target.userId, sessionId: state.currentSession.id });
+    showToast(`Broadcast invite sent to ${target.name}`);
   }
 
   function onChannelToggle(event) {
@@ -561,39 +593,34 @@
     }
     await getLocalStream();
     const sessionId = `broadcast-${Date.now()}`;
-    state.currentSession = { id: sessionId, type: 'broadcast', status: 'starting', peers: {} };
+    state.currentSession = { id: sessionId, type: 'broadcast', status: 'active', hostId: state.user?.id, peers: {} };
     state.socket.emit('voice:broadcast:start', { sessionId });
-    showToast('Broadcast starting...');
+    showToast('Broadcast started');
     render();
   }
 
   async function onPTTStart(event) {
     event.preventDefault();
-    if (!state.user) {
-      showToast('Please sign in to use push to talk.', 'warning');
-      return;
-    }
+    if (state.pttSession) return;
+
     const button = event.currentTarget;
     const targetUserId = Number(button.dataset.pttId);
     const targetName = button.dataset.pttName;
-    
-    if (state.pttSession) return; // Already transmitting
-    
+
     try {
       await getLocalStream();
       if (!state.localStream) return;
-      
-      // Enable mic for this PTT session
+
       state.localStream.getAudioTracks().forEach(track => { track.enabled = true; });
-      
       const sessionId = `ptt-${Date.now()}-${targetUserId}`;
       const pc = createPeerConnection(targetUserId, sessionId, attachRemoteAudio);
       state.peers[targetUserId] = { pc, meta: { userId: targetUserId, name: targetName }, audio: null };
       state.pttSession = { id: sessionId, targetUserId, targetName, status: 'transmitting' };
-      
+
       button.classList.add('active');
       showToast(`🎤 Transmitting to ${targetName}...`, 'info');
-      
+      markSessionStarted();
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       state.socket.emit('voice:signal', { targetUserId, sessionId, signal: offer, type: 'offer' });
@@ -602,6 +629,20 @@
       console.error('PTT start error:', err);
       showToast('Failed to start push to talk', 'error');
     }
+  }
+
+  async function onEndBroadcast() {
+    if (!state.currentSession || state.currentSession.type !== 'broadcast') return;
+    state.socket.emit('voice:end', { sessionId: state.currentSession.id });
+    Object.keys(state.peers).forEach(cleanupPeer);
+    state.currentSession = null;
+    if (state.timerId) {
+      clearInterval(state.timerId);
+      state.timerId = null;
+    }
+    stopLocalStream();
+    showToast('Broadcast ended');
+    render();
   }
 
   function onPTTEnd(event) {
@@ -613,16 +654,28 @@
     
     if (state.pttSession.targetUserId !== targetUserId) return;
     
-    // Disable mic
+    // Clean up peer connection on sender side
+    cleanupPeer(String(targetUserId));
+    
+    // Disable mic unless still in an active voice session.
     if (state.localStream) {
-      state.localStream.getAudioTracks().forEach(track => { track.enabled = false; });
+      const enabled = state.currentSession ? !state.isMuted : false;
+      state.localStream.getAudioTracks().forEach(track => { track.enabled = enabled; });
     }
     
     button.classList.remove('active');
     showToast('🎤 Stopped transmitting', 'info');
     
-    // Notify the receiver
+    // Notify the receiver and stop timer on both sides
     state.socket.emit('voice:ptt:end', { targetUserId, sessionId: state.pttSession.id });
+    
+    // Stop timer on sender side if no active session
+    if (!state.currentSession) {
+      stopLocalStream();
+      state.socket.emit('voice:timer:stop');
+      stopSessionTimer();
+    }
+    
     state.pttSession = null;
   }
 
@@ -652,6 +705,7 @@
       clearInterval(state.timerId);
       state.timerId = null;
     }
+    stopLocalStream();
     render();
   }
 
@@ -671,6 +725,15 @@
       state.callStartedAt = Date.now();
       state.timerId = setInterval(render, 1000);
     }
+  }
+
+  function stopSessionTimer() {
+    if (state.timerId) {
+      clearInterval(state.timerId);
+      state.timerId = null;
+    }
+    state.callStartedAt = null;
+    render();
   }
 
   function handleVoicePresence(list) {
@@ -771,18 +834,19 @@
     if (!payload || !payload.sessionId || !payload.from) return;
     showIncomingNotification({
       title: `${payload.from.name} started a broadcast`,
+      notificationLabel: 'Incoming Broadcast',
       message: 'Join the broadcast now?',
       acceptLabel: 'Join',
-      rejectLabel: 'Ignore',
+      rejectLabel: 'Reject',
       onAccept: () => {
-        state.currentSession = { id: payload.sessionId, type: 'broadcast', status: 'joining', peer: payload.from };
+        state.currentSession = { id: payload.sessionId, type: 'broadcast', status: 'joining', peer: payload.from, hostId: payload.from.userId };
         getLocalStream().then(() => {
           state.socket.emit('voice:broadcast:join', { sessionId: payload.sessionId });
           render();
         }).catch(() => {});
       },
       onReject: () => {
-        showToast('Broadcast ignored', 'warning');
+        showToast('Broadcast rejected', 'warning');
       }
     });
   }
@@ -814,6 +878,7 @@
     }
     
     showToast(`🎤 ${senderName} is transmitting...`, 'info');
+    markSessionStarted();
     render();
     
     // Receiver only marks sender as transmitting and waits for an offer
@@ -831,6 +896,9 @@
     const sender = state.staff.find(s => s.userId === fromId);
     const senderName = sender ? sender.name : 'Staff Member';
     
+    // Clean up peer first
+    cleanupPeer(String(fromId));
+    
     // Mark sender as not speaking
     if (sender) {
       sender.speaking = false;
@@ -838,7 +906,6 @@
     
     showToast(`🎤 ${senderName} stopped transmitting`, 'info');
     render();
-    cleanupPeer(String(fromId));
   }
 
   function handleChannelJoined(payload) {
@@ -953,12 +1020,13 @@
       state.currentSession = null;
       Object.keys(state.peers).forEach(cleanupPeer);
       if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
+      stopLocalStream();
       render();
     });
     state.socket.on('voice:broadcast:incoming', handleBroadcastIncoming);
     state.socket.on('voice:broadcast:joinRequest', handleBroadcastJoinRequest);
     state.socket.on('voice:broadcast:joined', payload => {
-      state.currentSession = { id: payload.sessionId, type: 'broadcast', status: 'active' };
+      state.currentSession = { id: payload.sessionId, type: 'broadcast', status: 'active', hostId: state.currentSession?.hostId };
       render();
     });
     state.socket.on('voice:channel:joined', handleChannelJoined);
@@ -972,6 +1040,11 @@
     });
     state.socket.on('voice:ptt:start', handlePTTIncoming);
     state.socket.on('voice:ptt:end', handlePTTEnd);
+    state.socket.on('voice:timer:stop', () => {
+      if (!state.currentSession) {
+        stopSessionTimer();
+      }
+    });
 
     state.socket.on('disconnect', () => {
       showToast('Voice socket disconnected', 'warning');
