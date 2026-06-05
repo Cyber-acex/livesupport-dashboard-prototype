@@ -795,6 +795,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Serve uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Serve top-level image folder so design assets can be referenced directly
+if (fs.existsSync(path.join(__dirname, 'image'))) {
+    app.use('/image', express.static(path.join(__dirname, 'image')));
+}
+
 if (!fs.existsSync(path.join(__dirname, "uploads"))) {
     fs.mkdirSync(path.join(__dirname, "uploads"), { recursive: true });
 }
@@ -1423,6 +1428,52 @@ app.delete('/api/menu/item/:category/:key', (req, res) => {
     }
 });
 
+// Reduce stock for a menu item
+app.post('/api/menu/item/reduce-stock', express.json(), (req, res) => {
+    try {
+        const { itemId, category, key, quantity } = req.body || {};
+        if (!itemId && (!category || !key)) return res.status(400).json({ error: 'missing_fields' });
+        
+        const qty = Math.max(1, parseInt(quantity || 1, 10));
+        
+        let query, params;
+        if (itemId) {
+            query = 'UPDATE Menu SET available = GREATEST(available - ?, 0) WHERE id = ?';
+            params = [qty, itemId];
+        } else {
+            query = 'UPDATE Menu SET available = GREATEST(available - ?, 0) WHERE category = ? AND key_name = ?';
+            params = [qty, category, key];
+        }
+        
+        db.query(query, params, (err) => {
+            if (err) {
+                console.error('/api/menu/item/reduce-stock db error', err);
+                return res.status(500).json({ error: 'db_error' });
+            }
+            // Fetch updated item to return current stock
+            let selectQuery, selectParams;
+            if (itemId) {
+                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM Menu WHERE id = ?';
+                selectParams = [itemId];
+            } else {
+                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM Menu WHERE category = ? AND key_name = ?';
+                selectParams = [category, key];
+            }
+            
+            db.query(selectQuery, selectParams, (sErr, rows) => {
+                if (sErr || !rows || rows.length === 0) {
+                    return res.json({ success: true, stock: 0 });
+                }
+                const item = rows[0];
+                res.json({ success: true, stock: item.available, item: { id: item.id, name: item.name, category: item.category, stock: item.available } });
+            });
+        });
+    } catch (e) {
+        console.error('/api/menu/item/reduce-stock error', e);
+        res.status(500).json({ error: 'internal' });
+    }
+});
+
 app.get("/logout", (req, res) => {
     try {
         const uid = req.session && req.session.userId ? String(req.session.userId) : null;
@@ -1647,38 +1698,69 @@ app.get('/api/staff-metrics', isAuthenticated, (req, res) => {
                         db.query(avgResSql, [u.id], (err4, r4) => {
                             if (!err4 && r4 && r4[0] && r4[0].avg_res != null) out.avg_resolution_time = Math.round(r4[0].avg_res);
 
-                            // last_week: counts of replies by day (Mon..Sun) for the last 7 days
-                            const lastWeekSql = isPg ? `
-                                SELECT DATE(created_at) AS d, COUNT(*) AS cnt
-                                FROM replies
-                                WHERE user_id = ? AND created_at >= CURRENT_DATE - INTERVAL '7 days'
-                                GROUP BY DATE(created_at)
-                                ORDER BY DATE(created_at) ASC
+                            // resolution rate: resolved conversations where last reply was by this user
+                            const resolutionRateSql = isPg ? `
+                                SELECT COUNT(*) FILTER (WHERE res.conversation_id IS NOT NULL) AS resolvedConvos,
+                                       COUNT(*) AS totalConvos
+                                FROM (
+                                    SELECT conversation_id, MAX(created_at) AS last_reply_at
+                                    FROM replies
+                                    WHERE user_id = ?
+                                    GROUP BY conversation_id
+                                ) lr
+                                LEFT JOIN resolved res ON res.conversation_id = lr.conversation_id
                             ` : `
-                                SELECT DATE(created_at) AS d, COUNT(*) AS cnt
-                                FROM replies
-                                WHERE user_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-                                GROUP BY DATE(created_at)
-                                ORDER BY DATE(created_at) ASC
+                                SELECT SUM(CASE WHEN res.conversation_id IS NOT NULL THEN 1 ELSE 0 END) AS resolvedConvos,
+                                       COUNT(*) AS totalConvos
+                                FROM (
+                                    SELECT conversation_id, MAX(created_at) AS last_reply_at
+                                    FROM replies
+                                    WHERE user_id = ?
+                                    GROUP BY conversation_id
+                                ) lr
+                                LEFT JOIN resolved res ON res.conversation_id = lr.conversation_id
                             `;
-                            db.query(lastWeekSql, [u.id], (err5, r5) => {
-                                if (!err5 && r5) {
-                                    // build last_week array of length up to 7
-                                    const map = {};
-                                    r5.forEach(rr => { 
-                                        const key = (rr.d instanceof Date) ? rr.d.toISOString().slice(0,10) : (new Date(rr.d)).toISOString().slice(0,10);
-                                        map[key] = rr.cnt; 
-                                    });
-                                    const arr = [];
-                                    for (let i=6;i>=0;i--) {
-                                        const d = new Date(); d.setDate(d.getDate() - i);
-                                        const key = d.toISOString().slice(0,10);
-                                        arr.push(map[key] || 0);
-                                    }
-                                    out.last_week = arr;
+
+                            db.query(resolutionRateSql, [u.id], (errRes, rRes) => {
+                                if (!errRes && rRes && rRes[0]) {
+                                    const total = Number(rRes[0].totalConvos) || 0;
+                                    const resolved = Number(rRes[0].resolvedConvos) || 0;
+                                    out.resolution_rate = total ? Number(((resolved / total) * 100).toFixed(1)) : null;
                                 }
 
-                                resolve(out);
+                                // last_week: counts of replies by day (Mon..Sun) for the last 7 days
+                                const lastWeekSql = isPg ? `
+                                    SELECT DATE(created_at) AS d, COUNT(*) AS cnt
+                                    FROM replies
+                                    WHERE user_id = ? AND created_at >= CURRENT_DATE - INTERVAL '7 days'
+                                    GROUP BY DATE(created_at)
+                                    ORDER BY DATE(created_at) ASC
+                                ` : `
+                                    SELECT DATE(created_at) AS d, COUNT(*) AS cnt
+                                    FROM replies
+                                    WHERE user_id = ? AND created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+                                    GROUP BY DATE(created_at)
+                                    ORDER BY DATE(created_at) ASC
+                                `;
+                                db.query(lastWeekSql, [u.id], (err5, r5) => {
+                                    if (!err5 && r5) {
+                                        // build last_week array of length up to 7
+                                        const map = {};
+                                        r5.forEach(rr => {
+                                            const key = (rr.d instanceof Date) ? rr.d.toISOString().slice(0,10) : (new Date(rr.d)).toISOString().slice(0,10);
+                                            map[key] = rr.cnt;
+                                        });
+                                        const arr = [];
+                                        for (let i=6;i>=0;i--) {
+                                            const d = new Date(); d.setDate(d.getDate() - i);
+                                            const key = d.toISOString().slice(0,10);
+                                            arr.push(map[key] || 0);
+                                        }
+                                        out.last_week = arr;
+                                    }
+
+                                    resolve(out);
+                                });
                             });
                         });
                     });
@@ -4717,9 +4799,7 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
                 (SELECT COUNT(*) FROM tickets) AS tickets,
                 (SELECT COUNT(*) FROM tickets WHERE escalated = TRUE) AS escalatedTickets,
                 (SELECT COUNT(*) FROM receipts) AS receipts,
-                (SELECT COUNT(*) FROM receipts WHERE escalated = TRUE) AS escalatedReceipts,
-                (SELECT COUNT(*) FROM escalations) AS escalatedChats,
-                (SELECT COUNT(*) FROM resolved) AS resolvedChats
+                (SELECT COUNT(*) FROM receipts WHERE escalated = TRUE) AS escalatedReceipts
         `);
 
         const [feedbackRows] = await db.promise().query(`
@@ -4945,9 +5025,9 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
                 SELECT sender, created_at, user_id FROM ai_messages
                 UNION
                 SELECT sender, created_at, user_id FROM staff_messages
-                UNION
+                UNION ALL
                 SELECT sender, created_at, user_id FROM \`ai replies\`
-                UNION
+                UNION ALL
                 SELECT sender, created_at, user_id FROM \`staff replies\`
             ) AS all_msgs
             WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01')
@@ -4985,6 +5065,77 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
     } catch (error) {
         console.error('Error fetching monthly messages:', error);
         res.status(500).json({ error: 'Failed to fetch monthly messages' });
+    }
+});
+
+// Daily AI vs staff messages for the current month (or specific month via ?month=YYYY-MM)
+app.get('/api/messages-daily', isAuthenticated, async (req, res) => {
+    try {
+        const monthParam = (req.query.month || '').trim();
+        const now = new Date();
+        const year = monthParam ? Number(monthParam.split('-')[0]) : now.getFullYear();
+        const month = monthParam ? Number(monthParam.split('-')[1]) - 1 : now.getMonth();
+        const startDate = new Date(year, month, 1);
+        const endDate = new Date(year, month + 1, 1);
+
+        const startStr = startDate.toISOString();
+        const endStr = endDate.toISOString();
+
+        const sql = isPg ? `
+            SELECT DATE(created_at) AS dt,
+                SUM(CASE WHEN table_source = 'ai' THEN 1 ELSE 0 END) AS ai_count,
+                SUM(CASE WHEN table_source = 'staff' THEN 1 ELSE 0 END) AS staff_count
+            FROM (
+                SELECT created_at, 'ai' AS table_source FROM ai_messages
+                UNION ALL
+                SELECT created_at, 'staff' AS table_source FROM staff_messages
+            ) AS all_msgs
+            WHERE created_at >= $1 AND created_at < $2
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at)
+        ` : `
+            SELECT DATE(created_at) AS dt,
+                SUM(CASE WHEN table_source = 'ai' THEN 1 ELSE 0 END) AS ai_count,
+                SUM(CASE WHEN table_source = 'staff' THEN 1 ELSE 0 END) AS staff_count
+            FROM (
+                SELECT created_at, 'ai' AS table_source FROM ai_messages
+                UNION ALL
+                SELECT created_at, 'staff' AS table_source FROM staff_messages
+            ) AS all_msgs
+            WHERE created_at >= ? AND created_at < ?
+            GROUP BY DATE(created_at)
+            ORDER BY DATE(created_at)
+        `;
+
+        db.query(sql, [startStr, endStr], (err, rows) => {
+            if (err) {
+                console.error('/api/messages-daily db error', err);
+                return res.status(500).json({ error: 'DB error' });
+            }
+            const dayCount = new Date(year, month + 1, 0).getDate();
+            const labels = [];
+            const ai = [];
+            const staff = [];
+            const map = {};
+            (rows || []).forEach(r => { 
+                const dateKey = isPg ? String(r.dt) : String(r.dt);
+                map[dateKey] = r; 
+            });
+
+            for (let d = 1; d <= dayCount; d++) {
+                const dateObj = new Date(year, month, d);
+                const key = dateObj.toISOString().slice(0,10);
+                labels.push(String(d));
+                const row = map[key] || {};
+                ai.push(Number(row.ai_count || 0));
+                staff.push(Number(row.staff_count || 0));
+            }
+            res.json({ labels, ai, staff });
+        });
+
+    } catch (error) {
+        console.error('Error fetching daily messages:', error);
+        res.status(500).json({ error: 'Failed to fetch daily messages' });
     }
 });
 
@@ -5205,6 +5356,46 @@ app.post('/debug/assign-escalation', (req, res) => {
 
         return res.json({ ok: true, conversationId, assignedStaffId, assignedSocketId });
     });
+});
+
+
+
+// my own chart//
+app.get('/api/ticket-stats', async (req, res) => {
+    try {
+        const tickets = await db.promise().query('SELECT created_at FROM tickets');
+        const now = new Date();
+
+        const today = tickets.filter(ticket => {
+            const d = new Date(ticket.created_at || ticket.createdAt);
+            return (
+                d.getDate() === now.getDate() &&
+                d.getMonth() === now.getMonth() &&
+                d.getFullYear() === now.getFullYear()
+            );
+        }).length;
+
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - now.getDay());
+        startOfWeek.setHours(0,0,0,0);
+
+        const week = tickets.filter(ticket =>
+            new Date(ticket.created_at || ticket.createdAt) >= startOfWeek
+        ).length;
+
+        const month = tickets.filter(ticket => {
+            const d = new Date(ticket.created_at || ticket.createdAt);
+            return (
+                d.getMonth() === now.getMonth() &&
+                d.getFullYear() === now.getFullYear()
+            );
+        }).length;
+
+        res.json({ today, week, month });
+    } catch (err) {
+        console.error('/api/ticket-stats error', err);
+        res.status(500).json({ error: 'Unable to fetch ticket stats' });
+    }
 });
 
 // Translation endpoint used by inbox UI. Accepts { text, target }

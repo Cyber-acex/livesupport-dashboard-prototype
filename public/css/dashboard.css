@@ -207,6 +207,15 @@ html,body{min-height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,A
 
 /* Make chart area take more visual space alongside stats */
 .overview .card.messages-chart{flex:0 1 100%}
+.overview .card.progressive-messages-chart{flex:0 1 100%}
+
+.progressive-messages-chart canvas{display:block;width:100% !important;height:360px !important;min-height:360px !important;border-radius:12px;background:transparent}
+.progressive-messages-chart .chart-hover-details{font-size:13px;color:rgba(255,255,255,0.8);margin-top:6px;min-height:22px}
+
+/* Progressive messages chart styling */
+.progressive-messages-chart{display:flex;flex-direction:column;gap:8px}
+.progressive-messages-chart canvas{width:100% !important;height:360px !important;border-radius:12px;background:transparent}
+.progressive-messages-chart .chart-hover-details{font-size:13px;color:rgba(255,255,255,0.8);margin-top:6px;min-height:22px}
 
 /* Chart controls */
 .chart-controls{display:flex;align-items:center;gap:8px;margin-bottom:8px}

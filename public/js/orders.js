@@ -1128,7 +1128,7 @@ function renderTableLayout() {
       <div class="table-card ${table.status}" data-table-number="${table.number}">
         <button type="button" class="table-action-trigger" onclick="event.stopPropagation(); toggleTableActionMenu(${table.number})">⋮</button>
         <div class="table-action-menu" id="tableActionMenu-${table.number}">
-          <button type="button" class="table-action-item" onclick="event.stopPropagation(); openTableActionModal(${table.number}, 'reserve')">Reserve</button>
+          <button type="button" class="table-action-item" onclick="event.stopPropagation(); openTableActionModal(${table.number}, 'reserve')">Walk-ins</button>
           <button type="button" class="table-action-item" onclick="event.stopPropagation(); markTableVacant(${table.number})">Mark as Vacant</button>
           <button type="button" class="table-action-item" onclick="event.stopPropagation(); openTableActionModal(${table.number}, 'book')">Book</button>
         </div>
@@ -1212,8 +1212,8 @@ function openTableActionModal(tableNumber, action) {
   customerInput.required = true;
 
   if (action === 'reserve') {
-    title.textContent = `Reserve ${tableLayout[tableNumber-1]?.label || 'Table'}`;
-    subtitle.textContent = 'Reserve by time only; it becomes occupied when the time arrives.';
+    title.textContent = `Walk-ins ${tableLayout[tableNumber-1]?.label || 'Table'}`;
+    subtitle.textContent = 'Check in without prior booking; it becomes occupied when the time arrives.';
     dateField.style.display = 'none';
     timeField.style.display = 'block';
   } else {
@@ -1514,9 +1514,10 @@ function renderMenu() {
             ${tags}
             <div style="margin-left:auto">${avail}</div>
           </div>
-          <div style="margin-top:12px; display:flex; gap:8px;">
+          <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
             <button class="filter-btn" onclick="openMenuItemModal('${item.id}')">Edit</button>
             <button class="filter-btn" style="background:#dc3545" onclick="deleteMenuItem('${item.id}')">Delete</button>
+            <button class="filter-btn" style="background:#ff9800" onclick="reduceMenuItemStock('${item.id}', 1)">- Stock</button>
           </div>
         </div>
       </article>
@@ -1534,6 +1535,7 @@ function renderMenu() {
       <td>
         <button class="filter-btn" onclick="openMenuItemModal('${item.id}')">Edit</button>
         <button class="filter-btn" style="background:#dc3545" onclick="deleteMenuItem('${item.id}')">Delete</button>
+        <button class="filter-btn" style="background:#ff9800; font-size:0.85rem" onclick="reduceMenuItemStock('${item.id}', 1)">- Stock</button>
       </td>
     </tr>
   `).join('');
@@ -1730,6 +1732,60 @@ function deleteMenuItemFromModal() {
   if (!id) return;
   deleteMenuItem(id);
   closeMenuItemModal();
+}
+
+// Reduce stock for a menu item
+function reduceMenuItemStock(itemId, quantity = 1) {
+  const item = menuItems.find(i => i.id === itemId);
+  if (!item) {
+    showNotification('Item not found');
+    return;
+  }
+  
+  const qty = Math.max(1, parseInt(quantity, 10));
+  
+  // Prepare payload for backend
+  const payload = {
+    itemId: itemId,
+    category: item.category,
+    key: item.key || item.id,
+    quantity: qty
+  };
+  
+  fetch('/api/menu/item/reduce-stock', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(payload)
+  })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp && resp.success) {
+        // Update local cache with new stock value
+        const idx = menuItems.findIndex(i => i.id === itemId);
+        if (idx !== -1) {
+          menuItems[idx].stock = resp.stock || Math.max(0, (menuItems[idx].stock || 0) - qty);
+        }
+        saveMenuItemsToStorage();
+        buildMenuChips();
+        applyMenuFilters();
+        showNotification(`${item.name} stock reduced by ${qty}. New stock: ${resp.stock || menuItems[idx].stock}`);
+      } else {
+        showNotification('Failed to reduce stock');
+      }
+    })
+    .catch(err => {
+      console.warn('Reduce stock failed', err);
+      // Fallback: update locally
+      const idx = menuItems.findIndex(i => i.id === itemId);
+      if (idx !== -1) {
+        menuItems[idx].stock = Math.max(0, (menuItems[idx].stock || 0) - qty);
+        saveMenuItemsToStorage();
+        buildMenuChips();
+        applyMenuFilters();
+        showNotification(`${item.name} stock reduced by ${qty} (offline). New stock: ${menuItems[idx].stock}`);
+      }
+    });
 }
 
 // Mark order completed

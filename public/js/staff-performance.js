@@ -42,14 +42,19 @@
     el.innerHTML = '';
     if (list.length === 0) { el.textContent = 'No staff found'; return; }
 
+    const totalHandled = staffData.reduce((acc, s) => acc + Number(s.messages_handled || 0), 0);
+
     list.forEach(s => {
       const responseTime = s.avg_response_time != null ? `${s.avg_response_time}s` : '—';
       const resolvedRate = s.resolution_rate != null ? `${Math.round(s.resolution_rate)}%` : '—';
-      const handled = s.messages_handled || 0;
-      const progressValue = s.resolution_rate != null ? Math.min(100, Math.max(12, Math.round(s.resolution_rate))) : Math.min(100, Math.max(12, 110 - (s.avg_response_time || 60)));
+      const handled = Number(s.messages_handled || 0);
+      const progressValue = totalHandled ? Math.round((handled / totalHandled) * 100) : 0;
+      const progressLabel = totalHandled ? `${progressValue}% messages` : '0% messages';
       const tags = s.team ? `<span class="staff-meta">${escapeHtml(s.team)}</span>` : `<span class="staff-meta">Support</span>`;
+      const statusText = s.status ? escapeHtml(s.status.charAt(0).toUpperCase() + s.status.slice(1)) : '—';
       const row = document.createElement('div');
       row.className = 'staff-row';
+      row.dataset.staffId = String(s.id || '');
       row.innerHTML = `
         <div class="staff-identity">
           <span class="staff-avatar">${escapeHtml((s.name||'')[0]||'S')}</span>
@@ -57,6 +62,10 @@
             <span class="staff-name">${escapeHtml(s.name||'—')}</span>
             ${tags}
           </div>
+        </div>
+        <div>
+          <span class="label">Status</span>
+          <strong>${statusText}</strong>
         </div>
         <div>
           <span class="label">Handled</span>
@@ -71,7 +80,7 @@
           <strong>${escapeHtml(resolvedRate)}</strong>
         </div>
         <div class="staff-progress-cell">
-          <span class="label">${progressValue}% efficiency</span>
+          <span class="label">${progressLabel}</span>
           <div class="performance-bar"><div class="performance-fill" style="width:${progressValue}%"></div></div>
         </div>
         <div class="staff-button">
@@ -79,7 +88,6 @@
         </div>
       `;
 
-      row.querySelector('button').onclick = () => openStaffModal(s);
       el.appendChild(row);
     });
   }
@@ -146,22 +154,67 @@
     document.getElementById('modalName').textContent = s.name || 'Staff';
     const body = document.getElementById('modalBody');
     body.innerHTML = '';
-    const info = document.createElement('div');
-    info.innerHTML = `<p>Handled: <strong>${s.messages_handled||0}</strong></p><p>Avg response: <strong>${s.avg_response_time!=null? s.avg_response_time+'s' : '—'}</strong></p><p>Avg resolution: <strong>${s.avg_resolution_time!=null? s.avg_resolution_time+'s' : '—'}</strong></p>`;
-    body.appendChild(info);
+
+    const details = document.createElement('div');
+    details.className = 'staff-detail-summary';
+    details.innerHTML = `
+      <div class="staff-detail-row"><span>Team</span><strong>${escapeHtml(s.team || 'Support')}</strong></div>
+      <div class="staff-detail-row"><span>Handled</span><strong>${s.messages_handled || 0}</strong></div>
+      <div class="staff-detail-row"><span>Avg response</span><strong>${s.avg_response_time != null ? escapeHtml(s.avg_response_time + 's') : '—'}</strong></div>
+      <div class="staff-detail-row"><span>Avg resolution</span><strong>${s.avg_resolution_time != null ? escapeHtml(s.avg_resolution_time + 's') : '—'}</strong></div>
+      <div class="staff-detail-row"><span>Resolution rate</span><strong>${s.resolution_rate != null ? escapeHtml(s.resolution_rate + '%') : '—'}</strong></div>
+    `;
+    body.appendChild(details);
+
+    const chartContainer = document.createElement('div');
+    chartContainer.className = 'staff-detail-chart';
+    const chartLabel = document.createElement('div');
+    chartLabel.className = 'staff-detail-chart-label';
+    chartLabel.textContent = 'Replies in the last 7 days';
+    chartContainer.appendChild(chartLabel);
 
     const c = document.createElement('canvas');
     c.style.width = '100%';
-    c.style.height = '160px';
-    body.appendChild(c);
-    // last_week chart
+    c.style.height = '180px';
+    chartContainer.appendChild(c);
+    body.appendChild(chartContainer);
+
+    const labels = (s.last_week && s.last_week.length) ? s.last_week.map((_,i)=>`Day ${i+1}`) : [];
+    const chartData = Array.isArray(s.last_week) ? s.last_week : [];
     const ctx = c.getContext('2d');
-    const labels = (s.last_week && s.last_week.length) ? s.last_week.map((_,i)=>`-${6-i}d`) : [];
-    new Chart(ctx, { type:'line', data: { labels, datasets:[{ label:'Replies', data: s.last_week || [], borderColor:'#4f46e5', backgroundColor:'rgba(79,70,229,0.08)', tension:0.3 }] }, options:{responsive:true, maintainAspectRatio:false} });
+    new Chart(ctx, {
+      type:'line',
+      data: {
+        labels,
+        datasets:[{
+          label:'Replies',
+          data: chartData,
+          borderColor:'#4f46e5',
+          backgroundColor:'rgba(79,70,229,0.12)',
+          fill:true,
+          tension:0.3,
+          pointRadius:4
+        }]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false,
+        scales: {
+          x: { grid: { display: false } },
+          y: { beginAtZero:true, ticks: { precision:0 } }
+        }
+      }
+    });
 
     modal.setAttribute('aria-hidden','false');
     modal.style.display = 'block';
     document.getElementById('modalClose').onclick = ()=> { modal.setAttribute('aria-hidden','true'); modal.style.display='none'; };
+    modal.onclick = (event) => {
+      if (event.target === modal) {
+        modal.setAttribute('aria-hidden','true');
+        modal.style.display='none';
+      }
+    };
   }
 
   function escapeHtml(str){ return String(str).replace(/[&<>\"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'})[m]; }); }
@@ -302,11 +355,22 @@
     });
   }
 
+  function handleStaffDetailsClick(event) {
+    const button = event.target.closest('button');
+    if (!button) return;
+    const row = button.closest('.staff-row');
+    if (!row || !row.dataset.staffId) return;
+    const staff = staffData.find(s => String(s.id) === row.dataset.staffId);
+    if (!staff) return;
+    openStaffModal(staff);
+  }
+
   // Wire events
   document.addEventListener('DOMContentLoaded', ()=>{
     if ($search()) $search().addEventListener('input', renderStaffList);
     if ($sort()) $sort().addEventListener('change', renderStaffList);
     if ($refresh()) $refresh().addEventListener('click', fetchMetrics);
+    if ($staffList()) $staffList().addEventListener('click', handleStaffDetailsClick);
     
     // Setup presence map
     setupPresenceFilters();

@@ -1008,86 +1008,17 @@ fetch("/api/user")
     <canvas id="aiStaffMonthlyChart" width="800" height="300"></canvas>
   </div>
   </div>
-  
-  <!-- Support Activity Distribution Pie Chart -->
-  <div class="chart-container chart-fullwidth">
-    <div class="chart-item" style="padding:18px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-        <div>
-          <h3 style="margin:0 0 6px;">Support Activity Distribution</h3>
-          <div style="color:#64748b;margin-bottom:8px;">Breakdown of chats, tickets, receipts, and escalations.</div>
-        </div>
-        <div id="supportPieLoading" style="display:none;align-self:center;">
-          <svg width="28" height="28" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" stroke="#cbd5e1" stroke-width="6" fill="none" stroke-linecap="round" /><path d="M25 5a20 20 0 0 1 0 40" stroke="#2563eb" stroke-width="6" fill="none" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/></path></svg>
-        </div>
-      </div>
-      <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:12px;">
-        <div style="flex:1 1 320px;min-width:260px;max-width:520px;">
-          <canvas id="supportActivityChart" width="520" height="380"></canvas>
-        </div>
-        <div style="flex:0 0 260px;min-width:180px;">
-          <div id="supportActivityLegend" style="display:flex;flex-direction:column;gap:8px;padding:6px 8px;"></div>
-          <div id="supportPieEmpty" style="display:none;color:#64748b;padding:12px;margin-top:10px;background:#fff7ed;border-radius:10px;border:1px solid rgba(0,0,0,0.04);">No analytics data available</div>
-        </div>
-      </div>
-    </div>
-  </div>
 
+   <!-- Tickets bar chart -->
+  <div class="analytics-card chart-container chart-fullwidth">
+    <h3>Tickets Created</h3>
+
+    <div class="chart-container fixed-chart-container">
+        <canvas id="ticketsChart"></canvas>
+    </div>
   </div>
 
   </div> <!-- end analyticsPanel -->
-
-  <!-- Ticket Creation Trends (Bar Chart) - placed directly below Support Activity Distribution -->
-  <div class="chart-container chart-fullwidth">
-    <div class="chart-item" style="padding:18px;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
-        <div>
-          <h3 style="margin:0 0 6px;">Ticket Creation Trends</h3>
-          <div style="color:#64748b;margin-bottom:8px;">Overview of tickets created daily, weekly, and monthly.</div>
-        </div>
-        <div style="text-align:right;color:#64748b;font-size:0.9rem;">
-          <div>Daily = Tickets created today</div>
-          <div>Weekly = Tickets created within the last 7 days</div>
-          <div>Monthly = Tickets created within the last 30 days</div>
-        </div>
-      </div>
-
-      <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;margin-top:12px;">
-        <div style="flex:1 1 520px;min-width:320px;">
-          <div style="display:flex;gap:12px;margin-bottom:12px;">
-            <div class="chart-summary-item">
-              <h4>Today's Tickets</h4>
-              <p id="summaryDailyTickets">—</p>
-            </div>
-            <div class="chart-summary-item">
-              <h4>Last 7 Days</h4>
-              <p id="summaryWeeklyTickets">—</p>
-            </div>
-            <div class="chart-summary-item">
-              <h4>Last 30 Days</h4>
-              <p id="summaryMonthlyTickets">—</p>
-            </div>
-          </div>
-
-          <div style="position:relative;height:340px;background:transparent;border-radius:12px;padding:8px;">
-            <canvas id="ticketCreationBarChart" width="800" height="320"></canvas>
-            <div id="ticketCreationBarLoading" style="display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);">
-              <svg width="36" height="36" viewBox="0 0 50 50"><circle cx="25" cy="25" r="20" stroke="#cbd5e1" stroke-width="6" fill="none" stroke-linecap="round" /><path d="M25 5a20 20 0 0 1 0 40" stroke="#2563eb" stroke-width="6" fill="none" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/></path></svg>
-            </div>
-            <div id="ticketCreationEmpty" style="display:none;color:#64748b;padding:12px;margin-top:10px;background:#fff7ed;border-radius:10px;border:1px solid rgba(0,0,0,0.04);">No ticket data available</div>
-            <div id="ticketSensors" class="sensors-overlay" style="position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <style>
-    .sensors-overlay { position: absolute; pointer-events: none; }
-    .sensors-overlay .sensor-btn { pointer-events: auto; background: rgba(255,255,255,0.9); border: 0; width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 2px 6px rgba(2,6,23,0.08); cursor: pointer; }
-    .sensor-tooltip { position: absolute; transform: translate(-50%, -110%); background: rgba(15,23,42,0.9); color: #fff; padding:6px 8px; border-radius:8px; font-size:0.85rem; display:none; pointer-events:none; }
-    @media (prefers-color-scheme: dark) { .sensor-tooltip { background: rgba(226,232,240,0.06); color:#e2e8f0; } }
-  </style>
 
   <!-- Embedded Staff Performance panel -->
   <div id="staffPanel" style="display:none;">

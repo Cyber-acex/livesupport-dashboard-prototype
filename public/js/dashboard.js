@@ -1,4 +1,15 @@
-document.addEventListener('DOMContentLoaded', ()=>{
+function dashboardReady(callback) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', callback);
+  } else {
+    callback();
+  }
+}
+
+dashboardReady(()=>{
+  console.info('Dashboard ready');
+  window.__dashboard_progress = window.__dashboard_progress || [];
+  window.__dashboard_progress.push('ready');
   // animate counters
   const counters = document.querySelectorAll('.value[data-target]');
   counters.forEach(el=>{
@@ -322,6 +333,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   loadDashboardStats();
   loadRecentOrders();
+  window.__dashboard_progress.push('after_loads');
 
   if (notifBtn && notifPopup) {
     notifBtn.addEventListener('click', async (event) => {
@@ -692,6 +704,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
   function initMessagesChart(){
     const canvas = document.getElementById('messagesChart');
     if(!canvas) return;
+    
+    // Destroy any existing chart instance on this canvas
+    try {
+      const existingChart = window.Chart.getChart(canvas);
+      if (existingChart) existingChart.destroy();
+    } catch (e) {}
 
     const defaultLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const ctx = canvas.getContext('2d');
@@ -807,4 +825,177 @@ document.addEventListener('DOMContentLoaded', ()=>{
     chart.update();
   }
   initMessagesChart();
+  window.__dashboard_progress.push('after_initMessagesChart');
+
+  // --- Progressive daily staff vs ai chart ---
+  window.__dashboard_progress.push('before_initProgressive');
+  window.initProgressiveMessagesChart = async function(){
+    console.log('[Chart Init] Starting initialization');
+    const canvas = document.getElementById('messagesProgressiveChart');
+    if(!canvas) { console.warn('[Chart Init] Canvas not found'); return; }
+
+    console.log('[Chart Init] Canvas found, setting styles');
+    canvas.style.display = 'block';
+    canvas.style.width = '100%';
+    canvas.style.height = '360px';
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    console.log('[Chart Init] Canvas dimensions:', canvas.width, 'x', canvas.height);
+    
+    // Destroy any existing chart instance on this canvas
+    try {
+      const existingChart = window.Chart.getChart(canvas);
+      if (existingChart) { 
+        console.log('[Chart Init] Destroying existing chart');
+        existingChart.destroy();
+      }
+    } catch (e) {
+      console.log('[Chart Init] Error checking for existing chart:', e.message);
+    }
+    
+    const ctx = canvas.getContext('2d');
+    console.log('[Chart Init] Context obtained');
+
+    // helper to fetch daily data for current month
+    async function fetchDaily(month){
+      const url = '/api/messages-daily' + (month ? ('?month=' + encodeURIComponent(month)) : '');
+      console.log('[Chart Init] Fetching from:', url);
+      try{
+        const res = await fetch(url, { credentials: 'same-origin' });
+        if(!res.ok) throw new Error('Network: ' + res.status);
+        const data = await res.json();
+        console.log('[Chart Init] Data fetched:', data);
+        return data;
+      }catch(e){ 
+        console.warn('Failed to load daily messages', e); 
+        return null; 
+      }
+    }
+
+    const dataObj = await fetchDaily();
+    console.log('[Chart Init] Data object:', dataObj);
+    const labels = (dataObj && Array.isArray(dataObj.labels)) ? dataObj.labels.map(String) : [];
+    const aiData = (dataObj && Array.isArray(dataObj.ai)) ? dataObj.ai.map(n=>Number(n||0)) : [];
+    const staffData = (dataObj && Array.isArray(dataObj.staff)) ? dataObj.staff.map(n=>Number(n||0)) : [];
+
+    console.log('[Chart Init] Labels:', labels.length, 'AI data:', aiData.length, 'Staff data:', staffData.length);
+    const totalPoints = Math.max(labels.length, 1);
+
+    // build two datasets with empty data initially for progressive animation
+    const cfg = {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Staff messages',
+            borderColor: '#2563eb',
+            backgroundColor: 'rgba(37,99,235,0.06)',
+            data: new Array(totalPoints).fill(null),
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: true
+          },
+          {
+            label: 'AI messages',
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239,68,68,0.06)',
+            data: new Array(totalPoints).fill(null),
+            tension: 0.25,
+            borderWidth: 2,
+            pointRadius: 0,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        plugins: {
+          legend: { display: true },
+          tooltip: {
+            enabled: true,
+            backgroundColor: 'rgba(15,23,42,0.95)',
+            titleColor: '#fff',
+            bodyColor: '#fff',
+            displayColors: false,
+            cornerRadius: 6
+          }
+        },
+        scales: {
+          x: { type: 'category', grid: { display: false }, ticks: { color: 'rgba(55,65,81,0.85)' } },
+          y: { type: 'linear', beginAtZero: true, grid: { color: 'rgba(15,23,42,0.06)' }, ticks: { color: 'rgba(55,65,81,0.75)' } }
+        },
+        animation: false
+      }
+    };
+
+    console.log('[Chart Init] Creating Chart instance');
+    try {
+      const chart = new Chart(ctx, cfg);
+      console.log('[Chart Init] Chart created successfully');
+    } catch (chartErr) {
+      console.error('[Chart Init] Failed to create chart:', chartErr.message);
+      return;
+    }
+
+    // Progressive reveal function
+    async function reveal(){
+      const length = labels.length;
+      const steps = length;
+      for(let i=0;i<steps;i++){
+        // progressively set data up to i
+        const partialStaff = staffData.slice(0,i+1).concat(new Array(length - (i+1)).fill(null));
+        const partialAi = aiData.slice(0,i+1).concat(new Array(length - (i+1)).fill(null));
+        chart.data.datasets[0].data = partialStaff;
+        chart.data.datasets[1].data = partialAi;
+        chart.update();
+        // small delay for progressive effect
+        await new Promise(r=>setTimeout(r, 18));
+      }
+    }
+
+    // initial reveal
+    reveal().catch(e=>console.warn('Reveal failed', e));
+
+    // update on socket/new data
+    async function reload(){
+      const fresh = await fetchDaily();
+      if(!fresh) return;
+      chart.data.labels = fresh.labels.map(String);
+      chart.data.datasets[0].data = fresh.staff.map(n=>Number(n||0));
+      chart.data.datasets[1].data = fresh.ai.map(n=>Number(n||0));
+      chart.update();
+    }
+
+    try{
+      const socket = io();
+      if(socket && socket.on) socket.on('newMessage', reload);
+    }catch(e){}
+
+    // hover details
+    const details = document.getElementById('messagesProgressiveDetails');
+    if(details){
+      canvas.addEventListener('mousemove', (ev)=>{
+        const elements = chart.getElementsAtEventForMode(ev, 'nearest', {intersect:false}, true);
+        if(elements && elements.length){
+          const el = elements[0];
+          const idx = el.index;
+          const lbl = chart.data.labels[idx];
+          const staffVal = chart.data.datasets[0].data[idx] || 0;
+          const aiVal = chart.data.datasets[1].data[idx] || 0;
+          details.textContent = `${lbl}: Staff ${staffVal} — AI ${aiVal}`;
+        } else {
+          details.textContent = 'Hover to see counts';
+        }
+      });
+      canvas.addEventListener('mouseleave', ()=>{ details.textContent = 'Hover to see counts'; });
+    }
+
+  }
+
+  window.initProgressiveMessagesChart().catch(e=>console.warn(e));
+
 });
