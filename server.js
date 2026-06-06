@@ -889,6 +889,121 @@ app.post("/login", (req, res) => {
     });
 });
 
+// Initiate Google OAuth login flow
+app.get('/auth/google', (req, res) => {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`;
+    
+    if (!clientId) {
+        return res.status(500).send('Google OAuth is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_REDIRECT_URI in .env');
+    }
+    
+    const scope = 'openid email profile';
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${encodeURIComponent(clientId)}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `response_type=code&` +
+        `scope=${encodeURIComponent(scope)}`;
+    
+    res.redirect(authUrl);
+});
+
+// Handle Google OAuth callback
+app.get('/auth/google/callback', async (req, res) => {
+    const { code, error } = req.query;
+    
+    if (error) {
+        return res.redirect(`/login.html?error=google_${error}`);
+    }
+    
+    if (!code) {
+        return res.redirect('/login.html?error=google_no_code');
+    }
+    
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`;
+    
+    if (!clientId || !clientSecret) {
+        return res.status(500).send('Google OAuth credentials not configured');
+    }
+
+    try {
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                code,
+                client_id: clientId,
+                client_secret: clientSecret,
+                redirect_uri: redirectUri,
+                grant_type: 'authorization_code'
+            }).toString()
+        });
+
+        const tokenData = await tokenRes.json();
+        if (!tokenRes.ok || !tokenData || !tokenData.access_token) {
+            console.error('Google token exchange failed', tokenData);
+            return res.redirect('/login.html?error=google_token_failed');
+        }
+
+        // Fetch userinfo
+        const uiRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        const userInfo = await uiRes.json();
+        if (!userInfo || !userInfo.email) {
+            console.error('Failed to fetch Google userinfo', userInfo);
+            return res.redirect('/login.html?error=google_userinfo_failed');
+        }
+
+        // Find or create user in local DB
+        db.query('SELECT * FROM users WHERE email = ?', [userInfo.email], (err, rows) => {
+            if (err) {
+                console.error('DB lookup error during Google auth', err);
+                return res.redirect('/login.html?error=google_db_error');
+            }
+
+            const finishLogin = (user) => {
+                try {
+                    req.session.user = user;
+                    req.session.loginTime = new Date().toISOString();
+                    req.session.userId = user.id;
+                    const sid = req.sessionID;
+                    const uid = String(user.id);
+                    const set = userSessions.get(uid) || new Set();
+                    set.add(sid);
+                    userSessions.set(uid, set);
+                    try { io.emit('admin:users:changed', { action: 'login', id: uid }); } catch (e) { console.error('Emit admin users changed error', e); }
+                } catch (e) { console.error('Failed to finalize session for Google user', e); }
+                return res.redirect('/dashboard?welcome=1');
+            };
+
+            if (rows && rows.length > 0) {
+                return finishLogin(rows[0]);
+            }
+
+            // Create new user with role 'agent'
+            const name = userInfo.name || (userInfo.email || '').split('@')[0];
+            const email = userInfo.email;
+            const pw = Math.random().toString(36).slice(-12);
+            const sql = 'INSERT INTO users (name, email, password, role, disabled) VALUES (?, ?, ?, ?, 0)';
+            db.query(sql, [name, email, pw, 'agent'], (insertErr, result) => {
+                if (insertErr) {
+                    console.error('Error creating new Google user', insertErr);
+                    return res.redirect('/login.html?error=google_create_failed');
+                }
+                
+                const newUser = { id: result.insertId, email, name, role: 'agent' };
+                return finishLogin(newUser);
+            });
+        });
+    } catch (err) {
+        console.error('Google OAuth error:', err);
+        res.redirect('/login.html?error=google_exception');
+    }
+});
+
 // Exchange Google authorization code for tokens, fetch userinfo, create/find user and establish session
 app.post('/auth/google', async (req, res) => {
     const { code } = req.body || {};

@@ -238,17 +238,34 @@ document.addEventListener('DOMContentLoaded', () => {
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false }
-                    },
+
                     interaction: {
-                        mode: 'nearest',
-                        axis: 'xy'
+                        mode: 'index',
+                        intersect: false
                     },
+
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top'
+                        },
+
+                        tooltip: {
+                            enabled: true,
+                            mode: 'index',
+                            intersect: false,
+
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.raw}`;
+                                }
+                            }
+                        }
+                    },
+
                     scales: {
                         y: {
-                            beginAtZero: true,
-                            ticks: { precision: 0 }
+                            beginAtZero: true
                         }
                     }
                 }

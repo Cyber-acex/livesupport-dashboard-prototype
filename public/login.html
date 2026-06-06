@@ -37,7 +37,7 @@
                 </div>
 
                 <!-- Form -->
-                <form class="login-form">
+                <form class="login-form" method="POST" action="/login">
                     <!-- Error Message Alert -->
                     <div id="error-message" class="error-alert hidden">
                         <svg class="error-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -57,7 +57,7 @@
                                 <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 <path d="M20 6l-8 5-8-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
-                            <input type="email" id="email" placeholder="Enter your email" required>
+                            <input type="email" id="email" name="email" placeholder="Enter your email" required>
                         </div>
                     </div>
 
@@ -70,7 +70,7 @@
                                 <path d="M7 10.5V7c0-2.76 2.24-5 5-5s5 2.24 5 5v3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                                 <circle cx="12" cy="16.5" r="1" fill="currentColor"/>
                             </svg>
-                            <input type="password" id="password" placeholder="Enter your password" required>
+                            <input type="password" id="password" name="password" placeholder="Enter your password" required>
                             <button type="button" class="toggle-password" onclick="togglePassword()">
                                 <svg class="eye-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -398,7 +398,21 @@
             
             if (error === 'invalid') {
                 showError('Invalid email or password. Please try again.');
-                // Clean up the URL to remove the error parameter
+            } else if (error && error.startsWith('google_')) {
+                const googleErrors = {
+                    'google_access_denied': 'Google login was cancelled.',
+                    'google_no_code': 'Failed to get authorization code from Google.',
+                    'google_token_failed': 'Failed to exchange code for token.',
+                    'google_userinfo_failed': 'Failed to fetch your Google profile information.',
+                    'google_db_error': 'Database error during login.',
+                    'google_create_failed': 'Failed to create your account.',
+                    'google_exception': 'An error occurred during Google authentication.'
+                };
+                const message = googleErrors[error] || 'Google authentication failed. Please try again.';
+                showError(message);
+            }
+            // Clean up the URL to remove the error parameter
+            if (error) {
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
         });
@@ -438,34 +452,6 @@
                 toggleBtn.classList.remove('active');
             }
         }
-
-        // Form submission handler
-        document.querySelector('.login-form').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            
-            fetch('/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ email, password })
-            })
-            .then(res => {
-                if (res.ok) {
-                    window.location.href = '/dashboard';
-                } else if (res.status === 401 || res.url.includes('error=invalid')) {
-                    showError('Invalid email or password. Please try again.');
-                } else {
-                    return res.text().then(text => { throw new Error(text); });
-                }
-            })
-            .catch(err => {
-                console.error('Login error:', err);
-                showError('Login failed: ' + err.message);
-            });
-        });
 
         // Google Sign In handler
         document.querySelector('.google-btn').addEventListener('click', function(e) {
