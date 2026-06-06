@@ -768,7 +768,7 @@ app.use((req, res, next) => {
 // Protect admin assets/pages before static middleware: require login only
 app.use((req, res, next) => {
     if (req.path === '/admin-users.html' || req.path.startsWith('/js/admin-users')) {
-        if (!req.session || !req.session.user) return res.redirect('/login.html');
+        if (!req.session || !req.session.user) return res.redirect('/loginx.html');
     }
     next();
 });

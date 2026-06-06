@@ -1,226 +1,492 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
-
 <head>
-        <link rel="icon" href="/favicon.png" type="image/png">
-        <link rel="shortcut icon" href="/favicon.png">
-        <link rel="stylesheet" href="./css/tailadmin.css">
-        <link rel="stylesheet" href="./css/style.css">
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>LiveSupport - Secure Login</title>
-        <script>
-            (function applyThemeImmediately() {
-                const theme = localStorage.getItem('theme') || 'Light';
-                document.documentElement.dataset.theme = theme;
-                document.documentElement.classList.toggle('dark-theme', theme === 'Dark');
-            })();
-        </script>
-        <style>
-            /* Minimal inline to avoid flash of unstyled content for the login card */
-            html,body{height:100%;margin:0}
-            body{font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cdefs%3E%3Cpattern id='icon-pattern' x='0' y='0' width='200' height='200' patternUnits='userSpaceOnUse'%3E%3C!-- Headset Icon --%3E%3Cg transform='translate(10, 10)' opacity='0.15'%3E%3Cpath d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h4v4h6v-4h4c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 14h-3v-4h3v4zm4-8c-.6 0-1-.4-1-1s.4-1 1-1 1 .4 1 1-.4 1-1 1z' fill='%23999999'/%3E%3C/g%3E%3C!-- Chat Icon --%3E%3Cg transform='translate(110, 10)' opacity='0.15'%3E%3Cpath d='M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 12h-8v-2h8v2zm0-3h-8V9h8v2zm0-3H6V6h12v2z' fill='%23999999'/%3E%3C/g%3E%3C!-- Ticket Icon --%3E%3Cg transform='translate(10, 110)' opacity='0.15'%3E%3Cpath d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-9-7l-2.29 2.29 4.88 4.88 8-8-1.41-1.41-6.59 6.59-1.59-1.59z' fill='%23999999'/%3E%3C/g%3E%3C!-- Delivery Icon --%3E%3Cg transform='translate(110, 110)' opacity='0.15'%3E%3Cpath d='M18 18.5a1.5 1.5 0 01-1.5-1.5 1.5 1.5 0 011.5-1.5 1.5 1.5 0 011.5 1.5 1.5 1.5 0 01-1.5 1.5m1.5-9l1.96 2.5H17V9.5M17 8H3c-1 0-2 .9-2 2v11c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-11c0-1.1-.9-2-2-2zm0 13H3v-6h14v6zm0-8H3v-3h14v3zM6.5 17a1.5 1.5 0 100-3 1.5 1.5 0 000 3z' fill='%23999999'/%3E%3C/g%3E%3C!-- Food Icon --%3E%3Cg transform='translate(60, 60)' opacity='0.15'%3E%3Cpath d='M11.99 5C6.47 5 2 8.58 2 13s4.47 8 9.99 8C17.52 21 22 17.42 22 13s-4.48-8-10.01-8zM12 19c-3.35 0-6-2.57-6-6s2.65-6 6-6 6 2.57 6 6-2.65 6-6 6zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 11 15.5 11 14 11.67 14 12.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 11 8.5 11 7 11.67 7 12.5 7.67 14 8.5 14zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z' fill='%23999999'/%3E%3C/g%3E%3C/pattern%3E%3C/defs%3E%3Crect width='200' height='200' fill='white'/%3E%3Crect width='200' height='200' fill='url(%23icon-pattern)'/%3E%3C/svg%3E"); background-attachment: fixed;}
-        <style>
-            /* small inline reset to keep layout stable while CSS loads */
-            html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial}
-            body{background:#f8fafc}
-        </style>
-<main class="advanced-login">
-    <section class="login-form-card" aria-labelledby="login-heading">
-        <div class="brand">
-            <svg width="60" height="60" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <!-- Headset icon in orange -->
-                <path d="M23 7v6h-1.5c0 2.21-1.79 4-4 4s-4-1.79-4-4h-3c0 2.21-1.79 4-4 4s-4-1.79-4-4H1v-6c0-3.31 2.69-6 6-6h10c3.31 0 6 2.69 6 6z" fill="#FF6B4A"/>
-                <circle cx="6.5" cy="15" r="2.5" fill="#FF6B4A"/>
-                <circle cx="17.5" cy="15" r="2.5" fill="#FF6B4A"/>
-            </svg>
-            <div>
-                <h1 class="title">Live<span class="title-highlight">Support</span></h1>
-                <p class="tag">RESTAURANT DASHBOARD</p>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiveSupport - Restaurant Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="login.css">
+</head>
+<body>
+    <div class="login-container">
+        <!-- Left Side: Login Panel -->
+        <div class="login-panel">
+            <div class="login-card">
+                <!-- Logo Area -->
+                <div class="logo-section">
+                    <div class="logo-content">
+                        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M23 16.13c0-.68-.55-1.25-1.23-1.25h-.98c-.68 0-1.23.57-1.23 1.25 0 .69.55 1.25 1.23 1.25h.98c.68 0 1.23-.56 1.23-1.25z" fill="#ff6b3d"/>
+                            <path d="M20.16 10.5h-3.5c-.68 0-1.23.57-1.23 1.25s.55 1.25 1.23 1.25h3.5c.68 0 1.23-.57 1.23-1.25s-.55-1.25-1.23-1.25z" fill="#ff6b3d"/>
+                            <path d="M20.16 4.63h-3.5c-.68 0-1.23.57-1.23 1.25s.55 1.25 1.23 1.25h3.5c.68 0 1.23-.57 1.23-1.25s-.55-1.25-1.23-1.25z" fill="#ff6b3d"/>
+                            <path d="M12.28 23.1H8.08c-3.82 0-6.19-2.38-6.19-6.2V7.1c0-3.82 2.37-6.2 6.19-6.2h4.2c3.82 0 6.19 2.38 6.19 6.2v9.8c0 3.82-2.37 6.2-6.19 6.2zm-4.2-18.5c-2.45 0-3.69 1.25-3.69 3.7v9.8c0 2.45 1.24 3.7 3.69 3.7h4.2c2.45 0 3.69-1.25 3.69-3.7V7.1c0-2.45-1.24-3.7-3.69-3.7h-4.2z" fill="#ff6b3d"/>
+                        </svg>
+                        <div class="logo-text">
+                            <div class="logo-title">
+                                <span class="live">Live</span><span class="support">Support</span>
+                            </div>
+                            <div class="logo-subtitle">RESTAURANT DASHBOARD</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Welcome Section -->
+                <div class="welcome-section">
+                    <h1 class="welcome-heading">Welcome Back!</h1>
+                    <p class="welcome-text">Sign in to manage live conversations, orders, and customer support.</p>
+                </div>
+
+                <!-- Form -->
+                <form class="login-form">
+                    <!-- Error Message Alert -->
+                    <div id="error-message" class="error-alert hidden">
+                        <svg class="error-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+                            <path d="M12 8v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            <circle cx="12" cy="16" r="0.5" fill="currentColor"/>
+                        </svg>
+                        <span id="error-text">Invalid email or password</span>
+                        <button type="button" class="error-close" onclick="closeError()">&times;</button>
+                    </div>
+
+                    <!-- Email Field -->
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <div class="input-wrapper">
+                            <svg class="input-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M20 6l-8 5-8-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            <input type="email" id="email" placeholder="Enter your email" required>
+                        </div>
+                    </div>
+
+                    <!-- Password Field -->
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <div class="input-wrapper">
+                            <svg class="input-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M19 10.5H5c-1.1 0-2 .9-2 2v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7c0-1.1-.9-2-2-2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <path d="M7 10.5V7c0-2.76 2.24-5 5-5s5 2.24 5 5v3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                <circle cx="12" cy="16.5" r="1" fill="currentColor"/>
+                            </svg>
+                            <input type="password" id="password" placeholder="Enter your password" required>
+                            <button type="button" class="toggle-password" onclick="togglePassword()">
+                                <svg class="eye-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                    <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Remember Me Row -->
+                    <div class="remember-row">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="remember" name="remember">
+                            <label for="remember">Remember me</label>
+                        </div>
+                        <a href="#" class="forgot-link">Forgot Password?</a>
+                    </div>
+
+                    <!-- Sign In Button -->
+                    <button type="submit" class="sign-in-btn">Sign In</button>
+
+                    <!-- Divider -->
+                    <div class="divider">
+                        <span>or</span>
+                    </div>
+
+                    <!-- Google Button -->
+                    <button type="button" class="google-btn">
+                        <svg class="google-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                        </svg>
+                        Sign in with Google
+                    </button>
+
+                    <!-- Signup Text -->
+                    <div class="signup-text">
+                        Don't have an account? <a href="#" class="signup-link">Sign up</a>
+                    </div>
+                </form>
             </div>
         </div>
-        <h2 class="welcome-heading">Welcome Back!</h2>
-        <p class="welcome-description">Sign in to manage live conversations, orders, and customer support.</p>
-        <form action="/login" method="POST" class="login-form" autocomplete="on">
-            <label class="field">
-                <span class="label-text">Email Address</span>
-                <div class="input-wrap">
-                    <span class="input-icon">✉️</span>
-                    <input type="email" name="email" placeholder="Enter your email" required>
+
+        <!-- Right Side: Hero Section -->
+        <div class="hero-section">
+            <!-- Background with overlay -->
+            <div class="hero-background"></div>
+
+            <!-- Floating Chat Card 1 (Top Left) -->
+            <div class="chat-card card-1">
+                <div class="chat-header">John D.</div>
+                <div class="chat-message">Where is my order?</div>
+                <div class="chat-timestamp">2m ago</div>
+            </div>
+
+            <!-- Floating Chat Card 2 (Top Right) -->
+            <div class="chat-card card-2">
+                <div class="chat-header">Support Agent</div>
+                <div class="chat-message">Your order is on the way! 🚚</div>
+                <div class="chat-timestamp">2m ago</div>
+            </div>
+
+            <!-- Floating Chat Card 3 (Below Card 2) -->
+            <div class="chat-card card-3">
+                <div class="chat-header">John D.</div>
+                <div class="chat-message">Thank you! 🙂</div>
+                <div class="chat-timestamp">1m ago</div>
+            </div>
+
+            <!-- Support Agent at Desk with Monitor -->
+            <div class="workstation-setup">
+                <!-- Restaurant ambient background with warm lighting -->
+                <div class="workstation-background"></div>
+                
+                <!-- Desk & workspace -->
+                <div class="desk-workspace">
+                    <!-- Monitor Stand & Screen -->
+                    <div class="monitor-display">
+                        <div class="monitor-frame">
+                                <div class="monitor-content">
+                                    <!-- Dashboard Sidebar -->
+                                    <div class="dashboard-sidebar">
+                                        <div class="dashboard-logo">LS</div>
+                                        <nav class="dashboard-nav">
+                                            <a href="#" class="nav-item active">
+                                                <span class="nav-dot"></span>
+                                                Dashboard
+                                            </a>
+                                            <a href="#" class="nav-item">
+                                                <span class="nav-dot"></span>
+                                                Conversations
+                                            </a>
+                                            <a href="#" class="nav-item">
+                                                <span class="nav-dot"></span>
+                                                Orders
+                                            </a>
+                                            <a href="#" class="nav-item">
+                                                <span class="nav-dot"></span>
+                                                Tickets
+                                            </a>
+                                            <a href="#" class="nav-item">
+                                                <span class="nav-dot"></span>
+                                                Customers
+                                            </a>
+                                            <a href="#" class="nav-item">
+                                                <span class="nav-dot"></span>
+                                                Reports
+                                            </a>
+                                            <a href="#" class="nav-item">
+                                                <span class="nav-dot"></span>
+                                                Settings
+                                            </a>
+                                        </nav>
+                                    </div>
+
+                                    <!-- Dashboard Main Content -->
+                                    <div class="dashboard-main">
+                                        <div class="dashboard-header">
+                                            <h2>Dashboard</h2>
+                                            <div class="header-controls">
+                                                <span class="period">Last 7 days</span>
+                                                <button class="refresh-btn">↻</button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Metric Cards -->
+                                        <div class="metrics-grid">
+                                            <div class="metric-card">
+                                                <div class="metric-label">Total Conversations</div>
+                                                <div class="metric-value">1,245</div>
+                                                <div class="metric-change">+12.5%</div>
+                                            </div>
+                                            <div class="metric-card">
+                                                <div class="metric-label">Open Tickets</div>
+                                                <div class="metric-value">42</div>
+                                                <div class="metric-change">-8.2%</div>
+                                            </div>
+                                            <div class="metric-card">
+                                                <div class="metric-label">Orders Today</div>
+                                                <div class="metric-value">328</div>
+                                                <div class="metric-change">+24.1%</div>
+                                            </div>
+                                            <div class="metric-card">
+                                                <div class="metric-label">Satisfaction Rate</div>
+                                                <div class="metric-value">94%</div>
+                                                <div class="metric-change">+3.2%</div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Chart Area -->
+                                        <div class="chart-container">
+                                            <div class="chart-title">Sales Performance</div>
+                                            <div class="chart-placeholder">
+                                                <svg viewBox="0 0 300 80" xmlns="http://www.w3.org/2000/svg">
+                                                    <polyline points="10,70 30,50 50,60 70,30 90,40 110,20 130,35 150,15 170,25 190,10 210,30 230,20 250,40 270,15 290,35" fill="none" stroke="#ff6b3d" stroke-width="2"/>
+                                                    <polyline points="10,75 30,65 50,70 70,50 90,58 110,45 130,55 150,40 170,50 190,38 210,55 230,48 250,62 270,50 290,65" fill="none" stroke="#ff855f" stroke-width="2" opacity="0.5"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+
+                                        <!-- Conversations List -->
+                                        <div class="conversations-list">
+                                            <div class="list-header">Recent Conversations</div>
+                                            <div class="list-item">
+                                                <div class="list-avatar">JD</div>
+                                                <div class="list-content">
+                                                    <div class="list-name">John D.</div>
+                                                    <div class="list-preview">When can I expect my order?</div>
+                                                </div>
+                                                <div class="list-time">5m</div>
+                                            </div>
+                                            <div class="list-item">
+                                                <div class="list-avatar">SC</div>
+                                                <div class="list-content">
+                                                    <div class="list-name">Sarah C.</div>
+                                                    <div class="list-preview">I'd like to modify my reservation</div>
+                                                </div>
+                                                <div class="list-time">12m</div>
+                                            </div>
+                                            <div class="list-item">
+                                                <div class="list-avatar">MK</div>
+                                                <div class="list-content">
+                                                    <div class="list-name">Mike K.</div>
+                                                    <div class="list-preview">Menu item unavailable issue</div>
+                                                </div>
+                                                <div class="list-time">23m</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Monitor Stand -->
+                        <div class="monitor-stand-pole"></div>
+                    </div>
+
+                    <!-- Support Agent at Desk -->
+                    <div class="agent-at-desk">
+                        <!-- Agent Figure (Photorealistic) -->
+                        <div class="agent-figure">
+                            <!-- Head with Headset -->
+                            <div class="agent-head-realistic">
+                                <!-- Hair -->
+                                <div class="hair-back"></div>
+                                <div class="hair-shine"></div>
+                                <!-- Face -->
+                                <div class="face-realistic">
+                                    <div class="face-shape"></div>
+                                    <div class="cheekbones"></div>
+                                    <div class="eyebrows">
+                                        <div class="eyebrow-left"></div>
+                                        <div class="eyebrow-right"></div>
+                                    </div>
+                                    <div class="eyes-realistic">
+                                        <div class="eye-realistic left-eye"></div>
+                                        <div class="eye-realistic right-eye"></div>
+                                    </div>
+                                    <div class="nose-realistic"></div>
+                                    <div class="mouth-realistic">
+                                        <div class="smile-arc"></div>
+                                        <div class="smile-highlight"></div>
+                                    </div>
+                                </div>
+                                <!-- Headset -->
+                                <div class="headset-professional">
+                                    <div class="headset-left-cup"></div>
+                                    <div class="headset-right-cup"></div>
+                                    <div class="headset-band-top"></div>
+                                    <div class="mic-boom"></div>
+                                </div>
+                            </div>
+                            <!-- Shoulders & Body -->
+                            <div class="agent-shoulders">
+                                <div class="left-shoulder"></div>
+                                <div class="right-shoulder"></div>
+                            </div>
+                            <!-- Black Uniform -->
+                            <div class="agent-uniform">
+                                <div class="uniform-top"></div>
+                                <div class="badge-realistic">SUPPORT</div>
+                            </div>
+                            <!-- Arms & Hands -->
+                            <div class="agent-arms">
+                                <div class="left-arm"></div>
+                                <div class="right-arm"></div>
+                                <div class="left-hand">
+                                    <div class="finger-group"></div>
+                                    <div class="finger-group"></div>
+                                    <div class="finger-group"></div>
+                                </div>
+                                <div class="right-hand">
+                                    <div class="finger-group"></div>
+                                    <div class="finger-group"></div>
+                                    <div class="finger-group"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Keyboard -->
+                        <div class="keyboard"></div>
+                        <!-- Mouse -->
+                        <div class="mouse"></div>
+                    </div>
                 </div>
-            </label>
 
+                <!-- Desk Surface -->
+                <div class="desk-top-surface"></div>
 
+            <!-- Bottom Feature Bar -->
+            <div class="feature-bar">
+                <div class="feature-item">
+                    <svg class="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <div class="feature-content">
+                        <div class="feature-title">Live Chat Support</div>
+                        <div class="feature-subtitle">Real-time customer conversations</div>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <svg class="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 11l3 3L22 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <div class="feature-content">
+                        <div class="feature-title">Order Management</div>
+                        <div class="feature-subtitle">Track and manage orders live</div>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <svg class="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9 11l3 3L22 4M12 2H5a3 3 0 0 0-3 3v14a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <rect x="8" y="7" width="8" height="2" fill="currentColor"/>
+                        <rect x="8" y="13" width="4" height="2" fill="currentColor"/>
+                    </svg>
+                    <div class="feature-content">
+                        <div class="feature-title">Ticket System</div>
+                        <div class="feature-subtitle">Resolve issues faster</div>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <svg class="feature-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <line x1="12" y1="2" x2="12" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <polyline points="19 9 12 2 5 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <div class="feature-content">
+                        <div class="feature-title">Analytics & Reports</div>
+                        <div class="feature-subtitle">Monitor performance and satisfaction</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Check for error parameter in URL on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const error = urlParams.get('error');
             
-            <label class="field">
-                <span class="label-text">Password</span>
-                <div class="input-wrap">
-                    <span class="input-icon">🔒</span>
-                    <input id="password" type="password" name="password" placeholder="Enter your password" required>
-                    <button type="button" class="pw-toggle" aria-label="Show password" title="Show password">👁️</button>
-                </div>
-            </label>
-
-            <div class="options-row">
-                <label class="remember"><input type="checkbox" name="remember"> Remember me</label>
-                <a class="forgot" href="#">Forgot Password?</a>
-            </div>
-
-            <button class="submit" type="submit">Sign In</button>
-
-            <div class="divider"><span>or</span></div>
-
-            <div class="socials">
-                <button type="button" class="social google" aria-label="Sign in with Google">
-                    <span class="google-logo" aria-hidden="true">
-                        <svg viewBox="0 0 533.5 544.3" xmlns="http://www.w3.org/2000/svg" focusable="false" role="img">
-                            <path d="M533.5 278.4c0-17.4-1.5-34.2-4.3-50.4H272v95.5h147.3c-6.3 34-25.1 62.8-53.6 82l86.4 67.1c50.5-46.6 82.4-115.3 82.4-194.2z" fill="#4285F4"/>
-                            <path d="M272 544.3c72.6 0 133.7-24.1 178.3-65.2l-86.4-67.1c-24.1 16.2-55 25.8-91.9 25.8-70.6 0-130.3-47.6-151.7-111.7H27.3v70.3C71.2 486.9 166.5 544.3 272 544.3z" fill="#34A853"/>
-                            <path d="M120.3 323.1c-10.6-31.8-10.6-66.1 0-97.9V154.9H27.3C-4.8 201.7-4.8 310.6 27.3 354.7l93-31.6z" fill="#FBBC05"/>
-                            <path d="M272 107.3c38.6-.6 75.6 13.6 103.7 39.2l77.6-77.6C401.2 24.1 340.1 0 272 0 166.5 0 71.2 57.4 27.3 154.9l93 31.6C141.7 154.9 201.4 107.3 272 107.3z" fill="#EA4335"/>
-                        </svg>
-                    </span>
-                    <span>Sign in with Google</span>
-                </button>
-            </div>
-
-            <div id="errorBox" class="hidden" role="alert" aria-live="assertive"></div>
-        </form>
-
-        <footer class="login-foot">Don't have an account? <a class="signup-link" href="#">Sign up</a></footer>
-    </section>
-    <section class="login-hero" aria-hidden="true">
-        <div class="hero-media" style="background-image: url('/image/buffed%20login%20x.png');"></div>
-    </section>
-</main>
-
-<script>
-    // Password toggle
-    document.addEventListener('click', e => {
-        if (e.target.matches('.pw-toggle')) {
-            const inp = document.getElementById('password');
-            if (inp.type === 'password') { inp.type = 'text'; e.target.textContent = '👁️'; e.target.setAttribute('aria-label', 'Hide password'); }
-            else { inp.type = 'password'; e.target.textContent = '🙈'; e.target.setAttribute('aria-label', 'Show password'); }
-        }
-    });
-    
-    // Theme toggle
-    const themeToggle = document.querySelector('.theme-toggle');
-    if (themeToggle) {
-        const reflect = () => {
-            const current = document.documentElement.dataset.theme || 'Light';
-            themeToggle.setAttribute('aria-pressed', current === 'Dark');
-        };
-        themeToggle.addEventListener('click', () => {
-            const isDark = document.documentElement.dataset.theme === 'Dark';
-            const next = isDark ? 'Light' : 'Dark';
-            document.documentElement.dataset.theme = next;
-            document.documentElement.classList.toggle('dark-theme', next === 'Dark');
-            localStorage.setItem('theme', next);
-            reflect();
-        });
-        themeToggle.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') themeToggle.click(); });
-        reflect();
-    }
-
-    // Show server errors if present
-    window.addEventListener('DOMContentLoaded', () => {
-        const params = new URLSearchParams(window.location.search);
-        const errorBox = document.getElementById('errorBox');
-        if (params.get('error') === 'invalid') {
-            errorBox.textContent = 'Invalid credentials - please try again.';
-            errorBox.classList.remove('hidden');
-            errorBox.classList.add('show');
-            setTimeout(()=> errorBox.classList.remove('show'), 6000);
-        }
-    });
-</script>
-
-<!-- Google Identity Services -->
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<script>
-        // Google client ID is fetched from the server so you don't need to hardcode it in the HTML
-        let GOOGLE_CLIENT_ID = null;
-        async function fetchGoogleConfig(){
-            try{
-                const r = await fetch('/auth/config');
-                if (r.ok){
-                    const j = await r.json();
-                    GOOGLE_CLIENT_ID = j.googleClientId || null;
-                } else {
-                    // show a helpful error message when server says client not configured
-                    try{ const j = await r.json(); if (j && j.error === 'google_client_not_configured') showError('Google client not configured on server. Set GOOGLE_CLIENT_ID in .env and restart.'); } catch(e){}
-                }
-            } catch (e){
-                console.warn('Failed to fetch /auth/config', e);
+            if (error === 'invalid') {
+                showError('Invalid email or password. Please try again.');
+                // Clean up the URL to remove the error parameter
+                window.history.replaceState({}, document.title, window.location.pathname);
             }
-            // attempt init after fetching config
-            initGoogleClient();
+        });
+
+        function showError(message) {
+            const errorAlert = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            errorText.textContent = message;
+            errorAlert.classList.remove('hidden');
+            errorAlert.classList.add('buzz');
+            
+            // Remove buzz animation after it completes
+            setTimeout(() => {
+                errorAlert.classList.remove('buzz');
+            }, 600);
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                closeError();
+            }, 5000);
         }
 
-    // Init the code client for the Authorization Code flow with PKCE.
-    // This returns an authorization code which your server must exchange for tokens.
-    let googleCodeClient;
-    function initGoogleClient(){
-        if (!window.google || !GOOGLE_CLIENT_ID) return;
-        try {
-            googleCodeClient = google.accounts.oauth2.initCodeClient({
-                client_id: GOOGLE_CLIENT_ID,
-                scope: 'openid email profile',
-                ux_mode: 'popup',
-                callback: (resp) => {
-                    if (resp && resp.code) handleGoogleCode(resp.code);
-                    else showError('Google sign-in failed');
-                }
-            });
-        } catch (e){
-            console.warn('Google client init error', e);
+        function closeError() {
+            const errorAlert = document.getElementById('error-message');
+            errorAlert.classList.add('hidden');
         }
-    }
 
-    function showError(msg){
-        const errorBox = document.getElementById('errorBox');
-        if (!errorBox) return;
-        errorBox.textContent = msg;
-        errorBox.classList.remove('hidden');
-        errorBox.classList.add('show');
-        setTimeout(()=> errorBox.classList.remove('show'), 6000);
-    }
+        function togglePassword() {
+            const passwordInput = document.getElementById('password');
+            const toggleBtn = document.querySelector('.toggle-password');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                toggleBtn.classList.add('active');
+            } else {
+                passwordInput.type = 'password';
+                toggleBtn.classList.remove('active');
+            }
+        }
 
-    async function handleGoogleCode(code){
-        try{
-            const res = await fetch('/auth/google', {
+        // Form submission handler
+        document.querySelector('.login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            fetch('/login', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code })
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ email, password })
+            })
+            .then(res => {
+                if (res.ok) {
+                    window.location.href = '/dashboard';
+                } else if (res.status === 401 || res.url.includes('error=invalid')) {
+                    showError('Invalid email or password. Please try again.');
+                } else {
+                    return res.text().then(text => { throw new Error(text); });
+                }
+            })
+            .catch(err => {
+                console.error('Login error:', err);
+                showError('Login failed: ' + err.message);
             });
-            if (!res.ok) throw new Error('Server rejected Google login');
-            const data = await res.json();
-            // On success, server should reply with session info / redirect URL
-            if (data && data.redirect) window.location = data.redirect;
-            else window.location = '/';
-        } catch (err){
-            showError(err.message || 'Google sign-in error');
-            console.error(err);
-        }
-    }
+        });
 
-    // Attach click handler to Google button
-    document.addEventListener('click', (e) => {
-        if (e.target.closest('.social.google')){
-            // ensure client initialized
-            if (!googleCodeClient) initGoogleClient();
-            if (!googleCodeClient){ showError('Google client not configured'); return; }
-            googleCodeClient.requestCode();
-        }
-    });
+        // Google Sign In handler
+        document.querySelector('.google-btn').addEventListener('click', function(e) {
+            e.preventDefault();
+            // Redirect to Google OAuth endpoint or your Google login handler
+            window.location.href = '/auth/google';
+        });
 
-    // Initialize once script loads (fetch client id then init)
-    window.addEventListener('load', () => setTimeout(fetchGoogleConfig, 300));
-</script>
+        // Forgot Password handler
+        document.querySelector('.forgot-link').addEventListener('click', function(e) {
+            e.preventDefault();
+            // Redirect to password reset page
+            window.location.href = '/reset-password';
+        });
 
+        // Sign Up handler
+        document.querySelector('.signup-link').addEventListener('click', function(e) {
+            e.preventDefault();
+            // Redirect to signup page
+            window.location.href = '/signup';
+        });
+    </script>
 </body>
-
 </html>
-
-
