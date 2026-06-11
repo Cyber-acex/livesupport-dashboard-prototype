@@ -456,3 +456,16 @@ model DashboardSnapshot {
   @@map("dashboard_snapshots")
 }
 
+model PasswordReset {
+  id        Int      @id @default(autoincrement())
+  email     String   @db.VarChar(255)
+  token     String   @unique @db.VarChar(255)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now()) @db.Timestamp(0)
+
+  @@map("password_resets")
+  @@index([email])
+  @@index([token])
+}
+

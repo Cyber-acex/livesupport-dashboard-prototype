@@ -9,6 +9,17 @@
         // not logged in — clear stored user and redirect to login when appropriate
         localStorage.removeItem(storageKey);
         window.currentUser = null;
+        try {
+          const pathname = (window.location && window.location.pathname) ? window.location.pathname : '';
+          const isLogin = pathname.endsWith('/login.html') || pathname.endsWith('/login') || pathname.indexOf('login') !== -1;
+          if (!isLogin) {
+            // Use replace so back button doesn't return to protected page
+            window.location.replace('/login.html');
+            return null;
+          }
+        } catch (e) {
+          // ignore redirect errors
+        }
         return null;
       }
       const data = await res.json();

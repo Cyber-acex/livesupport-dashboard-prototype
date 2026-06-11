@@ -86,7 +86,7 @@
                             <input type="checkbox" id="remember" name="remember">
                             <label for="remember">Remember me</label>
                         </div>
-                        <a href="#" class="forgot-link">Forgot Password?</a>
+                        <a href="./reset-password.html" class="forgot-link">Forgot Password?</a>
                     </div>
 
                     <!-- Sign In Button -->
@@ -463,8 +463,8 @@
         // Forgot Password handler
         document.querySelector('.forgot-link').addEventListener('click', function(e) {
             e.preventDefault();
-            // Redirect to password reset page
-            window.location.href = '/reset-password';
+            // Redirect to forgot password page
+            window.location.href = './forgot-password.html';
         });
 
         // Sign Up handler

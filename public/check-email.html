@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Check Your Email - LiveSupport</title>
+    <link rel="stylesheet" href="/login.css">
+    <style>
+        .check-email-container {
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 40px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .check-email-container .icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+        }
+
+        .check-email-container h2 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+
+        .check-email-container p {
+            color: #666;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+
+        .email-highlight {
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: #007bff;
+            margin: 20px 0;
+        }
+
+        .important-note {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            text-align: left;
+            font-size: 14px;
+            color: #856404;
+        }
+
+        .important-note strong {
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .back-to-login {
+            margin-top: 20px;
+        }
+
+        .back-to-login a {
+            color: #007bff;
+            text-decoration: none;
+            font-size: 14px;
+        }
+
+        .back-to-login a:hover {
+            text-decoration: underline;
+        }
+
+        .resend-section {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 1px solid #ddd;
+        }
+
+        .resend-btn {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .resend-btn:hover {
+            background-color: #5a6268;
+        }
+
+        .resend-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .countdown {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="check-email-container">
+        <div class="icon">✉️</div>
+        <h2>Check Your Email</h2>
+        <p>We've sent a password reset link to:</p>
+        
+        <div class="email-highlight" id="emailDisplay"></div>
+
+        <div class="important-note">
+            <strong>Important:</strong>
+            <ul style="margin: 0; padding-left: 20px;">
+                <li>The reset link will expire in 30 minutes</li>
+                <li>Check your spam/junk folder if you don't see the email</li>
+                <li>Click the link in the email to reset your password</li>
+            </ul>
+        </div>
+
+        <div class="resend-section">
+            <p style="font-size: 14px; margin-bottom: 15px;">Didn't receive the email?</p>
+            <button class="resend-btn" id="resendBtn">Resend Reset Link</button>
+            <div class="countdown" id="countdown"></div>
+        </div>
+
+        <div class="back-to-login">
+            <a href="/login.html">← Back to Login</a>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const email = urlParams.get('email');
+        const emailDisplay = document.getElementById('emailDisplay');
+        const resendBtn = document.getElementById('resendBtn');
+        const countdownDiv = document.getElementById('countdown');
+
+        // Display email
+        if (email) {
+            emailDisplay.textContent = decodeURIComponent(email);
+        }
+
+        // Resend functionality with countdown
+        let resendCountdown = 0;
+
+        resendBtn.addEventListener('click', async () => {
+            if (resendCountdown > 0) return;
+
+            try {
+                resendBtn.disabled = true;
+                
+                const response = await fetch('/api/auth/forgot-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: email ? decodeURIComponent(email) : '' 
+                    }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    countdownDiv.textContent = 'Email sent! Check your inbox.';
+                    startCountdown();
+                } else {
+                    countdownDiv.textContent = 'Failed to resend. Try again.';
+                    resendBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                countdownDiv.textContent = 'Error resending email. Try again.';
+                resendBtn.disabled = false;
+            }
+        });
+
+        function startCountdown() {
+            resendCountdown = 60;
+            const interval = setInterval(() => {
+                resendCountdown--;
+                if (resendCountdown > 0) {
+                    countdownDiv.textContent = `You can resend in ${resendCountdown}s`;
+                } else {
+                    clearInterval(interval);
+                    countdownDiv.textContent = '';
+                    resendBtn.disabled = false;
+                }
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

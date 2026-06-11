@@ -240,8 +240,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     maintainAspectRatio: false,
 
                     interaction: {
-                        mode: 'index',
-                        intersect: false
+                        mode: 'nearest',
+                        intersect: true
                     },
 
                     plugins: {
@@ -252,9 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         tooltip: {
                             enabled: true,
-                            mode: 'index',
-                            intersect: false,
-
+                            displayColors: true,
                             callbacks: {
                                 label: function(context) {
                                     return `${context.dataset.label}: ${context.raw}`;

@@ -17,6 +17,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { db, connectDatabase, config as dbConfig, prisma } from "./db/database.js";
 import { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, MENU_ITEMS, createTicket, detectTicketCategory } from "./replies.js";
+import createAuthRouter from "./routes/auth.js";
 const app = express();
 
 const upload = multer({ dest: path.join(__dirname, "uploads") });
@@ -758,6 +759,12 @@ app.use((req, res, next) => {
 // Middleware to protect HTML pages
 app.use((req, res, next) => {
     if (req.path.endsWith('.html') && req.path !== '/login.html') {
+        // Allow public password reset pages without authentication
+        if (req.path === '/forgot-password.html' || 
+            req.path === '/check-email.html' || 
+            req.path === '/reset-password.html') {
+            return next();
+        }
         if (!req.session || !req.session.user) {
             return res.redirect('/login.html');
         }
@@ -789,6 +796,9 @@ app.get('/favicon.png', (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
     res.sendFile(path.join(__dirname, 'public', 'favicon.png'));
 });
+
+// Mount auth routes for password reset
+app.use('/api/auth', createAuthRouter(prisma));
 
 app.use(express.static(path.join(__dirname, 'public')));
 
