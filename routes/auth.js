@@ -83,22 +83,7 @@ export function createAuthRouter(prisma) {
       });
 
       // Send reset email
-      // Get the appropriate URL based on where request came from
-      const getAppUrl = (req) => {
-        const host = req.get('host');
-        const protocol = req.protocol;
-        
-        // If ngrok or custom domain in host, use that
-        if (host && (host.includes('ngrok') || host.includes('.'))) {
-          return `${protocol}://${host}`;
-        }
-        
-        // Otherwise use environment APP_URL
-        return process.env.APP_URL || 'http://localhost:3000';
-      };
-      
-      const baseUrl = getAppUrl(req);
-      const resetLink = `${baseUrl}/reset-password.html?token=${plainToken}`;
+      const resetLink = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password.html?token=${plainToken}`;
       
       // Attempt to send email, but don't fail if email service is not configured
       try {
