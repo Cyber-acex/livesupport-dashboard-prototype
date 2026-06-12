@@ -982,6 +982,63 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     margin-top: 8px;
 }
 
+/* PAGE SWITCHER TABS */
+.page-switcher {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+    padding: 8px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.02) 0%, rgba(15, 23, 42, 0.01) 100%);
+    border-radius: 20px;
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    width: fit-content;
+}
+
+.page-tab {
+    padding: 10px 20px;
+    border: 1px solid transparent;
+    background: transparent;
+    border-radius: 16px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    color: #6b7280;
+    transition: all 0.2s ease;
+}
+
+.page-tab:hover {
+    background: rgba(15, 23, 42, 0.04);
+    color: #374151;
+}
+
+.page-tab.active {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    color: white;
+    border-color: transparent;
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.2);
+}
+
+/* Dark theme for page switcher */
+.dark-theme .page-switcher {
+    background: rgba(30, 27, 75, 0.2);
+    border-color: rgba(167, 139, 250, 0.1);
+}
+
+.dark-theme .page-tab {
+    color: #a5b4fc;
+}
+
+.dark-theme .page-tab:hover {
+    background: rgba(99, 102, 241, 0.1);
+    color: #c7d2fe;
+}
+
+.dark-theme .page-tab.active {
+    background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    color: #fff;
+    box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);
+}
+
 .inbox-placeholder {
     margin-top: 20px;
     background: white;
@@ -3150,6 +3207,74 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 @media (max-width:700px){
     #ticketModal .modal-content{ width:94%; margin:24px auto; padding:16px }
     #ticketModal input[type="text"], #ticketModal select { font-size:13px }
+}
+
+/* EMAIL SECTION USES SAME STYLES AS INBOX */
+.email-list {
+    /* Uses .conversation-list styles */
+}
+
+.email-item {
+    /* Uses .conversation styles */
+}
+
+.email-viewer {
+    /* Uses .chat-panel styles */
+}
+
+.email-info-panel {
+    /* Uses .info-panel styles */
+}
+
+.email-action-btn {
+    background: none;
+    border: none;
+    color: #4b5563;
+    font-size: 1.2rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    transition: all 0.2s ease;
+}
+
+.email-action-btn:hover {
+    color: #2563eb;
+    transform: scale(1.1);
+}
+
+.email-action-btn.delete-email-btn:hover {
+    color: #dc2626;
+}
+
+.email-reply-send {
+    padding: 10px 18px;
+    border: none;
+    background: linear-gradient(90deg, var(--primary) 0%, var(--primary-600) 100%);
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 700;
+    box-shadow: 0 10px 24px rgba(37,99,235,0.14);
+    transition: transform 0.14s cubic-bezier(.2,.9,.2,1), box-shadow 0.14s ease;
+}
+
+.email-reply-send:hover {
+    transform: translateY(-3px) scale(1.01);
+    box-shadow: 0 18px 36px rgba(37,99,235,0.18);
+}
+
+/* Dark theme support for email section */
+.dark-theme .email-list {
+    background: #f8fafc;
+    border-right: 1px solid #e5e7eb;
+}
+
+.dark-theme .email-viewer {
+    background: #ffffff;
+}
+
+.dark-theme .email-info-panel {
+    background: #ffffff;
+}
 }
 
 /* Remove that big space at top */

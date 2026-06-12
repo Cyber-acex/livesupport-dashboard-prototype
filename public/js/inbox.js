@@ -657,6 +657,15 @@ function createConversationElement(conv, filter = 'all') {
         currentConversationId = conv.id;
         window.currentConversationId = conv.id;
         window.currentConversation = conv.id;
+        // Update URL with current conversation and filter
+        const params = new URLSearchParams();
+        params.set('conversationId', conv.id);
+        if (filter && filter !== 'all') {
+            params.set('filter', filter);
+        }
+        window.history.pushState({ conversationId: conv.id, filter: filter }, '', `?${params.toString()}`);
+        // Also save to sessionStorage as backup
+        sessionStorage.setItem('lastViewedConversation', JSON.stringify({ conversationId: conv.id, filter: filter }));
         // Persist that we've seen up to the current total incoming count so
         // future renders only show messages that arrived after this point.
         try {
@@ -849,6 +858,10 @@ function renderLocalItems(items, emptyText) {
             currentConversationId = item.id;
             window.currentConversationId = item.id;
             window.currentConversation = item.id;
+            // Update URL with current conversation
+            const params = new URLSearchParams();
+            params.set('conversationId', item.id);
+            window.history.pushState({ conversationId: item.id }, '', `?${params.toString()}`);
             loadMessages(item.id, false);
             try { socket.emit('agent:activeConversation', { conversationId: item.id }); } catch (e) {}
         });
@@ -1615,7 +1628,66 @@ function updateConversationEntry(msg, isCurrentConversation) {
 // ---------------------------
 // Initial load
 // ---------------------------
-loadConversations();
+// Check URL for saved conversation state and restore it
+const urlParams = new URLSearchParams(window.location.search);
+let savedConversationId = urlParams.get('conversationId');
+let savedFilter = urlParams.get('filter') || 'all';
+
+// If no URL params, check sessionStorage as fallback
+if (!savedConversationId) {
+    try {
+        const lastViewed = JSON.parse(sessionStorage.getItem('lastViewedConversation') || '{}');
+        if (lastViewed.conversationId) {
+            savedConversationId = lastViewed.conversationId;
+            savedFilter = lastViewed.filter || 'all';
+        }
+    } catch (e) {
+        // ignore
+    }
+}
+
+// Helper function to restore conversation after page load
+async function restoreConversationState() {
+    // Load conversations with the saved filter
+    await loadConversations(savedFilter);
+    
+    // After conversations are loaded, if there's a saved conversation ID, load it
+    if (savedConversationId) {
+        // Try multiple times to find and click the conversation element
+        let found = false;
+        for (let attempt = 0; attempt < 10; attempt++) {
+            // Find and click the conversation element
+            const convElement = document.querySelector(`.conversation[data-id='${savedConversationId}']`);
+            if (convElement) {
+                console.log(`Restored conversation ${savedConversationId} on attempt ${attempt + 1}`);
+                convElement.click();
+                found = true;
+                break;
+            }
+            // Wait a bit before retrying
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        
+        if (!found) {
+            console.warn(`Could not restore conversation ${savedConversationId} - element not found`);
+        }
+    }
+    
+    // Also update filter button highlighting if a filter was in URL
+    if (savedFilter && savedFilter !== 'all') {
+        const filterBtn = Array.from(document.querySelectorAll('.filter')).find(btn => {
+            const filterKey = btn.dataset.filter ? btn.dataset.filter.trim().toLowerCase() : btn.textContent.trim().toLowerCase();
+            return filterKey === savedFilter.toLowerCase();
+        });
+        if (filterBtn) {
+            document.querySelectorAll('.filter').forEach(b => b.classList.remove('active'));
+            filterBtn.classList.add('active');
+        }
+    }
+}
+
+// Start restoration on page load
+restoreConversationState().catch(err => console.error('Error restoring conversation state:', err));
 
 // ---------------------------
 // Filter buttons

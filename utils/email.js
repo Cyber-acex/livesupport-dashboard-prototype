@@ -12,17 +12,23 @@ function getTransporter() {
       },
     };
 
-    // Use service if available and configured
-    if (process.env.EMAIL_SERVICE && process.env.EMAIL_SERVICE.trim()) {
-      config.service = process.env.EMAIL_SERVICE;
-    } else if (process.env.SMTP_HOST) {
-      // Otherwise use custom SMTP
+    // Prefer explicit SMTP settings if provided.
+    // This avoids relying on nodemailer service heuristics.
+    if (process.env.SMTP_HOST && process.env.SMTP_HOST.trim()) {
       config.host = process.env.SMTP_HOST;
-      config.port = parseInt(process.env.SMTP_PORT || '587', 10);
+      config.port = parseInt(process.env.SMTP_PORT || '465', 10);
       config.secure = process.env.SMTP_SECURE === 'true';
+    } else if (process.env.EMAIL_SERVICE && process.env.EMAIL_SERVICE.trim()) {
+      config.service = process.env.EMAIL_SERVICE;
     }
 
     transporter = nodemailer.createTransport(config);
+
+    transporter.verify().then(() => {
+      console.log('✅ Email transporter verified and ready');
+    }).catch((error) => {
+      console.warn('⚠️ Email transporter verification failed:', error.message);
+    });
   }
   return transporter;
 }
@@ -113,6 +119,32 @@ export async function sendPasswordChangedEmail(email, userName) {
     return { success: true, messageId: result.messageId };
   } catch (error) {
     console.error('❌ Failed to send password changed email:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Send a custom message via email
+ */
+export async function sendEmail({ to, subject, text, html, from = process.env.EMAIL_USER }) {
+  try {
+    if (!to || !subject) {
+      return { success: false, error: 'Missing recipient or subject' };
+    }
+
+    const mailOptions = {
+      from,
+      to,
+      subject,
+      text: text || undefined,
+      html: html || undefined,
+    };
+
+    const result = await getTransporter().sendMail(mailOptions);
+    console.log('✅ Email sent to:', to, 'subject:', subject);
+    return { success: true, messageId: result.messageId, envelope: result.envelope };
+  } catch (error) {
+    console.error('❌ Failed to send email:', error);
     return { success: false, error: error.message };
   }
 }

@@ -118,6 +118,7 @@
 <section class="content">
     <div class="page-switcher" role="tablist" aria-label="Inbox tabs">
       <button class="page-tab active" data-page="inbox" type="button" onclick="switchInboxSection('inbox')" aria-selected="true">Inbox</button>
+      <button class="page-tab" data-page="email" type="button" onclick="switchInboxSection('email')" aria-selected="false">Email</button>
     </div>
     <h1 id="pageTitle">Inbox</h1>
     <div id="inboxSection">
@@ -140,7 +141,7 @@
         </div>
         <!-- CONVERSATION LIST -->
         <div class="conversation-list">
-    <div class="conversation active">
+    <div class="conversation active" data-id="1" data-channel="WhatsApp">
         <div class="avatar">C1</div>
         <div class="conv-meta">
             <div class="name">Customer 1</div>
@@ -148,7 +149,7 @@
             <div class="meta">WhatsApp • 2m ago</div>
         </div>
     </div>
-    <div class="conversation">
+    <div class="conversation" data-id="2" data-channel="Social">
       <div class="avatar">C1</div>
       <div class="conv-meta">
         <div class="name">Customer 1</div>
@@ -256,7 +257,96 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
 </div>
     </div>
 </div>
-    
+    <div id="emailSection" style="display: none;">
+        <div class="inbox-container">
+            <!-- EMAIL FILTERS -->
+            <div class="filters">
+                <div class="filter-title">
+                    <div>
+                        <strong>Email Inbox</strong>
+                        <p>Manage all incoming emails</p>
+                    </div>
+                </div>
+                <button class="filter active" data-email-filter="all"><span class="filter-icon">📧</span><span>All</span></button>
+                <button class="filter" data-email-filter="unread"><span class="filter-icon">🆕</span><span>Unread</span></button>
+                <button class="filter" data-email-filter="important"><span class="filter-icon">⭐</span><span>Important</span></button>
+                <button class="filter" data-email-filter="archived"><span class="filter-icon">📦</span><span>Archived</span></button>
+                <button class="filter" data-email-filter="spam"><span class="filter-icon">⚠️</span><span>Spam</span></button>
+                <button id="refreshEmailBtn" class="filter" style="background: #3b82f6; color: white; border: none; cursor: pointer;" title="Refresh inbox"><span class="filter-icon">🔄</span><span>Refresh</span></button>
+                <button id="syncGmailBtn" class="filter" style="background: #10b981; color: white; border: none; cursor: pointer;" title="Sync emails from Gmail"><span class="filter-icon">📥</span><span>Sync Gmail</span></button>
+                <button id="testEmailBtn" class="filter" style="background: #8b5cf6; color: white; border: none; cursor: pointer;" title="Simulate incoming email"><span class="filter-icon">✉️</span><span>Test Email</span></button>
+            </div>
+            <!-- EMAIL LIST -->
+            <div class="conversation-list email-list">
+                <div class="conversation email-item active">
+                    <div class="avatar">JD</div>
+                    <div class="conv-meta email-meta">
+                        <div class="name email-from">John Doe</div>
+                        <div class="preview email-subject">Question about order #12345</div>
+                        <div class="meta email-time">10:30 AM</div>
+                    </div>
+                </div>
+                <div class="conversation email-item">
+                    <div class="avatar">SM</div>
+                    <div class="conv-meta email-meta">
+                        <div class="name email-from">Sarah Miller</div>
+                        <div class="preview email-subject">Feedback on service</div>
+                        <div class="meta email-time">Yesterday</div>
+                    </div>
+                </div>
+                <div class="conversation email-item">
+                    <div class="avatar">AC</div>
+                    <div class="conv-meta email-meta">
+                        <div class="name email-from">Admin Crew</div>
+                        <div class="preview email-subject">System Update Notice</div>
+                        <div class="meta email-time">2 days ago</div>
+                    </div>
+                </div>
+            </div>
+            <!-- EMAIL VIEWER PANEL -->
+            <div class="chat-panel email-viewer">
+                <div class="chat-header">
+                    <div class="chat-header-title">
+                        <div class="chat-avatar" id="emailViewerAvatar">JD</div>
+                        <div class="chat-title-text">
+                            <strong id="emailViewerSubject">Select an email to read</strong>
+                            <span class="chat-subtitle" id="emailViewerFrom">--</span>
+                        </div>
+                    </div>
+                    <div class="chat-header-right">
+                        <span class="channel" id="emailViewerDate">--</span>
+                        <button class="icon-btn email-action-btn" title="Reply" style="border: none; background: transparent; color: #4b5563; font-size: 1.2rem; cursor: pointer;">↩️</button>
+                        <button class="icon-btn email-action-btn" title="Archive" style="border: none; background: transparent; color: #4b5563; font-size: 1.2rem; cursor: pointer;">📦</button>
+                        <button class="icon-btn email-action-btn delete-email-btn" title="Delete" style="border: none; background: transparent; color: #dc2626; font-size: 1.2rem; cursor: pointer;">🗑️</button>
+                    </div>
+                </div>
+                <div class="messages email-body" id="emailViewerBody">
+                    <p style="color: #999; text-align: center; padding: 40px;">Select an email to read its content</p>
+                </div>
+                <!-- EMAIL REPLY BOX -->
+                <div class="chat-input email-reply-box">
+                    <input type="text" id="email-reply-text" placeholder="Type your reply..." style="flex: 1;"/>
+                    <button id="email-send-reply" class="email-reply-send" type="button">Send</button>
+                </div>
+            </div>
+            <!-- EMAIL INFO PANEL -->
+            <div class="info-panel email-info-panel">
+                <h3>Email Details</h3>
+                <div class="info-box">
+                    <p><strong>From:</strong> <span id="email-from">--</span></p>
+                    <p><strong>To:</strong> <span id="email-to">--</span></p>
+                    <p><strong>Date:</strong> <span id="email-date">--</span></p>
+                    <p><strong>Subject:</strong> <span id="email-subject">--</span></p>
+                </div>
+                <h3>Email Actions</h3>
+                <div class="actions">
+                    <button class="action-btn" id="email-mark-important">Mark as Important</button>
+                    <button class="action-btn warning" id="email-move-spam">Move to Spam</button>
+                    <button class="action-btn success" id="email-create-ticket">Create Ticket</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </section>
     </div>
 </div>
@@ -1076,8 +1166,27 @@ if (quickEscalateBtn) quickEscalateBtn.onclick = escalateCurrentChat;
     </div>
 </div>
 <script>
-function switchInboxSection(section) {
+const EMAIL_API_BASE = '/api/email';
+let emailSectionInitialized = false;
+let currentEmail = null;
+let supportEmail = 'support@livesupport.com';
+
+async function loadSupportEmail() {
+  try {
+    const response = await fetch(`${EMAIL_API_BASE}/inbox`);
+    const data = await response.json();
+    if (data.emails && data.emails[0]) {
+      supportEmail = data.emails[0].to || 'support@livesupport.com';
+      document.getElementById('email-to').textContent = supportEmail;
+    }
+  } catch (e) {
+    console.log('Support email load failed, using default');
+  }
+}
+
+async function switchInboxSection(section) {
   const inboxSection = document.getElementById('inboxSection');
+  const emailSection = document.getElementById('emailSection');
   const pageTitle = document.getElementById('pageTitle');
   const buttons = document.querySelectorAll('.page-switcher .page-tab');
 
@@ -1087,9 +1196,431 @@ function switchInboxSection(section) {
     btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
 
-  // Only Inbox view is supported on this page now
-  pageTitle.textContent = 'Inbox';
-  if (inboxSection) inboxSection.style.display = 'block';
+  if (section === 'inbox') {
+    pageTitle.textContent = 'Inbox';
+    if (inboxSection) inboxSection.style.display = 'block';
+    if (emailSection) emailSection.style.display = 'none';
+  } else if (section === 'email') {
+    pageTitle.textContent = 'Email';
+    if (inboxSection) inboxSection.style.display = 'none';
+    if (emailSection) emailSection.style.display = 'block';
+    await initializeEmailSection();
+  }
+}
+
+async function initializeEmailSection() {
+  if (!emailSectionInitialized) {
+    await loadSupportEmail();
+    await loadEmailInbox();
+    initializeEmailFilters();
+    initializeEmailHeaderActions();
+    initializeEmailInfoPanelActions();
+    initializeEmailReply();
+    emailSectionInitialized = true;
+  }
+
+  const firstEmail = document.querySelector('.email-item');
+  if (firstEmail) {
+    firstEmail.click();
+  }
+}
+
+async function loadEmailInbox() {
+  const emailList = document.querySelector('.email-list');
+  if (!emailList) return;
+
+  emailList.innerHTML = '<div class="no-chats-message">Loading email inbox...</div>';
+
+  try {
+    const response = await fetch(`${EMAIL_API_BASE}/inbox`);
+    const data = await response.json();
+
+    if (!data.success) {
+      throw new Error(data.message || 'Unable to load inbox');
+    }
+
+    emailList.innerHTML = '';
+
+    if (!Array.isArray(data.emails) || data.emails.length === 0) {
+      emailList.innerHTML = '<div class="no-chats-message">No emails in inbox.</div>';
+      return;
+    }
+
+    data.emails.forEach(email => {
+      emailList.appendChild(renderEmailItem(email));
+    });
+  } catch (error) {
+    console.error('Email inbox load failed', error);
+    emailList.innerHTML = '<div class="no-chats-message">Failed to load email inbox.</div>';
+  }
+}
+
+function renderEmailItem(email) {
+  const item = document.createElement('div');
+  item.className = 'conversation email-item';
+  item.dataset.id = email.id;
+  item.dataset.fromEmail = email.fromEmail || email.from;
+  item.dataset.subject = email.subject;
+
+  const initials = (email.from || 'Email').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+  const previewText = email.preview || email.body?.slice(0, 80) || email.subject;
+
+  item.innerHTML = `
+    <div class="avatar">${initials}</div>
+    <div class="conv-meta email-meta">
+      <div class="name email-from">${email.from}</div>
+      <div class="preview email-subject">${email.subject}</div>
+      <div class="meta email-time">${email.date || email.time || 'Now'}</div>
+      <div class="preview email-preview" style="font-size:0.85rem;color:#6b7280;margin-top:4px;">${previewText}</div>
+    </div>
+  `;
+
+  return item;
+}
+
+function setEmailViewer(email, item) {
+  if (!email) return;
+  currentEmail = email;
+
+  document.querySelectorAll('.email-item').forEach(i => i.classList.remove('active'));
+  if (item) item.classList.add('active');
+
+  document.getElementById('emailViewerSubject').textContent = email.subject;
+  document.getElementById('emailViewerFrom').textContent = `From: ${email.from}`;
+  document.getElementById('emailViewerAvatar').textContent = (email.from || 'Email').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+  document.getElementById('emailViewerBody').innerHTML = `
+    <div class="message customer">
+      ${email.body || email.preview || 'No message body available.'}
+    </div>
+    <div class="message ai sent">
+      Thank you for your message. We will get back to you shortly.
+    </div>
+  `;
+
+  document.getElementById('email-from').textContent = email.fromEmail || email.from;
+  document.getElementById('email-to').textContent = supportEmail || 'support@livesupport.com';
+  document.getElementById('email-date').textContent = email.date || 'Today';
+  document.getElementById('email-subject').textContent = email.subject;
+  document.getElementById('email-reply-text').value = '';
+}
+
+function initializeEmailListItems() {
+  const emailItems = document.querySelectorAll('.email-item');
+  emailItems.forEach(item => {
+    item.addEventListener('click', function() {
+      emailItems.forEach(e => e.classList.remove('active'));
+      this.classList.add('active');
+      
+      const subject = this.querySelector('.email-subject').textContent;
+      const from = this.querySelector('.email-from').textContent;
+      const preview = this.querySelector('.preview').textContent;
+      const time = this.querySelector('.meta').textContent;
+      
+      document.getElementById('emailViewerSubject').textContent = subject;
+      document.getElementById('emailViewerFrom').textContent = `From: ${from}`;
+      const avatar = from.split(' ').map(n => n[0]).join('').toUpperCase();
+      document.getElementById('emailViewerAvatar').textContent = avatar;
+      document.getElementById('emailViewerBody').innerHTML = `
+        <div class="message customer">
+          ${preview}
+        </div>
+        <div class="message ai sent">
+          Thank you for reaching out! We'll get back to you shortly.
+        </div>
+      `;
+      
+      document.getElementById('email-from').textContent = from;
+      document.getElementById('email-to').textContent = 'support@livesupport.com';
+      document.getElementById('email-date').textContent = time || 'Today';
+      document.getElementById('email-subject').textContent = subject;
+      document.getElementById('email-reply-text').value = '';
+    });
+  });
+}
+
+// Email filter functionality
+function initializeEmailFilters() {
+  const filterButtons = document.querySelectorAll('#emailSection .filters .filter[data-email-filter]');
+  filterButtons.forEach(btn => {
+    btn.addEventListener('click', function() {
+      filterButtons.forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      
+      const filterType = this.getAttribute('data-email-filter');
+      console.log('Filter by:', filterType);
+      
+      const emailList = document.querySelector('.email-list');
+      emailList.style.opacity = '0.6';
+      setTimeout(() => {
+        emailList.style.opacity = '1';
+      }, 300);
+    });
+  });
+
+  const refreshBtn = document.getElementById('refreshEmailBtn');
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', async () => {
+      await loadEmailInbox();
+      showNotification('Inbox refreshed', 'success');
+    });
+  }
+
+  const testBtn = document.getElementById('testEmailBtn');
+  if (testBtn) {
+    testBtn.addEventListener('click', async () => {
+      try {
+        const response = await fetch(`${EMAIL_API_BASE}/receive`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Test Customer',
+            fromEmail: 'test@example.com',
+            subject: 'Test email - ' + new Date().toLocaleTimeString(),
+            body: 'This is a test email received at ' + new Date().toLocaleString() + '. Check if you see it in the inbox!',
+            preview: 'This is a test email...'
+          })
+        });
+        const data = await response.json();
+        if (data.success) {
+          showNotification('Test email sent successfully', 'success');
+        } else {
+          showNotification('Failed to send test email', 'error');
+        }
+      } catch (error) {
+        console.error('Test email error', error);
+        showNotification('Error sending test email', 'error');
+      }
+    });
+  }
+
+  const syncBtn = document.getElementById('syncGmailBtn');
+  if (syncBtn) {
+    syncBtn.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      syncBtn.textContent = '⏳ Syncing...';
+      try {
+        const response = await fetch(`${EMAIL_API_BASE}/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        if (data.success) {
+          await loadEmailInbox();
+          showNotification(`Synced ${data.synced} new emails from Gmail`, 'success');
+        } else {
+          showNotification('Sync error: ' + (data.error || 'Unknown error'), 'error');
+        }
+      } catch (error) {
+        console.error('Gmail sync error', error);
+        showNotification('Error syncing Gmail: ' + error.message, 'error');
+      } finally {
+        syncBtn.disabled = false;
+        syncBtn.textContent = '📥 Sync Gmail';
+      }
+    });
+  }
+}
+
+
+// Email header action buttons (reply, archive, delete)
+function initializeEmailHeaderActions() {
+  const headerActions = document.querySelectorAll('.email-viewer .chat-header-right .email-action-btn');
+  
+  headerActions.forEach((btn, index) => {
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      
+      const subject = document.getElementById('emailViewerSubject').textContent;
+      const from = document.getElementById('email-from').textContent;
+      
+      if (index === 0) {
+        // Reply
+        console.log('Reply to:', from);
+        document.getElementById('email-reply-text').focus();
+        document.getElementById('email-reply-text').placeholder = `Reply to ${from}...`;
+      } else if (index === 1) {
+        // Archive
+        console.log('Archive email from:', from);
+        showNotification(`Email from ${from} archived`, 'success');
+        removeEmailItem();
+      } else if (index === 2) {
+        // Delete
+        console.log('Delete email from:', from);
+        if (confirm(`Delete email from ${from}?`)) {
+          showNotification(`Email deleted`, 'success');
+          removeEmailItem();
+        }
+      }
+    });
+  });
+}
+
+// Email info panel actions
+function initializeEmailInfoPanelActions() {
+  const markImportantBtn = document.getElementById('email-mark-important');
+  const moveSpamBtn = document.getElementById('email-move-spam');
+  const createTicketBtn = document.getElementById('email-create-ticket');
+  
+  if (markImportantBtn) {
+    markImportantBtn.addEventListener('click', function() {
+      const isImportant = this.classList.toggle('important');
+      const from = document.getElementById('email-from').textContent;
+      this.textContent = isImportant ? '⭐ Mark as Regular' : '⭐ Mark as Important';
+      showNotification(`Email from ${from} marked as ${isImportant ? 'important' : 'regular'}`, 'info');
+    });
+  }
+  
+  if (moveSpamBtn) {
+    moveSpamBtn.addEventListener('click', function() {
+      const from = document.getElementById('email-from').textContent;
+      if (confirm(`Move email from ${from} to spam?`)) {
+        showNotification(`Email moved to spam`, 'warning');
+        removeEmailItem();
+      }
+    });
+  }
+  
+  if (createTicketBtn) {
+    createTicketBtn.addEventListener('click', function() {
+      const subject = document.getElementById('email-subject').textContent;
+      const from = document.getElementById('email-from').textContent;
+      console.log('Creating ticket from email:', subject);
+      showNotification(`Ticket created from email: ${subject}`, 'success');
+    });
+  }
+}
+
+// Email reply functionality
+function initializeEmailReply() {
+  const sendReplyBtn = document.getElementById('email-send-reply');
+  const replyInput = document.getElementById('email-reply-text');
+  
+  if (sendReplyBtn && replyInput) {
+    // Send on button click
+    sendReplyBtn.addEventListener('click', function() {
+      sendEmailReply();
+    });
+    
+    // Send on Enter key
+    replyInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && e.ctrlKey) {
+        sendEmailReply();
+      }
+    });
+  }
+}
+
+// Send email reply
+async function sendEmailReply() {
+  const replyText = document.getElementById('email-reply-text').value;
+  const fromAddress = document.getElementById('email-from').textContent;
+  const subject = document.getElementById('email-subject').textContent;
+
+  if (!replyText.trim()) {
+    showNotification('Please type a reply', 'warning');
+    return;
+  }
+
+  if (!fromAddress || fromAddress === '--') {
+    showNotification('Please select an email first', 'warning');
+    return;
+  }
+
+  try {
+    const response = await fetch(`${EMAIL_API_BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: fromAddress,
+        subject: `Re: ${subject}`,
+        message: replyText
+      })
+    });
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Unable to send email');
+    }
+
+    const emailBody = document.getElementById('emailViewerBody');
+    const replyDiv = document.createElement('div');
+    replyDiv.className = 'message ai sent';
+    replyDiv.textContent = replyText;
+    emailBody.appendChild(replyDiv);
+    emailBody.scrollTop = emailBody.scrollHeight;
+
+    document.getElementById('email-reply-text').value = '';
+    document.getElementById('email-reply-text').placeholder = 'Type your reply...';
+    showNotification(`Reply sent to ${fromAddress}`, 'success');
+  } catch (error) {
+    console.error('Email send failed', error);
+    showNotification('Failed to send email reply', 'error');
+  }
+}
+
+// Remove email item and show next one
+function removeEmailItem() {
+  const activeEmail = document.querySelector('.email-item.active');
+  if (activeEmail) {
+    const nextEmail = activeEmail.nextElementSibling;
+    activeEmail.remove();
+    
+    if (nextEmail) {
+      nextEmail.click();
+    } else {
+      const firstEmail = document.querySelector('.email-item');
+      if (firstEmail) {
+        firstEmail.click();
+      } else {
+        document.getElementById('emailViewerSubject').textContent = 'Select an email to read';
+        document.getElementById('emailViewerBody').innerHTML = '<p style="color: #999; text-align: center; padding: 40px;">No emails available</p>';
+      }
+    }
+  }
+}
+
+// Notification system
+function showNotification(message, type = 'info') {
+  let notificationBar = document.getElementById('notificationBar');
+  if (!notificationBar) {
+    notificationBar = document.createElement('div');
+    notificationBar.id = 'notificationBar';
+    document.querySelector('.main').insertBefore(notificationBar, document.querySelector('.content'));
+  }
+  
+  const colors = {
+    success: '#10b981',
+    warning: '#f59e0b',
+    info: '#3b82f6',
+    error: '#ef4444'
+  };
+  
+  notificationBar.style.display = 'block';
+  notificationBar.style.background = colors[type] || colors.info;
+
+  const notificationText = notificationBar.querySelector('#notificationText');
+  if (notificationText) {
+    notificationText.textContent = message;
+  } else {
+    notificationBar.innerHTML = `
+      <span id="notificationText"></span>
+      <button id="closeNotification" class="close-btn" style="background: none; border: none; color: white; font-size: 20px; position: absolute; right: 10px; top: 5px; cursor: pointer;">&times;</button>
+    `;
+    notificationBar.querySelector('#notificationText').textContent = message;
+  }
+  
+  const closeBtn = notificationBar.querySelector('#closeNotification');
+  if (closeBtn && !closeBtn.dataset.bound) {
+    closeBtn.addEventListener('click', () => {
+      notificationBar.style.display = 'none';
+    });
+    closeBtn.dataset.bound = 'true';
+  }
+  
+  // Auto-hide after 3 seconds
+  setTimeout(() => {
+    notificationBar.style.display = 'none';
+  }, 3000);
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -1121,7 +1652,121 @@ window.addEventListener('focus', function() {
         document.body.classList.remove('dark-theme');
     }
 });
-</script> 
+</script>
+<script>
+function setupInboxPageUI() {
+  const filterButtons = document.querySelectorAll('#inboxSection .filters .filter');
+  const conversations = document.querySelectorAll('#inboxSection .conversation-list .conversation');
+  const chatMessages = document.getElementById('chat-messages');
+  const sendButton = document.getElementById('staff-send');
+  const staffInput = document.getElementById('staff-input');
+  const testAudioBtn = document.getElementById('test-handoff-audio-btn');
+  const placeOrderBtn = document.getElementById('dashboardPlaceOrder');
+  const notificationClose = document.getElementById('closeNotification');
+
+  filterButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      filterButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const filter = btn.dataset.filter;
+      conversations.forEach(item => {
+        if (filter === 'all') {
+          item.style.display = '';
+        } else if (filter === 'receipts') {
+          item.style.display = item.dataset.receipt === 'true' ? '' : 'none';
+        } else {
+          item.style.display = item.dataset.channel === filter || item.dataset.channel?.toLowerCase() === filter ? '' : 'none';
+        }
+      });
+    });
+  });
+
+  conversations.forEach(item => {
+    item.addEventListener('click', () => {
+      conversations.forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      const name = item.querySelector('.name')?.textContent || 'Customer';
+      const preview = item.querySelector('.preview')?.textContent || 'No preview available';
+      const channel = item.dataset.channel || 'Chat';
+      const avatar = document.getElementById('chatAvatar');
+      const chatName = document.getElementById('chatName');
+      const channelLabel = document.querySelector('.chat-header-right .channel');
+      if (avatar) avatar.textContent = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+      if (chatName) chatName.textContent = name;
+      if (channelLabel) channelLabel.textContent = channel;
+      if (chatMessages) {
+        chatMessages.innerHTML = `
+          <div class="message customer">${preview}</div>
+          <div class="message ai">Thanks for reaching out! How can I assist you today?</div>
+        `;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+      checkEscalationStatus(item.dataset.id || '');
+    });
+  });
+
+  if (sendButton && staffInput) {
+    sendButton.addEventListener('click', () => {
+      const text = staffInput.value.trim();
+      if (!text) {
+        showNotification('Type a reply to send', 'warning');
+        return;
+      }
+      if (chatMessages) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'message ai';
+        messageEl.textContent = text;
+        chatMessages.appendChild(messageEl);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+      staffInput.value = '';
+      showNotification('Reply sent', 'success');
+    });
+
+    staffInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendButton.click();
+      }
+    });
+  }
+
+  if (testAudioBtn) {
+    testAudioBtn.addEventListener('click', () => {
+      showNotification('Handoff audio test triggered', 'info');
+    });
+  }
+
+  if (placeOrderBtn) {
+    placeOrderBtn.addEventListener('click', () => {
+      showNotification('Place order action triggered', 'info');
+    });
+  }
+
+  if (notificationClose) {
+    notificationClose.addEventListener('click', () => {
+      const bar = document.getElementById('notificationBar');
+      if (bar) bar.style.display = 'none';
+    });
+  }
+}
+
+window.addEventListener('DOMContentLoaded', setupInboxPageUI);
+
+// Listen for incoming emails via Socket.IO
+if (typeof socket !== 'undefined') {
+  socket.on('email:received', async (newEmail) => {
+    console.log('New email received:', newEmail);
+    showNotification(`New email from ${newEmail.from}: ${newEmail.subject}`, 'info');
+    
+    if (emailSectionInitialized) {
+      await loadEmailInbox();
+      const firstEmail = document.querySelector('.email-item');
+      if (firstEmail) firstEmail.click();
+    }
+  });
+}
+</script>
 </body>
 </html>
 

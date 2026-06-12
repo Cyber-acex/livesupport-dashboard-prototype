@@ -17,6 +17,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { db, connectDatabase, config as dbConfig, prisma } from "./db/database.js";
 import { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, MENU_ITEMS, createTicket, detectTicketCategory } from "./replies.js";
+import { sendEmail } from "./utils/email.js";
+import { fetchGmailEmails } from "./utils/gmail-imap.js";
 import createAuthRouter from "./routes/auth.js";
 const app = express();
 
@@ -578,6 +580,140 @@ app.get('/api/ai-feedback', async (req, res) => {
     } catch (err) {
         console.error('ai-feedback list error', err);
         res.status(500).json({ error: 'db_error' });
+    }
+});
+
+// Email inbox storage for demonstration
+const emailInbox = [
+    {
+        id: 1,
+        from: 'John Doe',
+        fromEmail: 'john.doe@example.com',
+        to: 'support@livesupport.com',
+        subject: 'Question about order #12345',
+        preview: 'I wanted to check the status of my delivery and confirm the ETA.',
+        body: 'Hello Support,\n\nI wanted to check the status of my delivery and confirm the ETA. The order number is 12345.\n\nThanks,\nJohn',
+        date: 'Today 10:30 AM',
+        unread: true
+    },
+    {
+        id: 2,
+        from: 'Sarah Miller',
+        fromEmail: 'sarah.miller@example.com',
+        to: 'support@livesupport.com',
+        subject: 'Feedback on service',
+        preview: 'Your team was very helpful but I had a question about the payment receipt.',
+        body: 'Hi there,\n\nYour team was very helpful but I had a question about the payment receipt for my last order. Could you please clarify the delivery fee?\n\nRegards,\nSarah',
+        date: 'Yesterday',
+        unread: false
+    },
+    {
+        id: 3,
+        from: 'Admin Crew',
+        fromEmail: 'admin@partner.com',
+        to: 'support@livesupport.com',
+        subject: 'System Update Notice',
+        preview: 'We will perform maintenance tonight from 11pm to 1am.',
+        body: 'Hello Team,\n\nWe will perform maintenance tonight from 11pm to 1am. Services may be temporarily unavailable.\n\nBest,\nAdmin Crew',
+        date: '2 days ago',
+        unread: false
+    }
+];
+let nextEmailId = 4;
+
+app.get('/api/email/inbox', (req, res) => {
+    res.json({ success: true, emails: emailInbox });
+});
+
+app.post('/api/email/send', express.json(), async (req, res) => {
+    try {
+        const { to, subject, message } = req.body || {};
+        if (!to || !subject || !message) {
+            return res.status(400).json({ success: false, error: 'Missing required fields: to, subject, message' });
+        }
+
+        const emailResult = await sendEmail({
+            to,
+            subject,
+            text: message,
+            html: `<p>${message.replace(/\n/g, '<br>')}</p>`
+        });
+
+        if (!emailResult.success) {
+            return res.status(500).json({ success: false, error: emailResult.error || 'Email send failed' });
+        }
+
+        res.json({ success: true, message: 'Email sent', messageId: emailResult.messageId });
+    } catch (err) {
+        console.error('email send error', err);
+        res.status(500).json({ success: false, error: err.message || 'internal_error' });
+    }
+});
+
+app.post('/api/email/receive', express.json(), async (req, res) => {
+    try {
+        const { from, fromEmail, subject, body, preview, date } = req.body || {};
+        if (!from || !fromEmail || !subject || !body) {
+            return res.status(400).json({ success: false, error: 'Missing required fields: from, fromEmail, subject, body' });
+        }
+
+        const newEmail = {
+            id: nextEmailId++,
+            from,
+            fromEmail,
+            to: 'support@livesupport.com',
+            subject,
+            preview: preview || body.slice(0, 80),
+            body,
+            date: date || new Date().toLocaleString(),
+            unread: true
+        };
+
+        emailInbox.unshift(newEmail);
+        res.json({ success: true, email: newEmail });
+    } catch (err) {
+        console.error('email receive error', err);
+        res.status(500).json({ success: false, error: err.message || 'internal_error' });
+    }
+});
+
+app.post('/api/email/sync', async (req, res) => {
+    try {
+        console.log('Starting email sync from Gmail...');
+        const result = await fetchGmailEmails(10);
+
+        if (!result.success) {
+            return res.status(500).json({ success: false, error: result.error });
+        }
+
+        if (!Array.isArray(result.emails)) {
+            return res.json({ success: true, synced: 0, emails: emailInbox });
+        }
+
+        let syncCount = 0;
+        for (const gmailEmail of result.emails) {
+            const exists = emailInbox.some(e => e.fromEmail === gmailEmail.fromEmail && e.subject === gmailEmail.subject);
+            if (!exists) {
+                const newEmail = {
+                    id: nextEmailId++,
+                    ...gmailEmail
+                };
+                emailInbox.unshift(newEmail);
+                syncCount++;
+
+                try {
+                    io.emit('email:received', newEmail);
+                } catch (e) {
+                    console.log('Socket broadcast warning:', e.message);
+                }
+            }
+        }
+
+        console.log(`✅ Synced ${syncCount} new emails from Gmail`);
+        res.json({ success: true, synced: syncCount, total: emailInbox.length, emails: emailInbox });
+    } catch (err) {
+        console.error('email sync error', err);
+        res.status(500).json({ success: false, error: err.message || 'internal_error' });
     }
 });
 
