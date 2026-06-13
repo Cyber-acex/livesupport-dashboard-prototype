@@ -1249,6 +1249,9 @@ async function loadEmailInbox() {
     data.emails.forEach(email => {
       emailList.appendChild(renderEmailItem(email));
     });
+
+    // Attach click handlers after emails are rendered
+    initializeEmailListItems();
   } catch (error) {
     console.error('Email inbox load failed', error);
     emailList.innerHTML = '<div class="no-chats-message">Failed to load email inbox.</div>';
@@ -1261,6 +1264,9 @@ function renderEmailItem(email) {
   item.dataset.id = email.id;
   item.dataset.fromEmail = email.fromEmail || email.from;
   item.dataset.subject = email.subject;
+  
+  // Store the full email object for use in click handler
+  item._emailData = email;
 
   const initials = (email.from || 'Email').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
   const previewText = email.preview || email.body?.slice(0, 80) || email.subject;
@@ -1311,29 +1317,38 @@ function initializeEmailListItems() {
       emailItems.forEach(e => e.classList.remove('active'));
       this.classList.add('active');
       
-      const subject = this.querySelector('.email-subject').textContent;
-      const from = this.querySelector('.email-from').textContent;
-      const preview = this.querySelector('.preview').textContent;
-      const time = this.querySelector('.meta').textContent;
+      // Use the full email data if available, otherwise fall back to extracting from DOM
+      const email = this._emailData;
       
-      document.getElementById('emailViewerSubject').textContent = subject;
-      document.getElementById('emailViewerFrom').textContent = `From: ${from}`;
-      const avatar = from.split(' ').map(n => n[0]).join('').toUpperCase();
-      document.getElementById('emailViewerAvatar').textContent = avatar;
-      document.getElementById('emailViewerBody').innerHTML = `
-        <div class="message customer">
-          ${preview}
-        </div>
-        <div class="message ai sent">
-          Thank you for reaching out! We'll get back to you shortly.
-        </div>
-      `;
-      
-      document.getElementById('email-from').textContent = from;
-      document.getElementById('email-to').textContent = 'support@livesupport.com';
-      document.getElementById('email-date').textContent = time || 'Today';
-      document.getElementById('email-subject').textContent = subject;
-      document.getElementById('email-reply-text').value = '';
+      if (email) {
+        // Use full email data
+        setEmailViewer(email, this);
+      } else {
+        // Fallback: extract from DOM
+        const subject = this.querySelector('.email-subject').textContent;
+        const from = this.querySelector('.email-from').textContent;
+        const preview = this.querySelector('.email-preview')?.textContent || this.querySelector('.preview').textContent;
+        const time = this.querySelector('.meta').textContent;
+        
+        document.getElementById('emailViewerSubject').textContent = subject;
+        document.getElementById('emailViewerFrom').textContent = `From: ${from}`;
+        const avatar = from.split(' ').map(n => n[0]).join('').toUpperCase();
+        document.getElementById('emailViewerAvatar').textContent = avatar;
+        document.getElementById('emailViewerBody').innerHTML = `
+          <div class="message customer">
+            ${preview}
+          </div>
+          <div class="message ai sent">
+            Thank you for reaching out! We'll get back to you shortly.
+          </div>
+        `;
+        
+        document.getElementById('email-from').textContent = from;
+        document.getElementById('email-to').textContent = 'support@livesupport.com';
+        document.getElementById('email-date').textContent = time || 'Today';
+        document.getElementById('email-subject').textContent = subject;
+        document.getElementById('email-reply-text').value = '';
+      }
     });
   });
 }

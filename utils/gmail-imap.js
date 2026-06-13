@@ -36,43 +36,58 @@ export async function fetchGmailEmails(maxEmails = 20) {
       // Search for unread emails in INBOX
       await connection.openBox('INBOX');
       const searchCriteria = ['UNSEEN'];
-      // Fetch with ALL to get the complete message body
-      const fetchOptions = { bodies: '' };
-
-      let results = await connection.search(searchCriteria, fetchOptions);
+      
+      // Search returns array of objects with uid in attributes
+      const results = await connection.search(searchCriteria);
       
       if (results.length === 0) {
         await connection.end();
         return { success: true, emails: [] };
       }
 
-      // Limit results
-      results = results.slice(0, maxEmails);
+      // Extract UIDs and limit results
+      let uids = results.slice(0, maxEmails).map(item => item.attributes.uid);
 
       const emails = [];
 
-      for (const item of results) {
+      // Get the underlying imap connection from imap-simple
+      const imapConn = connection.imap;
+      
+      for (const uid of uids) {
         try {
-          // item.parts[0] contains the raw email string, not a buffer object
-          if (!item.parts || !item.parts[0]) {
-            console.log('No parts for UID', item.attributes.uid);
+          // Fetch using raw imap with callback approach
+          const emailData = await new Promise((resolve, reject) => {
+            const f = imapConn.fetch(uid, { bodies: '' });
+            let buffer = '';
+            
+            f.on('message', (msg) => {
+              msg.on('body', (stream) => {
+                stream.on('data', (chunk) => {
+                  buffer += chunk.toString('utf8');
+                });
+                stream.on('end', () => {
+                  resolve(buffer);
+                });
+              });
+            });
+            
+            f.on('error', reject);
+            f.on('end', () => {
+              if (!buffer) resolve('');
+            });
+          });
+
+          if (!emailData) {
+            console.log('No email data for UID', uid);
             continue;
           }
 
-          // item.parts[0] is already a string or buffer; convert to buffer if needed
-          const emailRaw = item.parts[0];
-          const emailBuffer = typeof emailRaw === 'string' ? Buffer.from(emailRaw, 'utf8') : emailRaw;
-
-          // Create a readable stream from the buffer
-          const emailStream = new Readable();
-          emailStream.push(emailBuffer);
-          emailStream.push(null); // Signal end of stream
-
-          // Parse the email
-          const parsed = await simpleParser(emailStream, {});
+          // Parse the email using mailparser
+          const stream = Readable.from([Buffer.from(emailData)]);
+          const parsed = await simpleParser(stream, {});
 
           const email = {
-            id: item.attributes.uid,
+            id: uid,
             from: parsed.from?.text || 'Unknown',
             fromEmail: parsed.from?.value?.[0]?.address || '',
             to: process.env.IMAP_USER || process.env.EMAIL_USER,
@@ -83,17 +98,19 @@ export async function fetchGmailEmails(maxEmails = 20) {
             unread: true
           };
 
-          emails.push(email);
-          console.log(`✅ Parsed email from ${email.fromEmail}: ${email.subject}`);
+          if (email.fromEmail) {
+            emails.push(email);
+            console.log(`✅ Parsed email from ${email.fromEmail}: ${email.subject}`);
+          }
 
           // Mark as read
           try {
-            await connection.addFlags(item.attributes.uid, ['\\Seen']);
+            await connection.addFlags(uid, ['\\Seen']);
           } catch (e) {
-            console.log('Note: Could not mark email as read for UID', item.attributes.uid);
+            console.log('Note: Could not mark email as read for UID', uid);
           }
         } catch (parseErr) {
-          console.error('Error parsing email UID', item.attributes.uid, ':', parseErr.message);
+          console.error('Error parsing email UID', uid, ':', parseErr.message);
         }
       }
 

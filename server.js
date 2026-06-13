@@ -677,17 +677,18 @@ app.post('/api/email/receive', express.json(), async (req, res) => {
     }
 });
 
-app.post('/api/email/sync', async (req, res) => {
+// Helper function to sync Gmail emails
+async function syncGmailEmails(broadcast = true) {
     try {
-        console.log('Starting email sync from Gmail...');
         const result = await fetchGmailEmails(10);
 
         if (!result.success) {
-            return res.status(500).json({ success: false, error: result.error });
+            console.error('Gmail sync failed:', result.error);
+            return { success: false, synced: 0, error: result.error };
         }
 
         if (!Array.isArray(result.emails)) {
-            return res.json({ success: true, synced: 0, emails: emailInbox });
+            return { success: true, synced: 0 };
         }
 
         let syncCount = 0;
@@ -701,16 +702,36 @@ app.post('/api/email/sync', async (req, res) => {
                 emailInbox.unshift(newEmail);
                 syncCount++;
 
-                try {
-                    io.emit('email:received', newEmail);
-                } catch (e) {
-                    console.log('Socket broadcast warning:', e.message);
+                if (broadcast) {
+                    try {
+                        io.emit('email:received', newEmail);
+                    } catch (e) {
+                        console.log('Socket broadcast warning:', e.message);
+                    }
                 }
             }
         }
 
-        console.log(`✅ Synced ${syncCount} new emails from Gmail`);
-        res.json({ success: true, synced: syncCount, total: emailInbox.length, emails: emailInbox });
+        if (syncCount > 0) {
+            console.log(`✅ Synced ${syncCount} new emails from Gmail`);
+        }
+        return { success: true, synced: syncCount };
+    } catch (err) {
+        console.error('Gmail sync error:', err.message);
+        return { success: false, synced: 0, error: err.message };
+    }
+}
+
+app.post('/api/email/sync', async (req, res) => {
+    try {
+        console.log('Starting email sync from Gmail (manual)...');
+        const result = await syncGmailEmails(true);
+
+        if (!result.success) {
+            return res.status(500).json({ success: false, error: result.error });
+        }
+
+        res.json({ success: true, synced: result.synced, total: emailInbox.length, emails: emailInbox });
     } catch (err) {
         console.error('email sync error', err);
         res.status(500).json({ success: false, error: err.message || 'internal_error' });
@@ -5556,6 +5577,29 @@ httpServer.listen(PORT, () => {
         console.log(`✅🎲Server running on port ${PORT}🎲`);
     }
 });
+
+// Auto-sync Gmail emails on a timer
+const GMAIL_SYNC_INTERVAL = parseInt(process.env.GMAIL_SYNC_INTERVAL || '300000', 10); // Default: 5 minutes
+let gmailSyncTimer = null;
+
+async function startAutoSync() {
+    try {
+        // Run first sync immediately
+        await syncGmailEmails(true);
+        
+        // Then set up periodic sync
+        gmailSyncTimer = setInterval(async () => {
+            await syncGmailEmails(true);
+        }, GMAIL_SYNC_INTERVAL);
+        
+        console.log(`✅ Auto-sync enabled: Every ${GMAIL_SYNC_INTERVAL / 1000}s (${(GMAIL_SYNC_INTERVAL / 60000).toFixed(1)} min)`);
+    } catch (err) {
+        console.error('Failed to start auto-sync:', err.message);
+    }
+}
+
+// Start auto-sync after server is ready (give it a moment to stabilize)
+setTimeout(startAutoSync, 2000);
 
 // Debug: force assign an escalation to a staff member (for testing handoff audio)
 // POST /debug/assign-escalation  JSON: { conversationId, assignedStaffId, customerName }
