@@ -307,7 +307,15 @@ function emitNewMessageEvent(conversationId, messageData) {
             : null;
         const payload = Object.assign({}, messageData, { conversation_id: id });
         if (senderName) payload.sender_name = senderName;
+        
+        // Emit to all connected clients
         io.emit("newMessage", payload);
+        console.log(`📤 Socket.IO newMessage event emitted for conversation ${id}:`, {
+            conversationId: id,
+            sender: payload.sender,
+            messageLength: payload.message ? payload.message.length : 0,
+            connectedSockets: io.engine.clientsCount || 'unknown'
+        });
     });
 }
 
@@ -670,6 +678,14 @@ app.post('/api/email/receive', express.json(), async (req, res) => {
         };
 
         emailInbox.unshift(newEmail);
+        
+        // Broadcast email received via Socket.IO for real-time updates
+        try {
+            io.emit('email:received', newEmail);
+        } catch (e) {
+            console.log('Socket broadcast warning:', e.message);
+        }
+        
         res.json({ success: true, email: newEmail });
     } catch (err) {
         console.error('email receive error', err);
@@ -680,16 +696,21 @@ app.post('/api/email/receive', express.json(), async (req, res) => {
 // Helper function to sync Gmail emails
 async function syncGmailEmails(broadcast = true) {
     try {
+        console.log('🔄 Starting Gmail email sync...');
         const result = await fetchGmailEmails(10);
+        console.log('Gmail sync result:', result);
 
         if (!result.success) {
-            console.error('Gmail sync failed:', result.error);
+            console.error('❌ Gmail sync failed:', result.error);
             return { success: false, synced: 0, error: result.error };
         }
 
         if (!Array.isArray(result.emails)) {
+            console.log('⚠️ No emails in result');
             return { success: true, synced: 0 };
         }
+        
+        console.log(`📧 Found ${result.emails.length} emails from Gmail`);
 
         let syncCount = 0;
         for (const gmailEmail of result.emails) {
@@ -4676,6 +4697,28 @@ io.on("connection", (socket) => {
         socket.broadcast.emit("stopTyping", data);
     });
 
+    // Message refresh request (for client-side polling fallback)
+    socket.on("messages:refresh", (data) => {
+        if (!data || !data.conversationId) return;
+        const conversationId = data.conversationId;
+        // Fetch latest messages for this conversation
+        const sql = isPg
+            ? `SELECT * FROM replies WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 50`
+            : `SELECT * FROM replies WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 50`;
+        db.query(sql, isPg ? [conversationId] : [conversationId], (err, messages) => {
+            if (err) {
+                console.error('Failed to fetch messages for refresh:', err);
+                return;
+            }
+            if (Array.isArray(messages)) {
+                socket.emit("messages:refreshed", {
+                    conversationId,
+                    messages: messages.reverse()
+                });
+            }
+        });
+    });
+
     socket.on('voice:register', (data) => {
         const record = normalizeVoiceUser(socket, Object.assign({}, data, { status: 'online', socketId: socket.id }));
         if (!record || !record.userId) return;
@@ -5584,17 +5627,21 @@ let gmailSyncTimer = null;
 
 async function startAutoSync() {
     try {
+        console.log('⏳ startAutoSync called, about to run first sync...');
         // Run first sync immediately
-        await syncGmailEmails(true);
+        const firstSyncResult = await syncGmailEmails(true);
+        console.log('✅ First sync completed:', firstSyncResult);
         
         // Then set up periodic sync
         gmailSyncTimer = setInterval(async () => {
+            console.log('🔄 Running periodic email sync...');
             await syncGmailEmails(true);
         }, GMAIL_SYNC_INTERVAL);
         
         console.log(`✅ Auto-sync enabled: Every ${GMAIL_SYNC_INTERVAL / 1000}s (${(GMAIL_SYNC_INTERVAL / 60000).toFixed(1)} min)`);
     } catch (err) {
-        console.error('Failed to start auto-sync:', err.message);
+        console.error('❌ Failed to start auto-sync:', err.message);
+        console.error('Full error:', err);
     }
 }
 

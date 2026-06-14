@@ -275,6 +275,7 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
                 <button id="refreshEmailBtn" class="filter" style="background: #3b82f6; color: white; border: none; cursor: pointer;" title="Refresh inbox"><span class="filter-icon">🔄</span><span>Refresh</span></button>
                 <button id="syncGmailBtn" class="filter" style="background: #10b981; color: white; border: none; cursor: pointer;" title="Sync emails from Gmail"><span class="filter-icon">📥</span><span>Sync Gmail</span></button>
                 <button id="testEmailBtn" class="filter" style="background: #8b5cf6; color: white; border: none; cursor: pointer;" title="Simulate incoming email"><span class="filter-icon">✉️</span><span>Test Email</span></button>
+                <button id="composeEmailBtn" class="filter" style="background: #f59e0b; color: white; border: none; cursor: pointer;" title="Compose new email"><span class="filter-icon">✏️</span><span>Compose</span></button>
             </div>
             <!-- EMAIL LIST -->
             <div class="conversation-list email-list">
@@ -1165,6 +1166,53 @@ if (quickEscalateBtn) quickEscalateBtn.onclick = escalateCurrentChat;
         Dismiss
     </div>
 </div>
+
+<!-- COMPOSE EMAIL MODAL -->
+<div id="composeEmailModal" class="modal">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content" style="max-width: 600px;">
+    <div class="modal-header">
+      <div class="modal-title-section">
+        <div class="modal-icon">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h2 class="modal-title">Compose Email</h2>
+      </div>
+      <button class="modal-close-btn compose-close-btn" aria-label="Close modal">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M6 18L18 6M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+    
+    <div class="modal-body">
+      <form id="composeEmailForm" style="display: flex; flex-direction: column; gap: 15px;">
+        <div class="form-group">
+          <label for="composeEmailTo" style="display: block; margin-bottom: 5px; font-weight: bold;">To:</label>
+          <input type="email" id="composeEmailTo" placeholder="customer@example.com" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;" required>
+        </div>
+        
+        <div class="form-group">
+          <label for="composeEmailSubject" style="display: block; margin-bottom: 5px; font-weight: bold;">Subject:</label>
+          <input type="text" id="composeEmailSubject" placeholder="Email subject" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;" required>
+        </div>
+        
+        <div class="form-group">
+          <label for="composeEmailMessage" style="display: block; margin-bottom: 5px; font-weight: bold;">Message:</label>
+          <textarea id="composeEmailMessage" placeholder="Type your message here..." style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; min-height: 200px; font-family: inherit;" required></textarea>
+        </div>
+        
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+          <button type="button" class="compose-close-btn" style="padding: 10px 20px; border: 1px solid #ddd; border-radius: 4px; background: #f3f4f6; color: #1f2937; cursor: pointer; font-weight: 500;">Cancel</button>
+          <button type="submit" id="composeSendBtn" style="padding: 10px 20px; border: none; border-radius: 4px; background: #3b82f6; color: white; cursor: pointer; font-weight: 500;">Send Email</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script>
 const EMAIL_API_BASE = '/api/email';
 let emailSectionInitialized = false;
@@ -1431,6 +1479,72 @@ function initializeEmailFilters() {
       } finally {
         syncBtn.disabled = false;
         syncBtn.textContent = '📥 Sync Gmail';
+      }
+    });
+  }
+
+  // Compose Email Modal
+  const composeBtn = document.getElementById('composeEmailBtn');
+  const composeModal = document.getElementById('composeEmailModal');
+  const composeForm = document.getElementById('composeEmailForm');
+  const closeButtons = document.querySelectorAll('.compose-close-btn');
+
+  if (composeBtn) {
+    composeBtn.addEventListener('click', () => {
+      composeModal.style.display = 'flex';
+      setTimeout(() => composeModal.classList.add('active'), 10);
+      composeForm.reset();
+    });
+  }
+
+  closeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      composeModal.classList.remove('active');
+      setTimeout(() => composeModal.style.display = 'none', 300);
+    });
+  });
+
+  composeModal.querySelector('.modal-backdrop')?.addEventListener('click', () => {
+    composeModal.querySelector('.compose-close-btn')?.click();
+  });
+
+  if (composeForm) {
+    composeForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const to = document.getElementById('composeEmailTo').value;
+      const subject = document.getElementById('composeEmailSubject').value;
+      const message = document.getElementById('composeEmailMessage').value;
+      
+      if (!to || !subject || !message) {
+        showNotification('Please fill in all fields', 'error');
+        return;
+      }
+
+      const sendBtn = document.getElementById('composeSendBtn');
+      const originalText = sendBtn.textContent;
+      sendBtn.disabled = true;
+      sendBtn.textContent = '📤 Sending...';
+
+      try {
+        const response = await fetch(`${EMAIL_API_BASE}/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, subject, message })
+        });
+        const data = await response.json();
+        if (data.success) {
+          showNotification('Email sent successfully! ✅', 'success');
+          composeModal.querySelector('.compose-close-btn').click();
+        } else {
+          showNotification('Send failed: ' + (data.error || 'Unknown error'), 'error');
+        }
+      } catch (error) {
+        console.error('Email send error', error);
+        showNotification('Error sending email: ' + error.message, 'error');
+      } finally {
+        sendBtn.disabled = false;
+        sendBtn.textContent = originalText;
       }
     });
   }

@@ -20,8 +20,20 @@ window.addEventListener('focus', applyInboxTheme);
 // Connect to Socket.IO server
 const socket = io();
 
-// Register agent presence after Socket.IO connects
+// Track socket connection status
+let socketConnected = false;
+let messagePollingInterval = null;
+
 socket.on('connect', () => {
+    console.log('[Socket.IO] Connected:', socket.id);
+    socketConnected = true;
+    
+    // Clear polling interval when socket reconnects
+    if (messagePollingInterval) {
+        clearInterval(messagePollingInterval);
+        messagePollingInterval = null;
+    }
+    
     Promise.all([
         fetch('/api/user').then(r => r.json()).catch(() => ({})),
         fetch('/api/settings').then(r => r.json()).catch(() => ({}))
@@ -35,11 +47,29 @@ socket.on('connect', () => {
                 role: u.role || 'agent',
                 autopilotMode
             });
+            console.log('[Socket.IO] Agent registered:', u.name);
         }
     }).catch(() => {
         const autopilotMode = localStorage.getItem('autopilotMode') || 'auto';
         setInboxAutopilotMode(autopilotMode);
     });
+});
+
+socket.on('disconnect', () => {
+    console.warn('[Socket.IO] Disconnected - starting fallback polling');
+    socketConnected = false;
+    // Start fallback polling when socket disconnects
+    if (!messagePollingInterval) {
+        startMessagePolling();
+    }
+});
+
+socket.on('connect_error', (error) => {
+    console.error('[Socket.IO] Connection error:', error);
+    socketConnected = false;
+    if (!messagePollingInterval) {
+        startMessagePolling();
+    }
 });
 
 // Listen for staff-wide notifications
@@ -1006,6 +1036,9 @@ async function loadMessages(conversationId, isEscalated = false) {
     messagesContainer.innerHTML = "";
     if (data && data.length > 0) {
         data.forEach(msg => appendMessage(msg));
+        // Update last message timestamp when loading conversation
+        const lastMsg = data[data.length - 1];
+        lastMessageTimestamp = Math.max(lastMessageTimestamp, new Date(lastMsg.created_at || Date.now()).getTime());
     } else {
         const emptyDiv = document.createElement('div');
         emptyDiv.classList.add('message', 'empty');
@@ -1030,6 +1063,17 @@ async function loadMessages(conversationId, isEscalated = false) {
     }
 
     await fetchAISuggestion(conversationId);
+    
+    // Request message refresh from server if socket is connected
+    if (socketConnected && socket) {
+        try {
+            socket.emit("messages:refresh", { conversationId });
+            console.log('[Socket.IO] Requested message refresh for conversation:', conversationId);
+        } catch (err) {
+            console.warn('[Socket.IO] Failed to request message refresh:', err);
+        }
+    }
+    
     // Update the right-hand info panel with customer details and orders
     try {
         updateInfoPanel && updateInfoPanel(conversationId);
@@ -1515,14 +1559,74 @@ function playNotificationSound(beepCount = 2, beepDuration = 0.18, gap = 0.18) {
 // ---------------------------
 // Socket.IO listener for new messages
 // ---------------------------
+
+// Track last message timestamp for polling
+let lastMessageTimestamp = Date.now();
+
+// Fallback polling mechanism when socket.io is unavailable
+function startMessagePolling() {
+    console.log('[Polling] Starting fallback message polling...');
+    if (messagePollingInterval) return; // Prevent duplicate intervals
+    
+    messagePollingInterval = setInterval(async () => {
+        if (socketConnected) {
+            clearInterval(messagePollingInterval);
+            messagePollingInterval = null;
+            console.log('[Polling] Socket reconnected, stopping polling');
+            return;
+        }
+        
+        try {
+            // Poll for new conversations/messages
+            if (currentConversationId) {
+                const res = await fetch(`/api/messages/${currentConversationId}`);
+                const messages = await res.json();
+                if (Array.isArray(messages) && messages.length > 0) {
+                    const lastMsg = messages[messages.length - 1];
+                    if (new Date(lastMsg.created_at).getTime() > lastMessageTimestamp) {
+                        console.log('[Polling] New message detected, updating...');
+                        lastMessageTimestamp = Date.now();
+                        // Reload messages for current conversation
+                        await loadMessages(currentConversationId);
+                    }
+                }
+            }
+            
+            // Also refresh conversations list periodically
+            const activeFilter = getActiveInboxFilter();
+            await loadConversations(activeFilter);
+        } catch (err) {
+            console.error('[Polling] Error:', err);
+        }
+    }, 3000); // Poll every 3 seconds
+}
+
+// Handle refreshed messages from server
+socket.on("messages:refreshed", (data) => {
+    if (!data || !data.conversationId) return;
+    console.log('[Socket.IO] Messages refreshed:', data.conversationId, data.messages?.length || 0, 'messages');
+    
+    if (String(data.conversationId) === String(currentConversationId)) {
+        // Update last message timestamp
+        if (Array.isArray(data.messages) && data.messages.length > 0) {
+            const lastMsg = data.messages[data.messages.length - 1];
+            lastMessageTimestamp = Math.max(lastMessageTimestamp, new Date(lastMsg.created_at || Date.now()).getTime());
+        }
+    }
+});
+
 socket.on("newMessage", msg => {
     // If the message belongs to the current conversation, append it
     if (!msg || !msg.conversation_id) return;
 
+    console.log('[Socket.IO] New message received:', msg.conversation_id, msg.message);
+    
     const isCurrentConversation = String(msg.conversation_id) === String(currentConversationId);
     if (isCurrentConversation) {
         appendMessage(msg);
         clearConversationUnreadBadge(msg.conversation_id);
+        // Update last message timestamp
+        lastMessageTimestamp = Math.max(lastMessageTimestamp, new Date(msg.created_at || Date.now()).getTime());
     }
 
     // desktop notification for any new message event
@@ -1540,7 +1644,12 @@ socket.on("newMessage", msg => {
         showNotification("New message received from a customer!");
     }
 
+    // Always update conversation entry
     updateConversationEntry(msg, isCurrentConversation);
+    
+    // Refresh conversations list to show updated preview/timestamp
+    const activeFilter = getActiveInboxFilter();
+    loadConversations(activeFilter).catch(err => console.error('Failed to refresh conversations:', err));
 
     if (isCurrentConversation && msg.sender !== 'sent') {
         fetchAISuggestion(currentConversationId);

@@ -35,12 +35,16 @@ export async function fetchGmailEmails(maxEmails = 20) {
     try {
       // Search for unread emails in INBOX
       await connection.openBox('INBOX');
-      const searchCriteria = ['UNSEEN'];
+      // Search for ALL emails (both read and unread) - deduplication happens server-side
+      const searchCriteria = ['ALL'];
       
+      console.log('📬 Searching for ALL emails...');
       // Search returns array of objects with uid in attributes
       const results = await connection.search(searchCriteria);
+      console.log(`📨 Found ${results.length} total emails in inbox`);
       
       if (results.length === 0) {
+        console.log('No emails found');
         await connection.end();
         return { success: true, emails: [] };
       }
@@ -103,12 +107,8 @@ export async function fetchGmailEmails(maxEmails = 20) {
             console.log(`✅ Parsed email from ${email.fromEmail}: ${email.subject}`);
           }
 
-          // Mark as read
-          try {
-            await connection.addFlags(uid, ['\\Seen']);
-          } catch (e) {
-            console.log('Note: Could not mark email as read for UID', uid);
-          }
+          // Note: We don't mark as read so emails remain unread for subsequent syncs
+          // This allows the deduplication logic in server.js to handle preventing duplicates
         } catch (parseErr) {
           console.error('Error parsing email UID', uid, ':', parseErr.message);
         }
