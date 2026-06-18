@@ -1342,9 +1342,18 @@ function setEmailViewer(email, item) {
   document.getElementById('emailViewerSubject').textContent = email.subject;
   document.getElementById('emailViewerFrom').textContent = `From: ${email.from}`;
   document.getElementById('emailViewerAvatar').textContent = (email.from || 'Email').split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+  
+  // Format the email body with proper line breaks and escaping
+  const bodyText = email.body || email.preview || 'No message body available.';
+  const formattedBody = bodyText
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+  
   document.getElementById('emailViewerBody').innerHTML = `
-    <div class="message customer">
-      ${email.body || email.preview || 'No message body available.'}
+    <div class="message customer" style="white-space: pre-wrap; word-wrap: break-word; line-height: 1.6;">
+      ${formattedBody}
     </div>
     <div class="message ai sent">
       Thank you for your message. We will get back to you shortly.

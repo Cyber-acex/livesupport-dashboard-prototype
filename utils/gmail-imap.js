@@ -7,6 +7,7 @@ import 'dotenv/config';
  * Fetch unread emails from Gmail using IMAP
  */
 export async function fetchGmailEmails(maxEmails = 20) {
+  let connection;
   try {
     const config = {
       imap: {
@@ -24,9 +25,13 @@ export async function fetchGmailEmails(maxEmails = 20) {
       return { success: false, error: 'IMAP_USER or IMAP_PASSWORD not configured' };
     }
 
-    let connection;
     try {
       connection = await ImapSimple.connect(config);
+      
+      // Add error handler to prevent unhandled errors
+      connection.on('error', (err) => {
+        console.log('IMAP connection error (handled):', err.message);
+      });
     } catch (err) {
       console.error('Gmail IMAP connection failed:', err.message);
       return { success: false, error: 'Unable to connect to Gmail: ' + err.message };
@@ -117,12 +122,25 @@ export async function fetchGmailEmails(maxEmails = 20) {
       await connection.end();
       return { success: true, emails };
     } catch (err) {
-      await connection.end();
+      try {
+        await connection.end();
+      } catch (e) {
+        // Ignore errors closing the connection
+      }
       console.error('Error fetching emails:', err.message);
       return { success: false, error: err.message };
     }
   } catch (err) {
     console.error('Gmail IMAP error:', err);
     return { success: false, error: err.message };
+  } finally {
+    // Ensure connection is properly closed
+    if (connection) {
+      try {
+        await connection.end();
+      } catch (e) {
+        // Ignore errors closing the connection
+      }
+    }
   }
 }

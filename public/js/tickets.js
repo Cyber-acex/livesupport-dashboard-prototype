@@ -37,6 +37,57 @@ function initTickets() {
         saveNotification(message, 'Ticket', 'ticket');
     }
 
+    function showImagePreview(imageSrc, title = 'Image Preview') {
+        // Create modal if it doesn't exist
+        let previewModal = document.getElementById('imagePreviewModal');
+        if (!previewModal) {
+            previewModal = document.createElement('div');
+            previewModal.id = 'imagePreviewModal';
+            previewModal.style.cssText = `
+                display: none;
+                position: fixed;
+                z-index: 10000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.8);
+                align-items: center;
+                justify-content: center;
+            `;
+            previewModal.innerHTML = `
+                <div style="position: relative; max-width: 90%; max-height: 90vh; display: flex; flex-direction: column; align-items: center;">
+                    <span id="closeImagePreview" style="position: absolute; top: -30px; right: 0; color: white; font-size: 28px; font-weight: bold; cursor: pointer; transition: text-shadow 0.2s;">&times;</span>
+                    <img id="previewImageContent" src="" alt="Preview" style="max-width: 100%; max-height: 85vh; object-fit: contain; border-radius: 8px;" />
+                    <p id="previewImageTitle" style="color: white; margin-top: 16px; text-align: center; font-size: 14px;"></p>
+                </div>
+            `;
+            document.body.appendChild(previewModal);
+
+            document.getElementById('closeImagePreview').addEventListener('click', () => {
+                previewModal.style.display = 'none';
+            });
+
+            previewModal.addEventListener('click', (e) => {
+                if (e.target === previewModal) {
+                    previewModal.style.display = 'none';
+                }
+            });
+
+            // Close on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && previewModal.style.display !== 'none') {
+                    previewModal.style.display = 'none';
+                }
+            });
+        }
+
+        // Set image and title
+        document.getElementById('previewImageContent').src = imageSrc;
+        document.getElementById('previewImageTitle').textContent = title;
+        previewModal.style.display = 'flex';
+    }
+
     function renderTicketElement(ticket) {
         const div = document.createElement("div");
         div.classList.add("ticketItem");
@@ -44,6 +95,28 @@ function initTickets() {
 
         const statusText = ticket.status ? ticket.status : 'Open';
         const assigneeText = ticket.assignee ? `Assigned to: ${ticket.assignee}` : 'Unassigned';
+        
+        // Parse attachments if they exist
+        let attachments = [];
+        try {
+            if (ticket.attachments) {
+                attachments = typeof ticket.attachments === 'string' ? JSON.parse(ticket.attachments) : ticket.attachments;
+            }
+        } catch (e) {
+            console.warn('Failed to parse attachments:', e);
+        }
+        
+        // Check for image attachments
+        const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
+        const imageAttachments = attachments.filter(att => {
+            const ext = att.originalname.toLowerCase().match(/\.[^.]*$/)?.[0] || '';
+            return imageExtensions.includes(ext);
+        });
+        
+        const attachmentsHtml = imageAttachments.map(att => {
+            return `<img class="ticket-attachment-preview" src="/uploads/${att.filename}" alt="${att.originalname}" style="cursor:pointer; max-width:150px; max-height:150px; border-radius:8px; margin:8px 4px 0 0; transition:transform 0.2s; border:2px solid #e5e7eb;" title="Click to preview: ${att.originalname}" data-filename="${att.filename}" data-originalname="${att.originalname}" />`;
+        }).join('');
+        
         div.innerHTML = `
             <div class="ticket-escalated-banner" style="display: ${ticket.escalated ? 'block' : 'none'}; background:#fee2e2; color:#991b1c; border-left:4px solid #b91c1c; padding:12px 16px; margin-bottom:12px; border-radius:12px; font-weight:700; text-align:center; letter-spacing:0.04em; ">ESCALATED</div>
             <div class="ticket-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -60,6 +133,7 @@ function initTickets() {
             </div>
             <div class="escalated-label" style="display: ${ticket.escalated ? 'block' : 'none'}; color: red; font-weight: bold; text-align: center; margin-bottom: 10px; font-size: 18px;">ESCALATED</div>
             <pre>${ticket.content}</pre>
+            ${attachmentsHtml ? `<div class="ticket-attachments" style="margin-top:16px; padding-top:12px; border-top:1px solid #e5e7eb;">${attachmentsHtml}</div>` : ''}
         `;
 
         const escalateBtn = div.querySelector('.escalateBtn');
@@ -98,9 +172,41 @@ function initTickets() {
 
         div.querySelector(".deleteTicketBtn").onclick = async () => {
             if (confirm("Are you sure you want to delete this ticket?")) {
-                await fetch(`/api/tickets/${ticket.id}`, { method: "DELETE" });
+                const deleteBtn = div.querySelector(".deleteTicketBtn");
+                const originalText = deleteBtn.textContent;
+                deleteBtn.disabled = true;
+                deleteBtn.textContent = "Deleting...";
+                
+                try {
+                    const response = await fetch(`/api/tickets/${ticket.id}`, { method: "DELETE" });
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        showTicketNotification(errorData.error || `Failed to delete ticket (${response.status})`, 'error');
+                        deleteBtn.disabled = false;
+                        deleteBtn.textContent = originalText;
+                        return;
+                    }
+                    const result = await response.json();
+                    showTicketNotification(`Ticket #${ticket.id} deleted successfully!`, 'success');
+                    // Remove from UI immediately
+                    ticketsData = ticketsData.filter(t => t.id !== ticket.id);
+                    updateTicketListUI();
+                } catch (error) {
+                    console.error('Delete ticket error:', error);
+                    showTicketNotification('Failed to delete ticket. Please try again.', 'error');
+                    deleteBtn.disabled = false;
+                    deleteBtn.textContent = originalText;
+                }
             }
         };
+
+        // Add image preview listeners
+        const imagePreview = div.querySelectorAll('.ticket-attachment-preview');
+        imagePreview.forEach(img => {
+            img.addEventListener('click', () => showImagePreview(img.src, img.title));
+            img.addEventListener('mouseenter', () => img.style.transform = 'scale(1.05)');
+            img.addEventListener('mouseleave', () => img.style.transform = 'scale(1)');
+        });
 
         return div;
     }

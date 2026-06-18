@@ -921,7 +921,8 @@ app.use(bodyParser.json());
 app.use(session({
     secret: "livesupportsecret",
     resave: false,
-    saveUninitialized: true
+    saveUninitialized: true,
+    cookie: { maxAge: 24 * 60 * 60 * 1000 } // Default 24 hours
 }));
 
 // Update lastActivity timestamp for authenticated sessions on each request
@@ -1040,9 +1041,10 @@ app.get("/login", (req, res) => {
 
 app.post("/login", (req, res) => {
     console.log("Full req.body:", JSON.stringify(req.body, null, 2));
-    const { email, password } = req.body;
+    const { email, password, remember } = req.body;
     console.log("Login attempt:", email, password);
     console.log("Email type:", typeof email, "Password type:", typeof password);
+    console.log("Remember me:", remember);
     const sql = "SELECT * FROM users WHERE email = ? AND password = ?";
     // Use pool.query which handles connection acquisition/release internally
     db.query(sql, [email, password], (err, result) => {
@@ -1058,6 +1060,12 @@ app.post("/login", (req, res) => {
                 // record login time for session info
                 try { req.session.loginTime = new Date().toISOString(); } catch (e) {}
                 req.session.userId = result[0].id;
+                // If "remember me" is checked, extend session to 72 hours
+                if (remember === 'on' || remember === true) {
+                    const seventyTwoHours = 72 * 60 * 60 * 1000;
+                    req.session.cookie.maxAge = seventyTwoHours;
+                    console.log('Remember me enabled: session extended to 72 hours');
+                }
                 // Track this session id for the logged-in user to allow force-logout
                 try {
                     const sid = req.sessionID;

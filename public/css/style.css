@@ -2098,6 +2098,724 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
   transition: all 0.2s ease;
 }
 
+/* ============================================================
+   MOBILE RESPONSIVE - CUTTING-EDGE DESIGN FOR ALL DEVICES
+   ============================================================ */
+
+/* Tablets (768px - 1024px) */
+@media (max-width: 1024px) {
+  html:not(.no-zoom) {
+    zoom: 0.95;
+  }
+  
+  .sidebar {
+    width: 180px !important;
+    padding: 18px 12px !important;
+  }
+  
+  .main {
+    margin-left: 180px !important;
+  }
+  
+  .topbar .back-btn {
+    left: calc(180px + 12px) !important;
+  }
+  
+  .inbox-container {
+    gap: 12px !important;
+  }
+  
+  .filters {
+    width: 160px !important;
+  }
+  
+  .conversation-list {
+    width: 260px !important;
+  }
+  
+  .info-panel {
+    width: 280px !important;
+  }
+  
+  .content {
+    padding: 16px !important;
+    padding-top: 80px !important;
+  }
+  
+  .app-grid {
+    grid-template-columns: 60px 260px minmax(400px, 1fr) 260px !important;
+    gap: 12px !important;
+    padding: 16px !important;
+  }
+}
+
+/* Small Tablets & Large Phones (768px) */
+@media (max-width: 768px) {
+  html:not(.no-zoom) {
+    zoom: 1;
+  }
+  
+  /* ===== LAYOUT ===== */
+  .sidebar {
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    width: 70px !important;
+    height: 100vh !important;
+    padding: 12px 4px !important;
+    z-index: 900 !important;
+    transform: translateX(0) !important;
+    transition: transform 0.3s ease !important;
+  }
+  
+  .sidebar.hidden {
+    transform: translateX(-100%) !important;
+  }
+  
+  .main {
+    margin-left: 70px !important;
+  }
+  
+  .topbar {
+    left: 70px !important;
+    right: 0 !important;
+    width: calc(100% - 70px) !important;
+    height: 56px !important;
+  }
+  
+  .topbar .back-btn {
+    left: 12px !important;
+  }
+  
+  .content {
+    padding: 12px !important;
+    padding-top: 70px !important;
+  }
+  
+  /* ===== INBOX LAYOUT ===== */
+  .inbox-container {
+    flex-direction: column !important;
+    border-radius: 20px !important;
+  }
+  
+  .filters {
+    width: 100% !important;
+    height: auto !important;
+    padding: 14px 12px !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    border-right: none !important;
+    border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+    gap: 8px !important;
+  }
+  
+  .filter {
+    flex-shrink: 0 !important;
+    padding: 10px 14px !important;
+    font-size: 12px !important;
+  }
+  
+  .conversation-list {
+    width: 100% !important;
+    height: auto !important;
+    max-height: 45vh !important;
+    border-right: none !important;
+    border-bottom: 1px solid #e5e7eb !important;
+    padding: 8px 0 !important;
+  }
+  
+  .conversation {
+    padding: 12px 14px !important;
+    margin-bottom: 0 !important;
+  }
+  
+  .chat-panel {
+    flex: 1 !important;
+    min-height: calc(100vh - 350px) !important;
+  }
+  
+  .info-panel {
+    width: 100% !important;
+    height: auto !important;
+    max-height: 30vh !important;
+    border-left: none !important;
+    border-top: 1px solid #e5e7eb !important;
+    padding: 14px 12px !important;
+    overflow-y: auto !important;
+  }
+  
+  /* ===== APP GRID ===== */
+  .app-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    padding: 12px !important;
+  }
+  
+  .nav-panel {
+    display: flex !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    padding: 8px 0 !important;
+  }
+  
+  .nav-panel .nav-list {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 8px !important;
+    padding: 0 !important;
+  }
+  
+  .conversations {
+    max-height: 40vh !important;
+    border-radius: 14px !important;
+  }
+  
+  .chat-area {
+    height: auto !important;
+    min-height: calc(100vh - 200px) !important;
+    border-radius: 14px !important;
+  }
+  
+  .details {
+    height: auto !important;
+    max-height: 25vh !important;
+    border-radius: 14px !important;
+  }
+  
+  /* ===== MESSAGES ===== */
+  .message {
+    max-width: 90% !important;
+    font-size: 14px !important;
+    padding: 12px 14px !important;
+  }
+  
+  .messages {
+    padding: 12px !important;
+  }
+  
+  /* ===== HEADER ===== */
+  .chat-header {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    padding: 12px !important;
+  }
+  
+  .chat-header-title {
+    width: 100% !important;
+  }
+  
+  .chat-header-right {
+    width: 100% !important;
+    justify-content: flex-start !important;
+  }
+  
+  .chat-input {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    padding: 10px 8px !important;
+  }
+  
+  .chat-input input {
+    width: 100% !important;
+    height: 44px !important;
+    font-size: 16px !important;
+  }
+  
+  .chat-input button {
+    width: auto !important;
+    padding: 10px 16px !important;
+    font-size: 12px !important;
+  }
+  
+  /* ===== MODAL ===== */
+  .receipt-modal {
+    width: 95% !important;
+    max-height: 85vh !important;
+    border-radius: 20px !important;
+  }
+  
+  .modal-header {
+    padding: 16px !important;
+    flex-wrap: wrap !important;
+  }
+  
+  .modal-title {
+    font-size: 20px !important;
+  }
+  
+  .modal-body {
+    padding: 16px !important;
+    max-height: 60vh !important;
+  }
+  
+  #ticketText {
+    min-height: 300px !important;
+    font-size: 16px !important;
+  }
+  
+  /* ===== PROFILE DROPDOWN ===== */
+  .profile-dropdown {
+    min-width: 220px !important;
+    right: -10px !important;
+  }
+  
+  /* ===== BUTTONS ===== */
+  .icon-btn {
+    width: 40px !important;
+    height: 40px !important;
+  }
+}
+
+/* Phones (576px) */
+@media (max-width: 576px) {
+  html, body {
+    font-size: 14px !important;
+  }
+  
+  .sidebar {
+    width: 60px !important;
+    padding: 8px 0 !important;
+  }
+  
+  .main {
+    margin-left: 60px !important;
+  }
+  
+  .topbar {
+    left: 60px !important;
+    width: calc(100% - 60px) !important;
+    height: 52px !important;
+    padding: 0 12px !important;
+  }
+  
+  .topbar .back-btn {
+    left: 8px !important;
+    width: 40px !important;
+    height: 40px !important;
+  }
+  
+  .content {
+    padding: 8px !important;
+    padding-top: 68px !important;
+  }
+  
+  .chat-header {
+    padding: 10px 8px !important;
+  }
+  
+  .chat-header-title {
+    gap: 8px !important;
+  }
+  
+  .chat-avatar {
+    width: 40px !important;
+    height: 40px !important;
+    font-size: 12px !important;
+  }
+  
+  .chat-title-text strong {
+    font-size: 14px !important;
+  }
+  
+  .chat-title-text .chat-subtitle {
+    font-size: 12px !important;
+  }
+  
+  .filters {
+    padding: 10px 8px !important;
+  }
+  
+  .filter {
+    padding: 8px 12px !important;
+    font-size: 11px !important;
+  }
+  
+  .filter-icon {
+    width: 24px !important;
+    height: 24px !important;
+    font-size: 12px !important;
+  }
+  
+  .conversation {
+    padding: 10px 10px !important;
+  }
+  
+  .conversation .avatar {
+    width: 40px !important;
+    height: 40px !important;
+    font-size: 12px !important;
+  }
+  
+  .conversation .name {
+    font-size: 13px !important;
+  }
+  
+  .conversation .preview {
+    font-size: 12px !important;
+  }
+  
+  .message {
+    max-width: 95% !important;
+    font-size: 13px !important;
+    padding: 10px 12px !important;
+    margin-bottom: 8px !important;
+  }
+  
+  .messages {
+    padding: 8px !important;
+  }
+  
+  .chat-input {
+    padding: 8px !important;
+    gap: 6px !important;
+  }
+  
+  .chat-input input {
+    height: 40px !important;
+    font-size: 16px !important;
+    padding: 10px 12px !important;
+  }
+  
+  .chat-input button {
+    padding: 8px 14px !important;
+    font-size: 11px !important;
+  }
+  
+  .info-box {
+    padding: 12px !important;
+    margin-bottom: 14px !important;
+    font-size: 12px !important;
+  }
+  
+  .info-panel h3 {
+    font-size: 14px !important;
+    margin-bottom: 10px !important;
+  }
+  
+  .action-btn {
+    padding: 8px 12px !important;
+    font-size: 12px !important;
+  }
+  
+  /* Modal on small phones */
+  .receipt-modal {
+    width: 95% !important;
+    max-height: 90vh !important;
+  }
+  
+  .modal-header {
+    padding: 14px 12px !important;
+  }
+  
+  .modal-title {
+    font-size: 18px !important;
+  }
+  
+  .modal-icon {
+    width: 36px !important;
+    height: 36px !important;
+  }
+  
+  .modal-body {
+    padding: 14px 12px !important;
+  }
+  
+  #ticketText {
+    min-height: 250px !important;
+  }
+  
+  .editor-toolbar {
+    padding: 10px 12px !important;
+    gap: 4px !important;
+  }
+  
+  .toolbar-btn {
+    width: 28px !important;
+    height: 28px !important;
+  }
+  
+  /* Profile */
+  .profile-dropdown {
+    min-width: 200px !important;
+    right: -20px !important;
+    padding: 10px !important;
+  }
+  
+  .profile-info {
+    padding: 8px 10px !important;
+    font-size: 12px !important;
+  }
+  
+  .profile-action {
+    padding: 8px 10px !important;
+    gap: 8px !important;
+  }
+  
+  .profile-action .profile-icon {
+    font-size: 12px !important;
+  }
+  
+  /* Login Page */
+  .login-container {
+    flex-direction: column !important;
+    padding: 0 !important;
+  }
+  
+  .login-panel {
+    width: 100% !important;
+    padding: 16px !important;
+  }
+  
+  .login-card {
+    height: auto !important;
+    padding: 24px !important;
+    border-radius: 20px !important;
+  }
+  
+  .logo-section {
+    margin-bottom: 24px !important;
+  }
+  
+  .logo-content {
+    gap: 12px !important;
+  }
+  
+  .logo-icon {
+    width: 32px !important;
+    height: 32px !important;
+  }
+  
+  .logo-title {
+    font-size: 16px !important;
+  }
+  
+  .welcome-heading {
+    font-size: 28px !important;
+    margin-bottom: 12px !important;
+  }
+  
+  .welcome-text {
+    font-size: 14px !important;
+  }
+  
+  .form-group {
+    margin-bottom: 12px !important;
+  }
+  
+  .label-text {
+    font-size: 12px !important;
+    margin-bottom: 6px !important;
+  }
+  
+  .input-wrap {
+    height: 48px !important;
+    padding: 0 10px !important;
+  }
+  
+  .input-wrap input {
+    font-size: 16px !important;
+  }
+  
+  .submit {
+    height: 48px !important;
+    font-size: 14px !important;
+  }
+  
+  .remember-row {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+  
+  .remember-row .remember {
+    font-size: 12px !important;
+  }
+  
+  .remember-row .forgot {
+    font-size: 12px !important;
+  }
+}
+
+/* Extra small phones (480px and below) */
+@media (max-width: 480px) {
+  html, body {
+    font-size: 13px !important;
+  }
+  
+  .sidebar {
+    width: 56px !important;
+  }
+  
+  .main {
+    margin-left: 56px !important;
+  }
+  
+  .topbar {
+    left: 56px !important;
+    width: calc(100% - 56px) !important;
+    height: 48px !important;
+  }
+  
+  .topbar .back-btn {
+    width: 36px !important;
+    height: 36px !important;
+  }
+  
+  .content {
+    padding: 6px !important;
+    padding-top: 62px !important;
+  }
+  
+  .app-header {
+    height: 48px !important;
+    padding: 0 8px !important;
+  }
+  
+  /* Hide some elements on very small screens */
+  .chat-header-right {
+    display: none !important;
+  }
+  
+  .filter-icon {
+    display: none !important;
+  }
+  
+  .message {
+    max-width: 100% !important;
+    font-size: 12px !important;
+  }
+  
+  .conversation .platform-badge {
+    display: none !important;
+  }
+  
+  .top-right {
+    gap: 6px !important;
+  }
+  
+  /* Stack login form vertically */
+  .login-card {
+    padding: 20px !important;
+    border-radius: 16px !important;
+  }
+  
+  .logo-content {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+  }
+  
+  .welcome-heading {
+    font-size: 24px !important;
+  }
+  
+  .form-group {
+    margin-bottom: 10px !important;
+  }
+  
+  .divider {
+    margin: 14px 0 !important;
+  }
+  
+  .divider span {
+    font-size: 11px !important;
+  }
+  
+  /* Full width buttons */
+  .submit {
+    height: 44px !important;
+    border-radius: 10px !important;
+  }
+}
+
+/* Ultra-small screens (360px and below) */
+@media (max-width: 360px) {
+  .chat-title-text strong {
+    font-size: 12px !important;
+  }
+  
+  .filter {
+    padding: 6px 10px !important;
+    font-size: 10px !important;
+  }
+  
+  .conversation .name {
+    font-size: 12px !important;
+  }
+  
+  .conversation .preview {
+    display: none !important;
+  }
+  
+  .profile-dropdown {
+    min-width: 180px !important;
+  }
+  
+  .modal-header {
+    padding: 12px 10px !important;
+  }
+  
+  .modal-title {
+    font-size: 16px !important;
+  }
+}
+
+/* ===== LANDSCAPE MODE (Mobile) ===== */
+@media (max-width: 768px) and (orientation: landscape) {
+  .sidebar {
+    height: 100% !important;
+  }
+  
+  .content {
+    padding-top: 60px !important;
+  }
+  
+  .inbox-container {
+    gap: 8px !important;
+  }
+  
+  .conversation-list {
+    max-height: calc(100vh - 120px) !important;
+  }
+  
+  .chat-area {
+    min-height: calc(100vh - 120px) !important;
+  }
+  
+  .info-panel {
+    display: none !important;
+  }
+}
+
+/* ===== TOUCH DEVICES - LARGER TOUCH TARGETS ===== */
+@media (hover: none) and (pointer: coarse) {
+  button, a, .clickable {
+    min-height: 44px !important;
+    min-width: 44px !important;
+  }
+  
+  .chat-input button {
+    min-height: 44px !important;
+  }
+  
+  .action-btn {
+    min-height: 44px !important;
+  }
+  
+  .filter {
+    min-height: 40px !important;
+  }
+}
+
+/* ===== PRINT STYLES ===== */
+@media print {
+  .topbar, .sidebar, .chat-input, .info-panel {
+    display: none !important;
+  }
+  
+  body {
+    background: white !important;
+  }
+}
+
 .toolbar-btn:hover {
   background: #e5e7eb;
   color: #374151;

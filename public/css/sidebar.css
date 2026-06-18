@@ -112,3 +112,213 @@ html.ls-js .sidebar{visibility:visible;opacity:1}
 
 /* Smooth main margin transitions when sidebar toggles */
 .main{transition:margin-left .18s ease}
+
+/* ===== COMPREHENSIVE MOBILE RESPONSIVE FOR SIDEBAR ===== */
+
+@media (max-width: 768px) {
+  .ls-sidebar {
+    width: 70px !important;
+    min-width: 70px !important;
+    padding: 12px 4px !important;
+    transform: translateX(0) !important;
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    height: 100vh !important;
+    border-radius: 0 !important;
+  }
+  
+  .ls-sidebar.collapsed {
+    width: 70px !important;
+    min-width: 70px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover {
+    width: 250px !important;
+    min-width: 250px !important;
+    padding: 16px 12px !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
+  }
+  
+  .ls-top {
+    margin-bottom: 16px !important;
+    justify-content: center !important;
+  }
+  
+  .ls-top .logo {
+    width: 40px !important;
+    height: 40px !important;
+  }
+  
+  .ls-search {
+    display: none !important;
+  }
+  
+  .ls-menu-title {
+    display: none !important;
+  }
+  
+  .ls-menu > .ls-link,
+  .ls-group-header {
+    padding: 8px 10px !important;
+    justify-content: center !important;
+  }
+  
+  .ls-menu > .ls-link svg,
+  .ls-group-header .ls-link svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  
+  .ls-label {
+    display: none !important;
+  }
+  
+  .ls-toggle {
+    display: block !important;
+    position: fixed !important;
+    left: 12px !important;
+    top: 12px !important;
+    z-index: 3001 !important;
+    background: #ffffff !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 8px !important;
+    padding: 6px 8px !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1) !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .ls-toggle {
+    display: none !important;
+  }
+  
+  .main {
+    margin-left: 70px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .main {
+    margin-left: 250px !important;
+  }
+}
+
+@media (max-width: 576px) {
+  .ls-sidebar {
+    width: 60px !important;
+    min-width: 60px !important;
+    padding: 10px 2px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover {
+    width: 220px !important;
+    min-width: 220px !important;
+    padding: 14px 10px !important;
+  }
+  
+  .ls-top {
+    margin-bottom: 14px !important;
+  }
+  
+  .ls-top .logo {
+    width: 36px !important;
+    height: 36px !important;
+  }
+  
+  .ls-top .logo svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  
+  .ls-menu > .ls-link,
+  .ls-group-header {
+    padding: 6px 8px !important;
+    gap: 0 !important;
+  }
+  
+  .ls-menu > .ls-link svg,
+  .ls-group-header .ls-link svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+  
+  .ls-toggle {
+    left: 8px !important;
+    top: 8px !important;
+    padding: 4px 6px !important;
+    font-size: 18px !important;
+  }
+  
+  .main {
+    margin-left: 60px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .main {
+    margin-left: 220px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .ls-menu > .ls-link {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .ls-label {
+    display: block !important;
+    font-size: 12px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .ls-link {
+    gap: 10px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .ls-sidebar {
+    width: 56px !important;
+    min-width: 56px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover {
+    width: 200px !important;
+  }
+  
+  .ls-top {
+    margin-bottom: 12px !important;
+  }
+  
+  .ls-top .logo {
+    width: 32px !important;
+    height: 32px !important;
+  }
+  
+  .ls-menu {
+    gap: 6px !important;
+  }
+  
+  .ls-menu-group {
+    gap: 4px !important;
+  }
+  
+  .ls-menu > .ls-link,
+  .ls-group-header {
+    padding: 5px 6px !important;
+    border-radius: 8px !important;
+  }
+  
+  .main {
+    margin-left: 56px !important;
+  }
+  
+  .ls-sidebar.collapsed:hover .main {
+    margin-left: 200px !important;
+  }
+}
+
+/* ===== LANDSCAPE MODE ===== */
+@media (max-width: 768px) and (orientation: landscape) {
+  .ls-sidebar {
+    height: 100vh !important;
+  }
+  
+  .ls-menu {
+    overflow-y: auto !important;
+    max-height: calc(100vh - 100px) !important;
+  }
+}

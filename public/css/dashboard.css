@@ -199,6 +199,394 @@ html,body{min-height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,A
   .orders-display-table td { padding: 10px 12px; }
 }
 
+/* ===== TABLETS (768px) ===== */
+@media (max-width: 768px) {
+  .main-area {
+    padding-top: 90px !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  
+  .dash-header {
+    min-height: 64px !important;
+    padding: 10px 14px !important;
+    gap: 12px !important;
+  }
+  
+  .dash-header-left {
+    flex: 1;
+  }
+  
+  .search {
+    min-width: 200px;
+  }
+  
+  .search input {
+    font-size: 14px;
+    height: 40px;
+  }
+  
+  .icon-btn, .notification-btn, .profile-btn {
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 10px !important;
+  }
+  
+  .notif-popup {
+    top: 56px !important;
+    width: min(90vw, 320px) !important;
+    max-height: 60vh !important;
+  }
+  
+  .stat-card {
+    flex: 0 1 calc(50% - 8px) !important;
+    gap: 12px !important;
+    padding: 16px !important;
+  }
+  
+  .stat-icon {
+    width: 50px !important;
+    height: 50px !important;
+  }
+  
+  .stat-icon svg {
+    width: 24px !important;
+    height: 24px !important;
+  }
+  
+  .stat-value {
+    font-size: 24px !important;
+  }
+  
+  .card {
+    padding: 14px !important;
+  }
+  
+  .stats {
+    gap: 8px !important;
+  }
+  
+  .stat {
+    padding: 10px !important;
+  }
+}
+
+/* ===== PHONES (576px) ===== */
+@media (max-width: 576px) {
+  html, body {
+    font-size: 13px !important;
+  }
+  
+  .main-area {
+    padding-top: 80px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  
+  .dash-header {
+    min-height: 56px !important;
+    padding: 8px 10px !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+  
+  .dash-header-left {
+    width: 100% !important;
+    order: 1;
+  }
+  
+  .dash-header-right {
+    width: 100% !important;
+    order: 2;
+    gap: 6px !important;
+  }
+  
+  .search {
+    min-width: 0;
+    width: 100% !important;
+  }
+  
+  .search input {
+    height: 36px !important;
+    font-size: 13px !important;
+    padding: 8px 12px 8px 36px !important;
+  }
+  
+  .search-icon {
+    width: 16px !important;
+    height: 16px !important;
+    left: 10px !important;
+  }
+  
+  .icon-btn, .notification-btn, .profile-btn {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 8px !important;
+    font-size: 12px !important;
+  }
+  
+  .dash-main {
+    gap: 12px !important;
+  }
+  
+  .overview {
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+  
+  .secondary {
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+  
+  .stat-card {
+    flex: 0 1 100% !important;
+    gap: 12px !important;
+    padding: 14px !important;
+    flex-direction: row !important;
+  }
+  
+  .stat-icon {
+    width: 45px !important;
+    height: 45px !important;
+    flex-shrink: 0;
+  }
+  
+  .stat-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+  
+  .stat-value {
+    font-size: 20px !important;
+  }
+  
+  .stat-label {
+    font-size: 11px !important;
+  }
+  
+  .stat-change {
+    font-size: 11px !important;
+  }
+  
+  .card {
+    padding: 12px !important;
+    border-radius: 10px !important;
+  }
+  
+  .card h3 {
+    font-size: 14px !important;
+    margin-bottom: 8px !important;
+  }
+  
+  .card.messages {
+    max-width: 100% !important;
+    min-width: auto !important;
+  }
+  
+  .recent-messages-list {
+    max-height: 180px !important;
+  }
+  
+  .recent-messages-list li {
+    padding: 8px !important;
+    gap: 8px !important;
+  }
+  
+  .recent-messages-list li .avatar {
+    width: 36px !important;
+    height: 36px !important;
+    font-size: 12px !important;
+  }
+  
+  .recent-messages-list li .message-content strong {
+    font-size: 12px !important;
+  }
+  
+  .recent-messages-list li .message-snippet {
+    font-size: 12px !important;
+  }
+  
+  .mini-chart {
+    height: 60px !important;
+  }
+  
+  .chart-legend {
+    font-size: 11px !important;
+  }
+  
+  .notif-popup {
+    width: min(92vw, 300px) !important;
+    padding: 12px !important;
+    top: 48px !important;
+  }
+  
+  .notif-header {
+    margin-bottom: 10px !important;
+  }
+  
+  .notif-header h4 {
+    font-size: 14px !important;
+  }
+  
+  .notif-list {
+    max-height: 240px !important;
+    gap: 10px !important;
+  }
+  
+  .notif-item {
+    padding: 10px !important;
+    gap: 8px !important;
+  }
+  
+  .profile-dropdown {
+    min-width: 180px !important;
+    right: -15px !important;
+    top: 42px !important;
+    padding: 10px !important;
+  }
+  
+  .profile-info {
+    padding: 8px 12px !important;
+    font-size: 12px !important;
+  }
+  
+  .status-btn {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+  }
+  
+  .profile-action {
+    padding: 8px 12px !important;
+    gap: 8px !important;
+  }
+  
+  .profile-icon {
+    font-size: 14px !important;
+  }
+}
+
+/* ===== SMALL PHONES (480px) ===== */
+@media (max-width: 480px) {
+  .sidebar {
+    display: none !important;
+  }
+  
+  .main-area {
+    padding-top: 72px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+  
+  .dash-header {
+    min-height: 52px !important;
+    padding: 6px 8px !important;
+  }
+  
+  .search {
+    order: 3;
+    width: 100% !important;
+    margin-top: 6px !important;
+  }
+  
+  .search input {
+    height: 34px !important;
+    font-size: 12px !important;
+  }
+  
+  .icon-btn, .notification-btn, .profile-btn {
+    width: 34px !important;
+    height: 34px !important;
+    font-size: 11px !important;
+  }
+  
+  .stat-card {
+    padding: 12px !important;
+    gap: 10px !important;
+  }
+  
+  .stat-icon {
+    width: 40px !important;
+    height: 40px !important;
+  }
+  
+  .stat-icon svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  
+  .stat-value {
+    font-size: 18px !important;
+  }
+  
+  .card {
+    padding: 10px !important;
+    border-radius: 8px !important;
+  }
+  
+  .card h3 {
+    font-size: 13px !important;
+  }
+  
+  .recent-messages-list {
+    gap: 6px !important;
+    max-height: 160px !important;
+  }
+  
+  .dashboard-header h2 {
+    font-size: 12px !important;
+  }
+  
+  .period {
+    font-size: 10px !important;
+  }
+  
+  .notif-popup {
+    width: min(95vw, 280px) !important;
+    padding: 10px !important;
+  }
+  
+  .profile-dropdown {
+    min-width: 160px !important;
+    padding: 8px !important;
+  }
+}
+
+/* ===== ULTRA-SMALL PHONES (360px) ===== */
+@media (max-width: 360px) {
+  .stat-card {
+    padding: 10px !important;
+  }
+  
+  .stat-icon {
+    width: 36px !important;
+    height: 36px !important;
+  }
+  
+  .recent-messages-list li .message-snippet {
+    display: none !important;
+  }
+  
+  .profile-dropdown {
+    right: -20px !important;
+  }
+}
+
+/* ===== LANDSCAPE MODE ===== */
+@media (max-width: 768px) and (orientation: landscape) {
+  .main-area {
+    padding-top: 80px !important;
+  }
+  
+  .stat-card {
+    flex: 0 1 calc(50% - 6px) !important;
+  }
+  
+  .recent-messages-list {
+    max-height: 120px !important;
+  }
+}
+
 /* Messages chart styling */
 .messages-chart{display:flex;flex-direction:column;gap:8px}
 .messages-chart canvas{width:100% !important;height:360px !important;border-radius:12px;background:transparent}
