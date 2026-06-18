@@ -279,30 +279,6 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
             </div>
             <!-- EMAIL LIST -->
             <div class="conversation-list email-list">
-                <div class="conversation email-item active">
-                    <div class="avatar">JD</div>
-                    <div class="conv-meta email-meta">
-                        <div class="name email-from">John Doe</div>
-                        <div class="preview email-subject">Question about order #12345</div>
-                        <div class="meta email-time">10:30 AM</div>
-                    </div>
-                </div>
-                <div class="conversation email-item">
-                    <div class="avatar">SM</div>
-                    <div class="conv-meta email-meta">
-                        <div class="name email-from">Sarah Miller</div>
-                        <div class="preview email-subject">Feedback on service</div>
-                        <div class="meta email-time">Yesterday</div>
-                    </div>
-                </div>
-                <div class="conversation email-item">
-                    <div class="avatar">AC</div>
-                    <div class="conv-meta email-meta">
-                        <div class="name email-from">Admin Crew</div>
-                        <div class="preview email-subject">System Update Notice</div>
-                        <div class="meta email-time">2 days ago</div>
-                    </div>
-                </div>
             </div>
             <!-- EMAIL VIEWER PANEL -->
             <div class="chat-panel email-viewer">
@@ -1217,14 +1193,14 @@ if (quickEscalateBtn) quickEscalateBtn.onclick = escalateCurrentChat;
 const EMAIL_API_BASE = '/api/email';
 let emailSectionInitialized = false;
 let currentEmail = null;
-let supportEmail = 'support@livesupport.com';
+let supportEmail = 'cyberincognito16@gmail.com';
 
 async function loadSupportEmail() {
   try {
     const response = await fetch(`${EMAIL_API_BASE}/inbox`);
     const data = await response.json();
     if (data.emails && data.emails[0]) {
-      supportEmail = data.emails[0].to || 'support@livesupport.com';
+      supportEmail = data.emails[0].to || 'cyberincognito16@gmail.com';
       document.getElementById('email-to').textContent = supportEmail;
     }
   } catch (e) {
@@ -1361,7 +1337,7 @@ function setEmailViewer(email, item) {
   `;
 
   document.getElementById('email-from').textContent = email.fromEmail || email.from;
-  document.getElementById('email-to').textContent = supportEmail || 'support@livesupport.com';
+  document.getElementById('email-to').textContent = supportEmail || 'cyberincognito16@gmail.com';
   document.getElementById('email-date').textContent = email.date || 'Today';
   document.getElementById('email-subject').textContent = email.subject;
   document.getElementById('email-reply-text').value = '';
@@ -1401,7 +1377,7 @@ function initializeEmailListItems() {
         `;
         
         document.getElementById('email-from').textContent = from;
-        document.getElementById('email-to').textContent = 'support@livesupport.com';
+        document.getElementById('email-to').textContent = 'cyberincognito16@gmail.com';
         document.getElementById('email-date').textContent = time || 'Today';
         document.getElementById('email-subject').textContent = subject;
         document.getElementById('email-reply-text').value = '';

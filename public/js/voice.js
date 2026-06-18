@@ -422,7 +422,6 @@
       staffPanel.querySelectorAll('.voice-btn-ptt').forEach(btn => {
         btn.addEventListener('mousedown', onPTTStart);
         btn.addEventListener('mouseup', onPTTEnd);
-        btn.addEventListener('mouseleave', onPTTEnd);
       });
     }
 

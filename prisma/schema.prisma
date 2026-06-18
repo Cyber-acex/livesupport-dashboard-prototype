@@ -425,6 +425,28 @@ model DeliveryIssue {
   @@index([conversation_id])
 }
 
+model Email {
+  id            Int       @id @default(autoincrement())
+  from          String    @db.VarChar(255)
+  fromEmail     String    @db.VarChar(255)
+  to            String    @db.VarChar(255)
+  subject       String    @db.VarChar(255)
+  body          String    @db.Text
+  preview       String?   @db.Text
+  date          DateTime? @db.Timestamp(0)
+  isRead        Boolean   @default(false)
+  isImportant   Boolean   @default(false)
+  isArchived    Boolean   @default(false)
+  isSpam        Boolean   @default(false)
+  created_at    DateTime  @default(now()) @db.Timestamp(0)
+  updated_at    DateTime  @updatedAt @db.Timestamp(0)
+
+  @@map("emails")
+  @@index([fromEmail])
+  @@index([to])
+  @@index([created_at])
+}
+
 model StaffProfile {
   id              Int       @id @default(autoincrement())
   user_id         Int       @unique
