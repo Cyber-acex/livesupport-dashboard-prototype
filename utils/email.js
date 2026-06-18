@@ -66,10 +66,15 @@ export async function sendPasswordResetEmail(email, resetToken, resetLink) {
     `;
 
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `LiveSupport <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Password Reset Request - LiveSupport',
       html: htmlContent,
+      replyTo: process.env.EMAIL_USER,
+      headers: {
+        'X-Priority': '3',
+        'X-Mailer': 'LiveSupport Email System',
+      },
     };
 
     const result = await getTransporter().sendMail(mailOptions);
@@ -108,10 +113,15 @@ export async function sendPasswordChangedEmail(email, userName) {
     `;
 
     const mailOptions = {
-      from: process.env.EMAIL_USER,
+      from: `LiveSupport <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Password Changed - LiveSupport',
       html: htmlContent,
+      replyTo: process.env.EMAIL_USER,
+      headers: {
+        'X-Priority': '3',
+        'X-Mailer': 'LiveSupport Email System',
+      },
     };
 
     const result = await getTransporter().sendMail(mailOptions);
@@ -132,12 +142,21 @@ export async function sendEmail({ to, subject, text, html, from = process.env.EM
       return { success: false, error: 'Missing recipient or subject' };
     }
 
+    // Format "From" header with display name to improve deliverability
+    const fromDisplay = `LiveSupport <${process.env.EMAIL_USER}>`;
+
     const mailOptions = {
-      from,
+      from: from === process.env.EMAIL_USER ? fromDisplay : from,
       to,
       subject,
       text: text || undefined,
       html: html || undefined,
+      replyTo: process.env.EMAIL_USER, // Allow customers to reply easily
+      headers: {
+        'X-Priority': '3', // Normal priority
+        'X-Mailer': 'LiveSupport Email System',
+        'List-Unsubscribe': `<mailto:${process.env.EMAIL_USER}?subject=unsubscribe>`, // Helps with spam filtering
+      },
     };
 
     const result = await getTransporter().sendMail(mailOptions);
