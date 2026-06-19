@@ -7,6 +7,7 @@ async function seedUsers() {
     const usersToCreate = [
       { email: 'admin@livesupport.com', password: 'admin123', name: 'Admin User', role: 'admin' },
       { email: 'cyberincognito15@gmail.com', password: '110089', name: 'Cyber', role: 'admin' },
+      { email: 'login@livesupport.com', password: '107061', name: 'Login User', role: 'admin' },
       { email: 'agent1@livesupport.com', password: 'password123', name: 'John Agent', role: 'agent' },
       { email: 'agent2@livesupport.com', password: 'password123', name: 'Jane Staff', role: 'agent' },
       { email: 'viewer@livesupport.com', password: 'password123', name: 'View Only', role: 'viewer' },

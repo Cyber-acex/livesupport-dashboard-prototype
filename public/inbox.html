@@ -317,9 +317,9 @@ Your order is currently out for delivery and should arrive within 15 minutes. Th
                 </div>
                 <h3>Email Actions</h3>
                 <div class="actions">
-                    <button class="action-btn" id="email-mark-important">Mark as Important</button>
-                    <button class="action-btn warning" id="email-move-spam">Move to Spam</button>
-                    <button class="action-btn success" id="email-create-ticket">Create Ticket</button>
+                    <button class="action-btn" id="email-mark-important">⭐ Mark as Important</button>
+                    <button class="action-btn warning" id="email-move-spam">⚠️ Move to Spam</button>
+                    <button class="action-btn success" id="email-create-ticket">📄 Create Receipt</button>
                 </div>
             </div>
         </div>
@@ -1390,7 +1390,7 @@ function initializeEmailListItems() {
 function initializeEmailFilters() {
   const filterButtons = document.querySelectorAll('#emailSection .filters .filter[data-email-filter]');
   filterButtons.forEach(btn => {
-    btn.addEventListener('click', function() {
+    btn.addEventListener('click', async function() {
       filterButtons.forEach(b => b.classList.remove('active'));
       this.classList.add('active');
       
@@ -1398,10 +1398,41 @@ function initializeEmailFilters() {
       console.log('Filter by:', filterType);
       
       const emailList = document.querySelector('.email-list');
-      emailList.style.opacity = '0.6';
-      setTimeout(() => {
-        emailList.style.opacity = '1';
-      }, 300);
+      emailList.innerHTML = '<div class="no-chats-message">Loading filtered emails...</div>';
+      
+      try {
+        let response;
+        if (filterType === 'all') {
+          // Load all emails
+          response = await fetch(`${EMAIL_API_BASE}/inbox`);
+        } else {
+          // Load filtered emails from backend
+          response = await fetch(`${EMAIL_API_BASE}/filter/${filterType}`);
+        }
+        
+        const data = await response.json();
+        
+        if (!data.success || !Array.isArray(data.emails)) {
+          emailList.innerHTML = '<div class="no-chats-message">No emails found.</div>';
+          return;
+        }
+        
+        emailList.innerHTML = '';
+        
+        if (data.emails.length === 0) {
+          emailList.innerHTML = `<div class="no-chats-message">No ${filterType} emails.</div>`;
+          return;
+        }
+        
+        data.emails.forEach(email => {
+          emailList.appendChild(renderEmailItem(email));
+        });
+        
+        initializeEmailListItems();
+      } catch (error) {
+        console.error('Filter error:', error);
+        emailList.innerHTML = '<div class="no-chats-message">Error loading emails.</div>';
+      }
     });
   });
 
@@ -1431,6 +1462,7 @@ function initializeEmailFilters() {
         const data = await response.json();
         if (data.success) {
           showNotification('Test email sent successfully', 'success');
+          await loadEmailInbox();
         } else {
           showNotification('Failed to send test email', 'error');
         }
@@ -1541,11 +1573,12 @@ function initializeEmailHeaderActions() {
   const headerActions = document.querySelectorAll('.email-viewer .chat-header-right .email-action-btn');
   
   headerActions.forEach((btn, index) => {
-    btn.addEventListener('click', function(e) {
+    btn.addEventListener('click', async function(e) {
       e.stopPropagation();
       
       const subject = document.getElementById('emailViewerSubject').textContent;
       const from = document.getElementById('email-from').textContent;
+      const emailId = currentEmail?.id;
       
       if (index === 0) {
         // Reply
@@ -1555,51 +1588,157 @@ function initializeEmailHeaderActions() {
       } else if (index === 1) {
         // Archive
         console.log('Archive email from:', from);
-        showNotification(`Email from ${from} archived`, 'success');
-        removeEmailItem();
+        if (emailId) {
+          await archiveEmailAction(emailId, from);
+        }
       } else if (index === 2) {
         // Delete
         console.log('Delete email from:', from);
-        if (confirm(`Delete email from ${from}?`)) {
-          showNotification(`Email deleted`, 'success');
-          removeEmailItem();
+        if (emailId && confirm(`Delete email from ${from}?`)) {
+          await deleteEmailAction(emailId, from);
         }
       }
     });
   });
 }
 
+// Delete email from database and UI
+async function deleteEmailAction(emailId, senderName) {
+  try {
+    const response = await fetch(`${EMAIL_API_BASE}/${emailId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to delete email');
+    }
+
+    showNotification(`Email from ${senderName} deleted`, 'success');
+    removeEmailItem();
+    await loadEmailInbox(); // Refresh the email list
+  } catch (error) {
+    console.error('Delete email error:', error);
+    showNotification(`Failed to delete email: ${error.message}`, 'error');
+  }
+}
+
+// Archive email
+async function archiveEmailAction(emailId, senderName) {
+  try {
+    const response = await fetch(`${EMAIL_API_BASE}/${emailId}/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ isArchived: true })
+    });
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error || 'Failed to archive email');
+    }
+
+    showNotification(`Email from ${senderName} archived`, 'success');
+    removeEmailItem();
+    await loadEmailInbox(); // Refresh the email list
+  } catch (error) {
+    console.error('Archive email error:', error);
+    showNotification(`Failed to archive email: ${error.message}`, 'error');
+  }
+}
+
 // Email info panel actions
 function initializeEmailInfoPanelActions() {
   const markImportantBtn = document.getElementById('email-mark-important');
   const moveSpamBtn = document.getElementById('email-move-spam');
-  const createTicketBtn = document.getElementById('email-create-ticket');
+  const createReceiptBtn = document.getElementById('email-create-ticket');
   
   if (markImportantBtn) {
-    markImportantBtn.addEventListener('click', function() {
-      const isImportant = this.classList.toggle('important');
+    markImportantBtn.addEventListener('click', async function() {
+      const emailId = currentEmail?.id;
+      if (!emailId) {
+        showNotification('Please select an email first', 'warning');
+        return;
+      }
+      
       const from = document.getElementById('email-from').textContent;
-      this.textContent = isImportant ? '⭐ Mark as Regular' : '⭐ Mark as Important';
-      showNotification(`Email from ${from} marked as ${isImportant ? 'important' : 'regular'}`, 'info');
-    });
-  }
-  
-  if (moveSpamBtn) {
-    moveSpamBtn.addEventListener('click', function() {
-      const from = document.getElementById('email-from').textContent;
-      if (confirm(`Move email from ${from} to spam?`)) {
-        showNotification(`Email moved to spam`, 'warning');
-        removeEmailItem();
+      
+      try {
+        const response = await fetch(`${EMAIL_API_BASE}/${emailId}/important`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isImportant: true })
+        });
+
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to mark as important');
+        }
+
+        // Update button appearance
+        this.classList.add('important');
+        this.textContent = '⭐ Marked as Important';
+        
+        showNotification(`Email from ${from} marked as important ⭐`, 'success');
+        
+        // Refresh email list to update sidebar
+        await loadEmailInbox();
+      } catch (error) {
+        console.error('Mark important error:', error);
+        showNotification(`Failed to mark as important: ${error.message}`, 'error');
       }
     });
   }
   
-  if (createTicketBtn) {
-    createTicketBtn.addEventListener('click', function() {
+  if (moveSpamBtn) {
+    moveSpamBtn.addEventListener('click', async function() {
+      const emailId = currentEmail?.id;
+      if (!emailId) {
+        showNotification('Please select an email first', 'warning');
+        return;
+      }
+      
+      const from = document.getElementById('email-from').textContent;
+      if (!confirm(`Move email from ${from} to spam?`)) {
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${EMAIL_API_BASE}/${emailId}/spam`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isSpam: true })
+        });
+
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Failed to move to spam');
+        }
+
+        showNotification(`Email from ${from} moved to spam ⚠️`, 'warning');
+        removeEmailItem();
+        await loadEmailInbox(); // Refresh email list to remove from current view
+      } catch (error) {
+        console.error('Move to spam error:', error);
+        showNotification(`Failed to move to spam: ${error.message}`, 'error');
+      }
+    });
+  }
+  
+  if (createReceiptBtn) {
+    createReceiptBtn.addEventListener('click', function() {
       const subject = document.getElementById('email-subject').textContent;
       const from = document.getElementById('email-from').textContent;
-      console.log('Creating ticket from email:', subject);
-      showNotification(`Ticket created from email: ${subject}`, 'success');
+      console.log('Creating receipt from email:', subject);
+      
+      // Open the Create Receipt modal using the existing open button mechanism
+      const openBtn = document.getElementById('openTicketModal');
+      if (openBtn) {
+        openBtn.click();
+        showNotification(`Receipt modal opened for: ${subject}`, 'info');
+      } else {
+        showNotification('Receipt modal not found', 'error');
+      }
     });
   }
 }

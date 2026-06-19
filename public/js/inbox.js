@@ -24,6 +24,52 @@ const socket = io();
 let socketConnected = false;
 let messagePollingInterval = null;
 
+// ATTACH CRITICAL LISTENERS IMMEDIATELY - Before any messages arrive
+// Track last message timestamp for polling
+let lastMessageTimestamp = Date.now();
+
+// Listen for new messages first (critical - must be before any other setup)
+socket.on("newMessage", msg => {
+    // If the message belongs to the current conversation, append it
+    if (!msg || !msg.conversation_id) return;
+
+    console.log('[Socket.IO] New message received:', msg.conversation_id, msg.message);
+    
+    const isCurrentConversation = String(msg.conversation_id) === String(currentConversationId);
+    if (isCurrentConversation) {
+        appendMessage(msg);
+        clearConversationUnreadBadge(msg.conversation_id);
+        // Update last message timestamp
+        lastMessageTimestamp = Math.max(lastMessageTimestamp, new Date(msg.created_at || Date.now()).getTime());
+    }
+
+    // desktop notification for any new message event
+    if (localStorage.getItem('msgAlert') === 'true' && !document.hasFocus() && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('LiveSupport - New Message', {
+            body: `New message: ${msg.message}`,
+            icon: '/favicon.png'
+        });
+    }
+
+    if (msg.sender !== 'sent' && !isCurrentConversation) {
+        if (localStorage.getItem('soundAlert') === 'true') {
+            playNotificationSound();
+        }
+        showNotification("New message received from a customer!");
+    }
+
+    // Always update conversation entry
+    updateConversationEntry(msg, isCurrentConversation);
+    
+    // Refresh conversations list to show updated preview/timestamp
+    const activeFilter = getActiveInboxFilter();
+    loadConversations(activeFilter).catch(err => console.error('Failed to refresh conversations:', err));
+
+    if (isCurrentConversation && msg.sender !== 'sent') {
+        fetchAISuggestion(currentConversationId);
+    }
+});
+
 socket.on('connect', () => {
     console.log('[Socket.IO] Connected:', socket.id);
     socketConnected = true;
@@ -1556,13 +1602,6 @@ function playNotificationSound(beepCount = 2, beepDuration = 0.18, gap = 0.18) {
     }
 }
 
-// ---------------------------
-// Socket.IO listener for new messages
-// ---------------------------
-
-// Track last message timestamp for polling
-let lastMessageTimestamp = Date.now();
-
 // Fallback polling mechanism when socket.io is unavailable
 function startMessagePolling() {
     console.log('[Polling] Starting fallback message polling...');
@@ -1612,47 +1651,6 @@ socket.on("messages:refreshed", (data) => {
             const lastMsg = data.messages[data.messages.length - 1];
             lastMessageTimestamp = Math.max(lastMessageTimestamp, new Date(lastMsg.created_at || Date.now()).getTime());
         }
-    }
-});
-
-socket.on("newMessage", msg => {
-    // If the message belongs to the current conversation, append it
-    if (!msg || !msg.conversation_id) return;
-
-    console.log('[Socket.IO] New message received:', msg.conversation_id, msg.message);
-    
-    const isCurrentConversation = String(msg.conversation_id) === String(currentConversationId);
-    if (isCurrentConversation) {
-        appendMessage(msg);
-        clearConversationUnreadBadge(msg.conversation_id);
-        // Update last message timestamp
-        lastMessageTimestamp = Math.max(lastMessageTimestamp, new Date(msg.created_at || Date.now()).getTime());
-    }
-
-    // desktop notification for any new message event
-    if (localStorage.getItem('msgAlert') === 'true' && !document.hasFocus() && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('LiveSupport - New Message', {
-            body: `New message: ${msg.message}`,
-            icon: '/favicon.png'
-        });
-    }
-
-    if (msg.sender !== 'sent' && !isCurrentConversation) {
-        if (localStorage.getItem('soundAlert') === 'true') {
-            playNotificationSound();
-        }
-        showNotification("New message received from a customer!");
-    }
-
-    // Always update conversation entry
-    updateConversationEntry(msg, isCurrentConversation);
-    
-    // Refresh conversations list to show updated preview/timestamp
-    const activeFilter = getActiveInboxFilter();
-    loadConversations(activeFilter).catch(err => console.error('Failed to refresh conversations:', err));
-
-    if (isCurrentConversation && msg.sender !== 'sent') {
-        fetchAISuggestion(currentConversationId);
     }
 });
 

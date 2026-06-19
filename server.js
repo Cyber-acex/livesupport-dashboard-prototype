@@ -43,6 +43,9 @@ const voiceUsers = new Map(); // socketId -> { userId, name, role, socketId, ava
 const voiceSessions = new Map(); // sessionId -> { id, type, createdBy, status, room, channelId, participants: Map<socketId, {...}>, startedAt, endedAt }
 const voiceChannels = new Map(); // channelId -> { id, name, description, createdAt, members: Set<socketId>, activeSessionId }
 
+// Dashboard snapshots storage
+const dashboardSnapshots = new Map(); // name -> { data, saved_at }
+
 const defaultVoiceChannels = [
     { id: 1, name: 'General Staff', description: 'Open staff channel for general coordination', createdAt: new Date().toISOString() },
     { id: 2, name: 'Support Team', description: 'Support staff only', createdAt: new Date().toISOString() },
@@ -591,48 +594,22 @@ app.get('/api/ai-feedback', async (req, res) => {
     }
 });
 
-// Email inbox storage for demonstration
-const emailInbox = [
-    {
-        id: 1,
-        from: 'John Doe',
-        fromEmail: 'john.doe@example.com',
-        to: 'support@livesupport.com',
-        subject: 'Question about order #12345',
-        preview: 'I wanted to check the status of my delivery and confirm the ETA.',
-        body: 'Hello Support,\n\nI wanted to check the status of my delivery and confirm the ETA. The order number is 12345.\n\nThanks,\nJohn',
-        date: 'Today 10:30 AM',
-        unread: true
-    },
-    {
-        id: 2,
-        from: 'Sarah Miller',
-        fromEmail: 'sarah.miller@example.com',
-        to: 'support@livesupport.com',
-        subject: 'Feedback on service',
-        preview: 'Your team was very helpful but I had a question about the payment receipt.',
-        body: 'Hi there,\n\nYour team was very helpful but I had a question about the payment receipt for my last order. Could you please clarify the delivery fee?\n\nRegards,\nSarah',
-        date: 'Yesterday',
-        unread: false
-    },
-    {
-        id: 3,
-        from: 'Admin Crew',
-        fromEmail: 'admin@partner.com',
-        to: 'support@livesupport.com',
-        subject: 'System Update Notice',
-        preview: 'We will perform maintenance tonight from 11pm to 1am.',
-        body: 'Hello Team,\n\nWe will perform maintenance tonight from 11pm to 1am. Services may be temporarily unavailable.\n\nBest,\nAdmin Crew',
-        date: '2 days ago',
-        unread: false
+// Email inbox - now using database
+// Get all emails from database
+app.get('/api/email/inbox', async (req, res) => {
+    try {
+        const emails = await prisma.email.findMany({
+            orderBy: { created_at: 'desc' },
+            take: 100
+        });
+        res.json({ success: true, emails });
+    } catch (err) {
+        console.error('Failed to fetch emails from database:', err);
+        res.status(500).json({ success: false, error: err.message || 'Failed to fetch emails' });
     }
-];
-let nextEmailId = 4;
-
-app.get('/api/email/inbox', (req, res) => {
-    res.json({ success: true, emails: emailInbox });
 });
 
+// Send email and save to database
 app.post('/api/email/send', express.json(), async (req, res) => {
     try {
         const { to, subject, message } = req.body || {};
@@ -651,13 +628,28 @@ app.post('/api/email/send', express.json(), async (req, res) => {
             return res.status(500).json({ success: false, error: emailResult.error || 'Email send failed' });
         }
 
-        res.json({ success: true, message: 'Email sent', messageId: emailResult.messageId });
+        // Save sent email to database
+        const savedEmail = await prisma.email.create({
+            data: {
+                from: 'Support Team',
+                fromEmail: 'support@livesupport.com',
+                to,
+                subject,
+                body: message,
+                preview: message.slice(0, 100),
+                date: new Date(),
+                isRead: true // Mark sent emails as read
+            }
+        });
+
+        res.json({ success: true, message: 'Email sent', messageId: emailResult.messageId, email: savedEmail });
     } catch (err) {
         console.error('email send error', err);
         res.status(500).json({ success: false, error: err.message || 'internal_error' });
     }
 });
 
+// Receive email and save to database
 app.post('/api/email/receive', express.json(), async (req, res) => {
     try {
         const { from, fromEmail, subject, body, preview, date } = req.body || {};
@@ -665,27 +657,26 @@ app.post('/api/email/receive', express.json(), async (req, res) => {
             return res.status(400).json({ success: false, error: 'Missing required fields: from, fromEmail, subject, body' });
         }
 
-        const newEmail = {
-            id: nextEmailId++,
-            from,
-            fromEmail,
-            to: 'support@livesupport.com',
-            subject,
-            preview: preview || body.slice(0, 80),
-            body,
-            date: date || new Date().toLocaleString(),
-            unread: true
-        };
+        const newEmail = await prisma.email.create({
+            data: {
+                from,
+                fromEmail,
+                to: 'support@livesupport.com',
+                subject,
+                preview: preview || body.slice(0, 100),
+                body,
+                date: date ? new Date(date) : new Date(),
+                isRead: false
+            }
+        });
 
-        emailInbox.unshift(newEmail);
-        
         // Broadcast email received via Socket.IO for real-time updates
         try {
             io.emit('email:received', newEmail);
         } catch (e) {
             console.log('Socket broadcast warning:', e.message);
         }
-        
+
         res.json({ success: true, email: newEmail });
     } catch (err) {
         console.error('email receive error', err);
@@ -693,11 +684,16 @@ app.post('/api/email/receive', express.json(), async (req, res) => {
     }
 });
 
-// Helper function to sync Gmail emails
+// Helper function to sync Gmail emails to database
 async function syncGmailEmails(broadcast = true) {
     try {
+        if (!prisma) {
+            console.warn('⚠️ Prisma client not ready yet, skipping email sync');
+            return { success: false, synced: 0, error: 'Prisma client not initialized' };
+        }
+
         console.log('🔄 Starting Gmail email sync...');
-        const result = await fetchGmailEmails(10);
+        const result = await fetchGmailEmails(100);  // Fetch up to 100 emails per sync
         console.log('Gmail sync result:', result);
 
         if (!result.success) {
@@ -709,18 +705,32 @@ async function syncGmailEmails(broadcast = true) {
             console.log('⚠️ No emails in result');
             return { success: true, synced: 0 };
         }
-        
+
         console.log(`📧 Found ${result.emails.length} emails from Gmail`);
 
         let syncCount = 0;
         for (const gmailEmail of result.emails) {
-            const exists = emailInbox.some(e => e.fromEmail === gmailEmail.fromEmail && e.subject === gmailEmail.subject);
+            // Check if email already exists in database
+            const exists = await prisma.email.findFirst({
+                where: {
+                    fromEmail: gmailEmail.fromEmail,
+                    subject: gmailEmail.subject
+                }
+            });
+
             if (!exists) {
-                const newEmail = {
-                    id: nextEmailId++,
-                    ...gmailEmail
-                };
-                emailInbox.unshift(newEmail);
+                const newEmail = await prisma.email.create({
+                    data: {
+                        from: gmailEmail.from,
+                        fromEmail: gmailEmail.fromEmail,
+                        to: gmailEmail.to || 'cyberincognito16@gmail.com',
+                        subject: gmailEmail.subject,
+                        body: gmailEmail.body,
+                        preview: gmailEmail.preview || gmailEmail.body.slice(0, 100),
+                        date: gmailEmail.date ? new Date(gmailEmail.date) : new Date(),
+                        isRead: false
+                    }
+                });
                 syncCount++;
 
                 if (broadcast) {
@@ -743,6 +753,7 @@ async function syncGmailEmails(broadcast = true) {
     }
 }
 
+// Manual Gmail sync endpoint
 app.post('/api/email/sync', async (req, res) => {
     try {
         console.log('Starting email sync from Gmail (manual)...');
@@ -752,10 +763,129 @@ app.post('/api/email/sync', async (req, res) => {
             return res.status(500).json({ success: false, error: result.error });
         }
 
-        res.json({ success: true, synced: result.synced, total: emailInbox.length, emails: emailInbox });
+        // Get updated email list from database
+        const emails = await prisma.email.findMany({
+            orderBy: { created_at: 'desc' },
+            take: 100
+        });
+
+        res.json({ success: true, synced: result.synced, total: emails.length, emails });
     } catch (err) {
         console.error('email sync error', err);
         res.status(500).json({ success: false, error: err.message || 'internal_error' });
+    }
+});
+
+// Get emails with filter
+app.get('/api/email/filter/:filter', async (req, res) => {
+    try {
+        const { filter } = req.params;
+        let whereClause = {};
+
+        switch (filter.toLowerCase()) {
+            case 'unread':
+                whereClause = { isRead: false };
+                break;
+            case 'important':
+                whereClause = { isImportant: true };
+                break;
+            case 'archived':
+                whereClause = { isArchived: true };
+                break;
+            case 'spam':
+                whereClause = { isSpam: true };
+                break;
+            default:
+                whereClause = {};
+        }
+
+        const emails = await prisma.email.findMany({
+            where: whereClause,
+            orderBy: { created_at: 'desc' },
+            take: 100
+        });
+
+        res.json({ success: true, emails });
+    } catch (err) {
+        console.error('Email filter error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Mark email as read
+app.post('/api/email/:id/read', express.json(), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const email = await prisma.email.update({
+            where: { id: parseInt(id) },
+            data: { isRead: true }
+        });
+        res.json({ success: true, email });
+    } catch (err) {
+        console.error('Failed to mark email as read:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Mark email as important
+app.post('/api/email/:id/important', express.json(), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isImportant } = req.body;
+        const email = await prisma.email.update({
+            where: { id: parseInt(id) },
+            data: { isImportant: isImportant !== false }
+        });
+        res.json({ success: true, email });
+    } catch (err) {
+        console.error('Failed to toggle important:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Mark email as archived
+app.post('/api/email/:id/archive', express.json(), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isArchived } = req.body;
+        const email = await prisma.email.update({
+            where: { id: parseInt(id) },
+            data: { isArchived: isArchived !== false }
+        });
+        res.json({ success: true, email });
+    } catch (err) {
+        console.error('Failed to archive email:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Mark email as spam
+app.post('/api/email/:id/spam', express.json(), async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isSpam } = req.body;
+        const email = await prisma.email.update({
+            where: { id: parseInt(id) },
+            data: { isSpam: isSpam !== false }
+        });
+        res.json({ success: true, email });
+    } catch (err) {
+        console.error('Failed to mark as spam:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// Delete email
+app.delete('/api/email/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prisma.email.delete({
+            where: { id: parseInt(id) }
+        });
+        res.json({ success: true, message: 'Email deleted' });
+    } catch (err) {
+        console.error('Failed to delete email:', err);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -4629,7 +4759,17 @@ app.post('/api/settings/avatar', isAuthenticated, handleAvatarUpload, (req, res)
 // Create HTTP server & Socket.IO
 // ---------------------------
 const httpServer = http.createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    },
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    reconnectionAttempts: 5
+});
 
 io.on("connection", (socket) => {
     console.log("New client connected:", socket.id);
@@ -5654,7 +5794,8 @@ async function startAutoSync() {
 }
 
 // Start auto-sync after server is ready (give it a moment to stabilize)
-setTimeout(startAutoSync, 2000);
+// Delay to ensure Prisma client is fully initialized
+setTimeout(startAutoSync, 5000);
 
 // Debug: force assign an escalation to a staff member (for testing handoff audio)
 // POST /debug/assign-escalation  JSON: { conversationId, assignedStaffId, customerName }
