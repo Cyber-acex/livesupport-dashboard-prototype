@@ -40,13 +40,13 @@ export async function fetchGmailEmails(maxEmails = 20) {
     try {
       // Search for unread emails in INBOX
       await connection.openBox('INBOX');
-      // Search for ALL emails (both read and unread) - deduplication happens server-side
-      const searchCriteria = ['ALL'];
+      // Search for UNREAD emails only - prevents processing old emails repeatedly
+      const searchCriteria = ['UNSEEN'];
       
-      console.log('📬 Searching for ALL emails...');
+      console.log('📬 Searching for UNREAD emails only...');
       // Search returns array of objects with uid in attributes
       const results = await connection.search(searchCriteria);
-      console.log(`📨 Found ${results.length} total emails in inbox`);
+      console.log(`📨 Found ${results.length} unread emails in inbox`);
       
       if (results.length === 0) {
         console.log('No emails found');
@@ -110,10 +110,25 @@ export async function fetchGmailEmails(maxEmails = 20) {
           if (email.fromEmail) {
             emails.push(email);
             console.log(`✅ Parsed email from ${email.fromEmail}: ${email.subject}`);
+            
+            // Mark email as read so it won't be processed again on next sync
+            try {
+              await new Promise((resolve, reject) => {
+                imapConn.setFlags(uid, ['\\Seen'], (err) => {
+                  if (err) {
+                    console.log(`⚠️ Could not mark email UID ${uid} as read:`, err.message);
+                    resolve(); // Don't reject, just log and continue
+                  } else {
+                    console.log(`📌 Marked email UID ${uid} as read`);
+                    resolve();
+                  }
+                });
+              });
+            } catch (flagErr) {
+              console.log(`⚠️ Error marking email UID ${uid} as read:`, flagErr.message);
+              // Continue processing even if flag fails
+            }
           }
-
-          // Note: We don't mark as read so emails remain unread for subsequent syncs
-          // This allows the deduplication logic in server.js to handle preventing duplicates
         } catch (parseErr) {
           console.error('Error parsing email UID', uid, ':', parseErr.message);
         }

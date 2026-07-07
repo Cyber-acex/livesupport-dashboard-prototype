@@ -1,0 +1,1196 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" href="/favicon.png" type="image/png">
+    <link rel="shortcut icon" href="/favicon.png">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Livesupport - Analytics</title>
+    <link rel="stylesheet" href="./css/style.css">
+    <link rel="stylesheet" href="./css/sidebar.css">
+  <link rel="stylesheet" href="./css/tailadmin.css">
+  <link rel="stylesheet" href="./css/voice.css">
+    <script>document.documentElement.classList.add('ls-js');</script>
+    <style>
+      body { background: white !important; }
+    </style>
+    <style>
+      /* removed fixed .top-right override to allow sidebar layout */
+    </style>
+    <script>
+      // Apply theme from localStorage immediately to prevent flash
+      (function applyThemeImmediately() {
+        const theme = localStorage.getItem('theme') || 'Light';
+        if (theme === 'Dark') {
+          const style = document.createElement('style');
+          style.id = 'dark-mode-theme';
+          style.textContent = `
+            body { background: #1e1e1e !important; color: #ffffff !important; }
+            input, textarea, select { background: #2d2d2d !important; color: #ffffff !important; border-color: #444 !important; }
+            button { background: #0066cc !important; color: #ffffff !important; }
+            .main, .content, .topbar, .sidebar { background: #1e1e1e !important; color: #ffffff !important; }
+            a { color: #66b3ff !important; }
+            .branch, .top-right, .staffname, .branchjr { color: #ffffff !important; }
+            h1, h2, h3, h4, h5, h6 { color: #ffffff !important; }
+            h3 {color: #ffffff !important; }
+            label, span { color: #ffffff !important; }
+          `;
+          document.head.appendChild(style);
+        }
+      })();
+    </script>
+    <!-- Removed duplicate Chart.js script -->
+</head>
+<body>
+ 
+    <div class="dashboard">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <h2 class="logo">LiveSupport</h2>
+    <nav class="menu">
+        <a href="./dashboard.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 3H5c-1.1 0-2 .9-2 2v14l4-4h12c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg><span class="nav-label">Dashboard</span></a>
+                <a href="./tickets.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 7V4H4v3H2v10h18V7h-0zM6 6h12v2H6V6zm12 10H6v-6h12v6z"/></svg><span class="nav-label">Tickets</span></a>
+                
+                <a href="./analytics.html" class="active"><svg  viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 17h2V9H3v8zm4 0h2V3H7v14zm4 0h2v-6h-2v6zm4 0h2v-9h-2v9z"/></svg><span class="nav-label">Analytics</span></a>
+                <a href="./knowledge.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L2 7v6c0 5 4 9 10 9s10-4 10-9V7l-10-5zM12 4.4L18.6 8 12 11.6 5.4 8 12 4.4z"/></svg><span class="nav-label">Knowledge Base</span></a>
+                <a href="./ai-knowledge.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 7V4H4v3H2v10h18V7h-0zM6 6h12v2H6V6zm12 10H6v-6h12v6z"/></svg><span class="nav-label">AI Knowledge</span></a>
+                
+                <a href="./orders.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2zM7.16 14l.84-2h7.45l1.24 3H7.16zM7.6 6h10.8l-1.2 3H8.8L7.6 6z"/></svg><span class="nav-label">Orders</span></a>
+                <a href="./tracking.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm0-6c-6.6 0-12 5.4-12 12 0 3.6 1.6 6.8 4.2 9l.8-2.6C4.1 19.1 3 16.6 3 14 3 8.5 7.6 4 13 4s10 4.5 10 10c0 2.6-1.1 5.1-2.9 6.4L21 23c2.6-2.2 4-5.4 4-9 0-6.6-5.4-12-12-12z"/></svg><span class="nav-label">Tracking</span></a>
+                <a href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19.14 12.94a7.89 7.89 0 000-1.88l2.03-1.58-2-3.46-2.39.96a8.1 8.1 0 00-1.6-.93l-.36-2.5h-4l-.36 2.5c-.57.24-1.1.55-1.6.93L6.8 6.02l-2 3.46L6.83 11a7.89 7.89 0 000 1.88l-2.03 1.58 2 3.46 2.39-.96c.5.38 1.03.69 1.6.93l.36 2.5h4l.36-2.5c.57-.24 1.1-.55 1.6-.93l2.39.96 2-3.46-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8.5a3.5 3.5 0 010 7z"/></svg><span class="nav-label">Settings</span></a>
+    </nav>
+  </aside>
+  <!-- MAIN AREA -->
+  <div class="main">
+    <header class="topbar">
+      <div class="branch">
+          Branch: <strong class="branchjr">Ikeja Branch</strong>
+      </div>
+      <div class="top-right">
+        <div class="profile">
+          <button id="profileBtn" class="btn profile-btn" aria-haspopup="true" aria-expanded="false">
+            <div class="profile-status-mini" id="profileStatusMini"><span class="status-dot-mini online"></span></div>
+            <img class="avatar-sm-img" src="" alt="avatar" style="display:none" />
+            <span class="avatar-sm">A</span>
+          </button>
+          <div id="profileDropdown" class="profile-dropdown" aria-hidden="true">
+            <div class="profile-info"><strong id="profileName">Staff</strong></div>
+            <div class="profile-status">
+              <div class="status-header">
+                <span class="status-label">Status</span>
+                <div class="status-indicator" id="statusIndicator">
+                  <span class="status-dot online"></span>
+                  <span class="status-text">Online</span>
+                </div>
+              </div>
+              <div class="status-toggle">
+                <button class="status-btn online active" data-status="online"><span class="status-dot online"></span> Online</button>
+                <button class="status-btn away" data-status="away"><span class="status-dot away"></span> Away</button>
+                <button class="status-btn busy" data-status="busy"><span class="status-dot busy"></span> Busy</button>
+                <button class="status-btn offline" data-status="offline"><span class="status-dot offline"></span> Offline</button>
+              </div>
+            </div>
+            <div class="profile-session">
+              <div class="session-header">Session Info</div>
+              <div class="session-details">
+                <div class="session-item"><span class="session-icon">🕐</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
+                <div class="session-item"><span class="session-icon">⏱️</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
+                <div class="session-item"><span class="session-icon">⚡</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
+              </div>
+            </div>
+            <div class="profile-actions">
+              <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙️</span> Settings</a>
+              <button id="logoutBtn" class="profile-action"><span class="profile-icon">🚪</span> Logout</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- NOTIFICATION BAR (inbox-style) -->
+    <div id="notificationBar" class="notification-bar" style="display: none; background: #ff6b6b; color: white; padding: 10px; text-align: center; position: relative; z-index: 1000;">
+      <span id="notificationText">New message received!</span>
+      <button id="closeNotification" class="close-btn" style="background: none; border: none; color: white; font-size: 20px; position: absolute; right: 10px; top: 5px; cursor: pointer;">&times;</button>
+    </div>
+<!--START     HERE-->
+<!--START     HERE-->
+
+<!--  IMPORTANT           DO             NOT       DELETE !!!!!!!-->
+<script>
+// Highlight the active sidebar link
+const sidebarLinks = document.querySelectorAll('.sidebar .menu a');
+const currentPath = window.location.pathname;
+sidebarLinks.forEach(link => {
+    // Remove any existing active class
+    link.classList.remove('active');
+    // Compare href with current path
+    if (link.getAttribute('href') === currentPath.split("/").pop() || 
+        (link.getAttribute('href') === "#" && currentPath.endsWith("dashboard.html"))) {
+        link.classList.add('active');
+    }
+});
+</script>
+<script>
+// Load staff name (same as tickets page)
+fetch("/api/user")
+  .then(res => {
+    if (res.status === 401) {
+      window.location.href = "/login.html";
+      return;
+    }
+    return res.json();
+  })
+  .then(data => {
+    if (data) document.getElementById("staffName").textContent = data.role;
+  })
+  .catch(err => console.log("User fetch error", err));
+</script>
+<!---->
+<script src="/socket.io/socket.io.js"></script>
+<script src="./js/voice.js" defer></script>
+<script src="./js/phone-ui.js" type="module"></script>
+<script src="./js/notification-sound.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+<script src="./js/analytics.js" defer></script>
+<script src="./js/staff-performance.js"></script>
+<script src="./js/sidebar.js" defer></script>
+<!-- Add canvas elements for the charts -->
+  <script src="./js/user.js"></script>
+    <div class="content">
+<style>
+    /* Space background styling */
+    body {
+        background: radial-gradient(circle at 20% 50%, transparent 0%, rgba(200, 200, 200, 0.3) 50%),
+                    radial-gradient(circle at 80% 80%, rgba(220, 220, 220, 0.2) 0%, transparent 50%),
+                    linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 50%, #f0f0f0 100%);
+        background-attachment: fixed;
+        position: relative;
+        overflow-x: hidden;
+    }
+
+    /* Text visibility fixes for light space background */
+    .sidebar, .sidebar h2, .sidebar a {
+        color: #a41010 !important;
+    }
+    .topbar, .topbar span, .topbar strong {
+        color: #2c2c2c !important;
+    }
+    .chart-item h3 {
+        color: #1a1a1a !important;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    .chart-summary-item {
+      flex: 1 1 150px;
+      min-width: 140px;
+      background: #f8fbff;
+      border-radius: 18px;
+      padding: 16px 18px;
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+      text-align: center;
+    }
+    .chart-summary-item h4 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+      color: #334155;
+      font-weight: 600;
+    }
+    .chart-summary-item p {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .main { color: #2c2c2c; }
+
+    /* Responsive chart layout */
+    .chart-container {
+        display: inline-block;
+        vertical-align: top;
+        width: 32%;
+        min-width: 280px;
+        box-sizing: border-box;
+        padding: 12px;
+        margin: 24px 1% 24px 1%;
+    }
+
+    .chart-item {
+        background: rgba(255,255,255,0.95);
+        border-radius: 12px;
+        padding: 12px;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+        text-align: center;
+    }
+
+    .fixed-chart-container {
+        width: 600px !important;
+        max-width: 600px !important;
+        margin: 34px auto !important;
+    }
+
+    .message-chart-container { width: 32%; }
+    .chart-container.chart-fullwidth { width: 98%; min-width: auto; }
+
+    canvas { width: 100% !important; height: auto !important; max-height: 480px; }
+
+    /* On small screens stack charts */
+    @media (max-width: 980px) {
+        .chart-container { width: 48%; margin: 12px 1%; }
+        .message-chart-container { width: 48%; }
+    }
+
+    @media (max-width: 640px) {
+        .chart-container, .message-chart-container { width: 100%; margin: 8px 0; }
+    }
+    .content {
+      padding-top: 72px;
+    }
+    .staff-panel {
+      padding: 0 0 56px;
+      padding-left: 40px;
+    }
+
+    .staff-header {
+      display:flex;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:24px;
+      flex-wrap:wrap;
+      margin-bottom:28px;
+      background: rgba(255,255,255,0.96);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+      padding: 18px 0;
+    }
+
+    .staff-header .eyebrow {
+      margin:0 0 10px;
+      color:#0ea5e9;
+      font-size:12px;
+      letter-spacing:0.24em;
+      text-transform:uppercase;
+    }
+
+    .staff-header h1 {
+      margin:0 0 12px;
+      font-size:32px;
+      line-height:1.05;
+      color:#111827;
+    }
+
+    .staff-header .section-text {
+      margin:0;
+      max-width:640px;
+      color:#475569;
+      font-size:15px;
+      line-height:1.75;
+    }
+
+    .staff-quick-actions {
+      display:flex;
+      gap:12px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .field-input,
+    .field-select {
+      border:1px solid #d1d5db;
+      background:#fff;
+      color:#111827;
+      padding:10px 14px;
+      border-radius:12px;
+      min-width:180px;
+      outline:none;
+      transition:box-shadow .2s ease, border-color .2s ease;
+    }
+
+    .field-input:focus,
+    .field-select:focus {
+      border-color:#2563eb;
+      box-shadow:0 0 0 4px rgba(37,99,235,0.12);
+    }
+
+    .staff-kpi-grid {
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));
+      gap:16px;
+      margin-bottom:28px;
+    }
+
+    .metric-card {
+      position:relative;
+      background:#ffffff;
+      border:1px solid rgba(15,23,42,0.08);
+      border-radius:22px;
+      padding:22px 22px 18px;
+      box-shadow:0 18px 40px rgba(15,23,42,0.07);
+      overflow:hidden;
+      transition:transform .25s ease, box-shadow .25s ease;
+    }
+
+    .metric-card:hover {
+      transform:translateY(-3px);
+      box-shadow:0 26px 54px rgba(15,23,42,0.12);
+    }
+
+    .metric-card::before {
+      content:'';
+      position:absolute;
+      top:-20px;
+      right:-18px;
+      width:120px;
+      height:120px;
+      border-radius:50%;
+      background:rgba(14,165,233,0.14);
+      z-index:0;
+    }
+
+    .metric-card h3 {
+      margin:0;
+      position:relative;
+      z-index:1;
+      font-size:13px;
+      letter-spacing:.12em;
+      text-transform:uppercase;
+      color:#475569;
+    }
+
+    .metric-card .metric-value {
+      position:relative;
+      z-index:1;
+      margin-top:14px;
+      font-size:32px;
+      font-weight:800;
+      color:#111827;
+    }
+
+    .metric-card .metric-note {
+      position:relative;
+      z-index:1;
+      margin-top:9px;
+      color:#64748b;
+      font-size:13px;
+      line-height:1.6;
+    }
+
+    .staff-main-grid {
+      display:grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap:20px;
+      align-items:flex-start;
+    }
+
+    @media (max-width: 980px) {
+      .staff-main-grid { grid-template-columns:1fr; }
+    }
+
+    .staff-summary-card {
+      display:flex;
+      flex-direction:column;
+      gap:18px;
+      background:linear-gradient(180deg,#f8fbff,#ffffff);
+    }
+
+    .summary-block {
+      border-radius:20px;
+      padding:20px;
+      background:#ffffff;
+      box-shadow:0 20px 40px rgba(15,23,42,0.06);
+    }
+
+    .summary-block h4 {
+      margin:0 0 10px;
+      color:#334155;
+      font-size:13px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+
+    .summary-block p {
+      margin:0;
+      font-size:32px;
+      font-weight:800;
+      color:#0f172a;
+    }
+
+    .summary-label {
+      margin-top:10px;
+      color:#64748b;
+      font-size:13px;
+    }
+
+    .summary-line {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:14px;
+    }
+
+    .performance-bar {
+      width:100%;
+      height:12px;
+      border-radius:999px;
+      background:#e2e8f0;
+      overflow:hidden;
+      margin-top:12px;
+    }
+
+    .performance-fill {
+      width:0%;
+      height:100%;
+      border-radius:999px;
+      background:linear-gradient(90deg,#0ea5e9,#2563eb);
+      transition:width .4s ease;
+    }
+
+    .summary-chart-wrapper {
+      min-height:220px;
+      background:#ffffff;
+      border-radius:20px;
+      padding:14px;
+      box-shadow:0 16px 32px rgba(15,23,42,0.06);
+    }
+
+    .staff-list-card {
+      background:linear-gradient(180deg,#ffffff,#f8fafc);
+    }
+
+    .staff-table-header,
+    .staff-row {
+      display:grid;
+      grid-template-columns: 1.7fr 0.9fr 0.85fr 0.85fr 0.85fr 1.05fr 0.8fr;
+      gap:12px;
+      align-items:center;
+      padding:14px 18px;
+    }
+
+    .staff-status-cell {
+      display:flex;
+      justify-content:flex-start;
+      align-items:center;
+      gap:8px;
+    }
+
+    .status-chip {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      border-radius:999px;
+      padding:8px 10px;
+      font-size:13px;
+      letter-spacing:0.01em;
+      background:#f8fafc;
+      color:#0f172a;
+    }
+
+    .status-chip .status-dot {
+      width:10px;
+      height:10px;
+      border-radius:50%;
+      display:inline-block;
+    }
+
+    .staff-table-header {
+      color:#475569;
+      font-size:12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      font-weight:700;
+      border-bottom:1px solid #e2e8f0;
+      background:rgba(248,250,252,0.9);
+    }
+
+    .staff-row {
+      border-bottom:1px solid rgba(226,232,240,0.95);
+      transition:background .2s ease;
+    }
+
+    .staff-row:hover {
+      background:rgba(59,130,246,0.05);
+    }
+
+    .staff-row:last-child { border-bottom:none; }
+
+    .staff-identity {
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+
+    .staff-avatar {
+      width:40px;
+      height:40px;
+      border-radius:14px;
+      background:#eff6ff;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:800;
+      color:#2563eb;
+      font-size:15px;
+    }
+
+    .staff-info {
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+
+    .staff-name {
+      font-weight:700;
+      color:#0f172a;
+    }
+
+    .staff-meta {
+      font-size:12px;
+      color:#64748b;
+    }
+
+    .staff-row span,
+    .staff-row strong {
+      display:block;
+      color:#0f172a;
+      font-size:15px;
+      font-weight:700;
+    }
+
+    .staff-row .label { font-size:12px; color:#475569; font-weight:600; }
+
+    .staff-progress-cell {
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+    }
+
+    .staff-button { justify-self:end; }
+
+    .staff-button button {
+      border:none;
+      border-radius:12px;
+      background:#2563eb;
+      color:#fff;
+      padding:10px 14px;
+      cursor:pointer;
+      font-weight:700;
+      transition:background .2s ease;
+    }
+
+    .staff-button button:hover { background:#1e40af; }
+
+    .activity-chart-wrapper {
+      margin-top:20px;
+      padding:18px;
+      background:#ffffff;
+      border-radius:24px;
+      box-shadow:0 20px 45px rgba(15,23,42,0.06);
+    }
+
+    .pagination-bar {
+      margin-top:18px;
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+    }
+
+    .modal {
+      display:none;
+      position:fixed;
+      inset:0;
+      background:rgba(15,23,42,0.45);
+      backdrop-filter:blur(2px);
+      justify-content:center;
+      align-items:center;
+      padding:24px;
+      z-index:10000;
+    }
+
+    .modal-panel {
+      width:100%;
+      max-width:560px;
+      padding:28px;
+      border-radius:26px;
+      background:#ffffff;
+      box-shadow:0 34px 90px rgba(15,23,42,0.18);
+      position:relative;
+    }
+
+    .modal-close {
+      position:absolute;
+      top:18px;
+      right:18px;
+      border:none;
+      background:#f8fafc;
+      width:40px;
+      height:40px;
+      border-radius:999px;
+      font-size:22px;
+      cursor:pointer;
+    }
+
+    @media (max-width: 720px) {
+      .staff-table-header,
+      .staff-row { grid-template-columns: 1.6fr 1fr; }
+      .staff-row .staff-button { grid-column: span 2; justify-self:start; }
+    }
+
+    /* Top nav inside topbar */
+    .topbar .topnav{
+      display:flex;
+      gap:12px;
+      margin-left:24px;
+      align-items:center;
+    }
+    .topbar .topnav a{
+      color: #cbd5e1;
+      text-decoration:none;
+      padding:6px 10px;
+      border-radius:8px;
+      font-weight:600;
+      background: transparent;
+    }
+    .topbar .topnav a.active{
+      background: rgba(255,255,255,0.06);
+      color: #ffffff;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    }
+    /* Page switcher styles (copied from orders page for exact match) */
+    .page-switcher {
+      display: inline-flex;
+      gap: 8px;
+      border-radius: 999px;
+      background: #eef2ff;
+      padding: 4px;
+      border: 1px solid rgba(59, 130, 246, 0.18);
+      margin-bottom: 12px;
+    }
+    .page-tab {
+      border: none;
+      background: transparent;
+      color: #0f172a;
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .page-tab.active {
+      background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+      color: white;
+      box-shadow: 0 12px 24px rgba(79, 70, 229, 0.18);
+    }
+    
+    /* Controls and KPI cards */
+    .controls {
+      display:flex;
+      gap:12px;
+      align-items:center;
+      margin: 12px 0 20px 8px;
+      flex-wrap:wrap;
+    }
+    .controls .field { display:flex; gap:8px; align-items:center; }
+    .controls input[type=date], .controls select { padding:8px 10px; border-radius:8px; border:1px solid #ddd; }
+    .controls button { padding:8px 12px; border-radius:8px; border:none; background:#1e88e5; color:#fff; cursor:pointer; font-weight:600; }
+    .kpi-row { display:flex; gap:16px; margin: 8px 10px; flex-wrap:wrap; }
+    .kpi-card { flex:1 1 220px; background:linear-gradient(180deg,#ffffff,#f7f9fc); padding:14px; border-radius:10px; box-shadow: 0 8px 24px rgba(8,15,30,0.06); }
+    .kpi-card h4 { margin:0; color:#333; font-size:14px; font-weight:700; }
+    .kpi-card p { margin:6px 0 0 0; font-size:22px; font-weight:800; color:#0b6ad6; }
+    .kpi-small { font-size:12px; color:#666; margin-top:6px; }
+
+    /* Live Staff Presence Map Styles */
+    .staff-presence-section {
+      margin: 28px 0 28px 0;
+      padding: 0 0 28px 40px;
+      background: rgba(255,255,255,0.5);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+    }
+
+    .staff-presence-section .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+
+    .staff-presence-section h3 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .presence-filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      color: #475569;
+      padding: 8px 16px;
+      border-radius: 12px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+
+    .filter-btn:hover {
+      border-color: #2563eb;
+      color: #2563eb;
+      background: rgba(37,99,235,0.06);
+    }
+
+    .filter-btn.active {
+      background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+      color: white;
+      border-color: #0ea5e9;
+      box-shadow: 0 8px 16px rgba(79, 70, 229, 0.2);
+    }
+
+    .presence-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+      background: white;
+      padding: 20px;
+      border-radius: 22px;
+      box-shadow: 0 18px 40px rgba(15,23,42,0.07);
+    }
+
+    .presence-loading {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 32px;
+      color: #64748b;
+      font-size: 14px;
+    }
+
+    .presence-card {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 20px;
+      background: linear-gradient(135deg, #f8fbff 0%, #ffffff 100%);
+      border: 1px solid rgba(15,23,42,0.08);
+      border-radius: 18px;
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .presence-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 20px 40px rgba(15,23,42,0.12);
+      border-color: rgba(37,99,235,0.3);
+    }
+
+    .presence-card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .presence-avatar {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #6366f1, #0ea5e9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 700;
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    .presence-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-grow: 1;
+    }
+
+    .presence-name {
+      font-weight: 700;
+      color: #0f172a;
+      font-size: 15px;
+    }
+
+    .presence-role {
+      font-size: 12px;
+      color: #64748b;
+      text-transform: capitalize;
+    }
+
+    .presence-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #475569;
+    }
+
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-indicator.online {
+      background: #10b981;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.5);
+    }
+
+    .status-indicator.away {
+      background: #f59e0b;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+    }
+
+    .status-indicator.busy {
+      background: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+    }
+
+    .status-indicator.offline {
+      background: #9ca3af;
+      box-shadow: 0 0 8px rgba(156, 163, 175, 0.5);
+    }
+
+    .presence-details {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(15,23,42,0.08);
+    }
+
+    .presence-detail-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+
+    .presence-detail-label {
+      color: #64748b;
+    }
+
+    .presence-detail-value {
+      font-weight: 600;
+      color: #0f172a;
+    }
+
+    .presence-activity {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #0ea5e9;
+    }
+
+    .presence-activity-icon {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #0ea5e9;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .presence-empty {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 48px 32px;
+      color: #94a3b8;
+    }
+
+    .presence-empty-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+    }
+
+    .presence-empty-text {
+      font-size: 14px;
+    }
+
+    @media (max-width: 768px) {
+      .presence-grid {
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      }
+      .staff-presence-section {
+        padding: 0 0 28px 20px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .presence-grid {
+        grid-template-columns: 1fr;
+      }
+      .staff-presence-section .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+</style>
+<!-- Shiny Blue Stars -->
+
+<!-- Controls + KPI summary -->
+<div id="analyticsSwitcher" class="page-switcher" role="tablist" aria-label="Analytics and Staff tabs" style="margin-bottom:12px;">
+  <button class="page-tab active" data-page="analytics" onclick="switchAnalyticsPage('analytics')" role="tab" aria-selected="true">Analytics</button>
+  <button class="page-tab" data-page="staff" onclick="switchAnalyticsPage('staff')" role="tab" aria-selected="false">Staff Performance</button>
+</div>
+<div id="analyticsPanel">
+<div class="controls">
+  <div class="field">
+    <label for="startDate">From</label>
+    <input id="startDate" type="date" />
+  </div>
+  <div class="field">
+    <label for="endDate">To</label>
+    <input id="endDate" type="date" />
+  </div>
+  <div class="field">
+    <label for="branchSelect">Branch</label>
+    <select id="branchSelect"><option value="all">All</option><option value="ikeja">Ikeja</option></select>
+  </div>
+  <div class="field">
+    <button id="applyFilters">Apply</button>
+    <button id="exportCsv">Export CSV</button>
+  </div>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi-card">
+    <h4>Total Tickets</h4>
+            <p id="kpi-totalTickets">—</p>
+    <div class="kpi-small">Created in selected range</div>
+  </div>
+  <div class="kpi-card">
+    <h4>Avg Response (s)</h4>
+      <p id="kpi-analyticsAvgResponse">—</p>
+    <div class="kpi-small">Average first response time</div>
+  </div>
+  <div class="kpi-card">
+    <h4>Resolution Time</h4>
+      <p id="kpi-resolutionTime">—</p>
+    <div class="kpi-small">Average seconds to resolve</div>
+  </div>
+  <div class="kpi-card">
+    <h4>Active Chats</h4>
+      <p id="kpi-analyticsActiveChats">—</p>
+    <div class="kpi-small">Currently live</div>
+  </div>
+  <div class="kpi-card">
+    <h4>AI Feedback Avg</h4>
+      <p id="kpi-analyticsAIFeedbackAvg">—</p>
+    <div class="kpi-small">Average rating from staff/customers</div>
+  </div>
+  <div class="kpi-card">
+    <h4>Feedback Count</h4>
+            <p id="kpi-aiFeedbackCount">—</p>
+    <div class="kpi-small">Total feedback entries</div>
+  </div>
+</div>
+
+  <div class="chart-container chart-fullwidth">
+  <div class="chart-item">
+    <h3>AI vs Staff Messages (Monthly)</h3>
+    <canvas id="aiStaffMonthlyChart" width="800" height="300"></canvas>
+  </div>
+  </div>
+
+   <!-- Tickets bar chart -->
+  <div class="analytics-card chart-container chart-fullwidth">
+    <h3>Tickets Created</h3>
+
+    <div class="chart-container fixed-chart-container">
+        <canvas id="ticketsChart"></canvas>
+    </div>
+  </div>
+
+  </div> <!-- end analyticsPanel -->
+
+  <!-- Embedded Staff Performance panel -->
+  <div id="staffPanel" style="display:none;">
+    <section class="staff-panel">
+      <div class="staff-header">
+        <div>
+          <p class="eyebrow">Staff Performance</p>
+          <h1>Team performance with real-time clarity</h1>
+          <p class="section-text">Track agent efficiency, throughput, and service quality with a compact, engineering-style dashboard.</p>
+        </div>
+        <div class="staff-quick-actions">
+          <button id="refreshBtn" class="btn btn-primary">Refresh</button>
+          <select id="timeRange" class="field-select">
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+          <button id="exportCsvStaff" class="btn">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="staff-kpi-grid">
+        <div class="metric-card">
+          <h3>Total handled</h3>
+          <div class="metric-value" id="kpi-totalHandled">—</div>
+          <div class="metric-note">Messages processed by the team.</div>
+        </div>
+        <div class="metric-card">
+          <h3>Avg response</h3>
+          <div class="metric-value" id="kpi-avgResponse">—</div>
+          <div class="metric-note">Average response time in seconds.</div>
+        </div>
+        <div class="metric-card">
+          <h3>Resolution health</h3>
+          <div class="metric-value" id="kpi-resolutionRate">—</div>
+          <div class="metric-note">Estimated fulfillment rate.</div>
+        </div>
+        <div class="metric-card">
+          <h3>Active chats</h3>
+          <div class="metric-value" id="kpi-activeChats">—</div>
+          <div class="metric-note">Conversations currently in progress.</div>
+        </div>
+        <div class="metric-card">
+          <h3>AI feedback</h3>
+          <div class="metric-value" id="kpi-aiFeedbackAvg">—</div>
+          <div class="metric-note">Average quality rating from feedback.</div>
+        </div>
+      </div>
+
+      <!-- Live Staff Presence Map -->
+      <div class="staff-presence-section">
+        <div class="section-header">
+          <h3>📍 Live Staff Presence Map</h3>
+          <div class="presence-filters">
+            <button class="filter-btn active" data-filter="all">All</button>
+            <button class="filter-btn" data-filter="online">Online</button>
+            <button class="filter-btn" data-filter="away">Away</button>
+            <button class="filter-btn" data-filter="busy">Busy</button>
+          </div>
+        </div>
+        <div class="presence-grid" id="presenceGrid">
+          <div class="presence-loading">Loading staff presence...</div>
+        </div>
+      </div>
+
+      <div class="staff-main-grid">
+        <aside class="staff-summary-card card">
+          <div class="summary-block">
+            <h4>Performance summary</h4>
+            <p id="summaryTotalHandled">—</p>
+            <div class="summary-label">Total messages handled</div>
+          </div>
+          <div class="summary-line">
+            <div class="summary-block">
+              <h4>Avg response</h4>
+              <p id="summaryAvgResp">—</p>
+              <div class="summary-label">Seconds per first reply</div>
+            </div>
+            <div class="summary-block">
+              <h4>Resolution rate</h4>
+              <p id="summaryResolutionRate">—</p>
+              <div class="summary-label">Team resolution health</div>
+            </div>
+          </div>
+          <div class="summary-block">
+            <h4>Team load</h4>
+            <div class="performance-bar">
+              <div id="summaryFlowFill" class="performance-fill" style="width:0%"></div>
+            </div>
+            <div class="summary-label" id="summaryFlowText">Live load gauge</div>
+          </div>
+          <div class="summary-chart-wrapper">
+            <canvas id="avgResponseChart" height="220"></canvas>
+          </div>
+        </aside>
+
+        <div class="staff-list-card card">
+          <div class="toolbar" style="display:flex; gap:12px; align-items:center; margin-bottom:14px;">
+            <input id="searchInput" placeholder="Search staff by name" class="field-input" />
+            <select id="sortBy" title="Sort by" class="field-select">
+              <option value="name">Name</option>
+              <option value="avg_response_time">Avg response (asc)</option>
+              <option value="-avg_response_time">Avg response (desc)</option>
+              <option value="messages_handled">Handled</option>
+            </select>
+          </div>
+          <div class="staff-table-header">
+            <span>Agent</span>
+            <span>Status</span>
+            <span>Handled</span>
+            <span>Avg Resp</span>
+            <span>Resolution</span>
+            <span>Trend</span>
+            <span></span>
+          </div>
+          <div id="staffList">Loading...</div>
+          <div class="activity-chart-wrapper">
+            <canvas id="activityChart" height="200"></canvas>
+          </div>
+          <div id="pagination" class="pagination-bar"></div>
+        </div>
+      </div>
+
+      <div id="staffModal" class="modal" aria-hidden="true">
+        <div class="modal-panel">
+          <button id="modalClose" class="modal-close">×</button>
+          <h2 id="modalName">Staff Name</h2>
+          <div id="modalBody">Loading...</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  </div> <!-- .content -->
+  </div> <!-- .main -->
+</div> <!-- .dashboard -->
+
+<script>
+// Tab switching between Analytics and Staff Performance panels
+function switchAnalyticsPage(page){
+  const analyticsPanel = document.getElementById('analyticsPanel');
+  const staffPanel = document.getElementById('staffPanel');
+  const analyticsSwitcher = document.getElementById('analyticsSwitcher');
+  const tabs = document.querySelectorAll('.page-switcher .page-tab');
+  if (!analyticsPanel || !staffPanel || !analyticsSwitcher) return;
+  tabs.forEach(t=>{ t.classList.remove('active'); t.setAttribute('aria-selected','false'); });
+  if (page === 'staff'){
+    document.querySelector('.page-switcher .page-tab[data-page="staff"]').classList.add('active');
+    document.querySelector('.page-switcher .page-tab[data-page="staff"]').setAttribute('aria-selected','true');
+    analyticsPanel.style.display='none';
+    staffPanel.style.display='block';
+    analyticsSwitcher.style.display='none';
+  } else {
+    document.querySelector('.page-switcher .page-tab[data-page="analytics"]').classList.add('active');
+    document.querySelector('.page-switcher .page-tab[data-page="analytics"]').setAttribute('aria-selected','true');
+    analyticsPanel.style.display='block';
+    staffPanel.style.display='none';
+    analyticsSwitcher.style.display='flex';
+  }
+}
+
+function applyAnalyticsPageHash() {
+  if (window.location.hash === '#staff') {
+    switchAnalyticsPage('staff');
+  }
+}
+window.addEventListener('DOMContentLoaded', applyAnalyticsPageHash);
+window.addEventListener('hashchange', applyAnalyticsPageHash);
+</script>
+
+</body>
+</html>
+
+
+

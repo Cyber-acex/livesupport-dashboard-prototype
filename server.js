@@ -1109,6 +1109,55 @@ app.get('/favicon.png', (req, res) => {
 // Mount auth routes for password reset
 app.use('/api/auth', createAuthRouter(prisma));
 
+// Monthly messages counts (AI vs Staff)
+app.get('/api/messages/monthly', async (req, res) => {
+    try {
+        const year = Number(req.query.year || new Date().getFullYear());
+
+        const aiRows = await prisma.$queryRaw`
+            SELECT EXTRACT(MONTH FROM created_at) AS month, COUNT(*)::int AS count
+            FROM ai_messages
+            WHERE EXTRACT(YEAR FROM created_at) = ${year}
+            GROUP BY month
+            ORDER BY month
+        `;
+
+        const staffRows = await prisma.$queryRaw`
+            SELECT EXTRACT(MONTH FROM created_at) AS month, COUNT(*)::int AS count
+            FROM staff_messages
+            WHERE EXTRACT(YEAR FROM created_at) = ${year}
+            GROUP BY month
+            ORDER BY month
+        `;
+
+        const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const ai = new Array(12).fill(0);
+        const staff = new Array(12).fill(0);
+
+        for (const r of aiRows) {
+            const m = Number(r.month);
+            if (m >=1 && m <=12) ai[m-1] = Number(r.count || 0);
+        }
+        for (const r of staffRows) {
+            const m = Number(r.month);
+            if (m >=1 && m <=12) staff[m-1] = Number(r.count || 0);
+        }
+
+        res.json({ labels, ai, staff, year });
+    } catch (err) {
+        console.error('Failed to fetch monthly messages', err?.message || err);
+        res.status(500).json({ error: err?.message || String(err) });
+    }
+});
+
+const reactDistPath = path.join(__dirname, 'dist');
+const reactIndexFile = path.join(reactDistPath, 'index.html');
+
+if (fs.existsSync(reactDistPath)) {
+    app.use(express.static(reactDistPath));
+    app.use('/assets', express.static(path.join(reactDistPath, 'assets')));
+}
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve uploaded files
@@ -1161,8 +1210,11 @@ app.use((req, res, next) => {
 // ---------------------------
 // Auth Routes
 // ---------------------------
-app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "login.html"));
+app.get("/", isAuthenticated, (req, res) => {
+    if (fs.existsSync(reactIndexFile)) {
+        return res.sendFile(reactIndexFile);
+    }
+    return res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
 app.get("/login", (req, res) => {
@@ -1436,8 +1488,25 @@ app.get('/auth/config', (req, res) => {
     res.json({ googleClientId: id });
 });
 
-app.get("/dashboard", isAuthenticated, (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "dashboard.html"));
+const reactRoutes = [
+    '/dashboard',
+    '/tickets',
+    '/analytics',
+    '/orders',
+    '/inbox',
+    '/knowledge',
+    '/tracking',
+    '/settings',
+    '/admin-users'
+];
+
+reactRoutes.forEach((route) => {
+    app.get(route, isAuthenticated, (req, res) => {
+        if (fs.existsSync(reactIndexFile)) {
+            return res.sendFile(reactIndexFile);
+        }
+        return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    });
 });
 
 // Menu page removed
@@ -2293,34 +2362,7 @@ if (isPg) {
     `, (err) => { if (err) console.error('Error creating user_avatars table:', err); });
 }
 
-app.get('/api/settings', isAuthenticated, (req, res) => {
-    const userId = req.session.userId;
-    db.query('SELECT * FROM settings WHERE user_id = ? LIMIT 1', [userId], (err, results) => {
-        if (err) {
-            console.error('GET /api/settings error', err);
-            return res.status(500).json({ error: 'Database error' });
-        }
-        if (!results || results.length === 0) return res.json({});
-        res.json(results[0]);
-    });
-});
 
-app.post('/api/settings', isAuthenticated, (req, res) => {
-    const userId = req.session.userId;
-    const translate_enabled = req.body.translate_enabled ? 1 : 0;
-    const translate_lang = req.body.translate_lang || 'en';
-
-    const sql = isPg
-        ? `INSERT INTO settings (user_id, translate_enabled, translate_lang) VALUES (?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET translate_enabled = EXCLUDED.translate_enabled, translate_lang = EXCLUDED.translate_lang`
-        : `INSERT INTO settings (user_id, translate_enabled, translate_lang) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE translate_enabled = VALUES(translate_enabled), translate_lang = VALUES(translate_lang)`;
-    db.query(sql, [userId, translate_enabled, translate_lang], (err) => {
-        if (err) {
-            console.error('POST /api/settings error', err);
-            return res.status(500).json({ error: 'Database error' });
-        }
-        res.json({ success: true });
-    });
-});
 
 // ---------------------------
 // Conversations & Messages
@@ -2338,9 +2380,17 @@ app.get("/api/conversations", (req, res) => {
                     WHERE m2.conversation_id = c.id 
                       AND LOWER(m2.sender) NOT IN ('sent', 'sent_by_agent')
                       AND (c.last_viewed IS NULL OR m2.created_at > c.last_viewed)
-                ) AS unread_count
+                ) AS unread_count,
+                (SELECT m.message FROM messages m
+                    WHERE m.conversation_id = c.id
+                    ORDER BY m.created_at DESC, m.id DESC
+                    LIMIT 1) AS last_message,
+                (SELECT m.created_at FROM messages m
+                    WHERE m.conversation_id = c.id
+                    ORDER BY m.created_at DESC, m.id DESC
+                    LIMIT 1) AS last_message_at
             FROM conversations c
-            ORDER BY GREATEST(IFNULL((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), c.created_at), c.created_at) DESC
+            ORDER BY GREATEST(COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1), c.created_at), c.created_at) DESC
         `;
 
         // Try the primary query first. If it fails (e.g. missing `last_viewed` column on some databases),
@@ -2371,9 +2421,17 @@ app.get("/api/conversations", (req, res) => {
                     (SELECT COUNT(*) FROM messages m2 
                         WHERE m2.conversation_id = c.id 
                           AND LOWER(m2.sender) NOT IN ('sent', 'sent_by_agent')
-                    ) AS unread_count
+                    ) AS unread_count,
+                    (SELECT m.message FROM messages m
+                        WHERE m.conversation_id = c.id
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT 1) AS last_message,
+                    (SELECT m.created_at FROM messages m
+                        WHERE m.conversation_id = c.id
+                        ORDER BY m.created_at DESC, m.id DESC
+                        LIMIT 1) AS last_message_at
                 FROM conversations c
-                ORDER BY COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), c.created_at) DESC
+                ORDER BY COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1), c.created_at) DESC
             `;
 
             db.query(fallbackSql, (err2, result2) => {
@@ -2522,7 +2580,7 @@ app.get('/api/recent-tickets', (req, res) => {
                 ELSE 'Open'
             END) AS status
         FROM conversations c
-        ORDER BY GREATEST(IFNULL((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), c.created_at), c.created_at) DESC
+        ORDER BY GREATEST(COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), c.created_at), c.created_at) DESC
         LIMIT 20
     `;
     db.query(sql, (err, rows) => {
@@ -4666,9 +4724,34 @@ app.post('/api/delivery/complete', (req, res) => {
 // ---------------------------
 app.get('/api/settings', (req, res) => {
     const userId = req.session.userId;
-    db.query('SELECT * FROM settings WHERE user_id = ?', [userId], (err, result) => {
-        if (err) return res.json({});
-        res.json(result[0] || {});
+    if (!userId) return res.json({});
+    
+    // Get settings
+    db.query('SELECT * FROM settings WHERE user_id = ?', [userId], (err, settings) => {
+        if (err) {
+            console.error('GET /api/settings error:', err);
+            return res.json({});
+        }
+        
+        const settingsData = settings && settings[0] ? settings[0] : {};
+        
+        // Get latest avatar URL
+        const avatarQuery = isPg
+            ? 'SELECT url FROM user_avatars WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+            : 'SELECT url FROM user_avatars WHERE user_id = ? ORDER BY created_at DESC LIMIT 1';
+        
+        db.query(avatarQuery, [userId], (err2, avatarResult) => {
+            if (err2) {
+                console.error('Error fetching avatar:', err2);
+                return res.json(settingsData);
+            }
+            
+            if (avatarResult && avatarResult[0] && avatarResult[0].url) {
+                settingsData.avatar_url = avatarResult[0].url;
+            }
+            
+            res.json(settingsData);
+        });
     });
 });
 
@@ -4677,8 +4760,8 @@ app.post('/api/settings', (req, res) => {
     const data = req.body;
     const query = `
         INSERT INTO settings 
-        (user_id, displayName, email, autoReply, chatEnabled, msgAlert, ticketAlert, soundAlert, autopilotMode, priority, autoAssign)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (user_id, displayName, email, autoReply, chatEnabled, msgAlert, ticketAlert, soundAlert, autopilotMode, priority, autoAssign, theme)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           displayName = VALUES(displayName),
           email = VALUES(email),
@@ -4689,7 +4772,8 @@ app.post('/api/settings', (req, res) => {
           soundAlert = VALUES(soundAlert),
           autopilotMode = VALUES(autopilotMode),
           priority = VALUES(priority),
-          autoAssign = VALUES(autoAssign)
+          autoAssign = VALUES(autoAssign),
+          theme = VALUES(theme)
     `;
     db.query(query, [
         userId,
@@ -4702,7 +4786,8 @@ app.post('/api/settings', (req, res) => {
         data.soundAlert,
         data.autopilotMode,
         data.priority,
-        data.autoAssign
+        data.autoAssign,
+        data.theme || 'Light'
     ], (err) => {
         if (err) return res.sendStatus(500);
         res.sendStatus(200);
@@ -4736,18 +4821,9 @@ app.post('/api/settings/avatar', isAuthenticated, handleAvatarUpload, (req, res)
                 return res.status(500).json({ error: 'db_error', message: err.message || 'Failed to save avatar metadata' });
             }
             const avatarId = result?.insertId ?? (Array.isArray(result) && result[0] && result[0].id) ?? null;
-            // update settings.avatar_url for quick lookup
-            const avatarSql = isPg
-                ? 'INSERT INTO settings (user_id, avatar_url) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET avatar_url = EXCLUDED.avatar_url'
-                : 'INSERT INTO settings (user_id, avatar_url) VALUES (?, ?) ON DUPLICATE KEY UPDATE avatar_url = VALUES(avatar_url)';
-            db.query(avatarSql, [userId, url], (err2) => {
-                if (err2) {
-                    console.error('Error saving avatar url to settings', err2);
-                    // still return success for the upload but include warning
-                    return res.status(200).json({ success: true, url, avatarId, warning: 'failed_to_update_settings' });
-                }
-                res.json({ success: true, url, avatarId });
-            });
+            // Return success - avatar is stored in user_avatars table
+            // GET /api/settings will fetch it from there
+            res.json({ success: true, url, avatarId });
         });
     } catch (e) {
         console.error('avatar upload error', e);
@@ -5770,7 +5846,7 @@ httpServer.listen(PORT, () => {
 });
 
 // Auto-sync Gmail emails on a timer
-const GMAIL_SYNC_INTERVAL = parseInt(process.env.GMAIL_SYNC_INTERVAL || '300000', 10); // Default: 5 minutes
+const GMAIL_SYNC_INTERVAL = parseInt(process.env.GMAIL_SYNC_INTERVAL || '6000', 10); // Default: 6 seconds
 let gmailSyncTimer = null;
 
 async function startAutoSync() {
