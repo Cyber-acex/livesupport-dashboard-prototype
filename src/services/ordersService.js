@@ -102,7 +102,16 @@ export async function reduceMenuItemStock(payload) {
 export async function fetchTables() {
   const res = await fetch('/api/tables', { credentials: 'same-origin' });
   if (!res.ok) throw new Error('Failed to load tables');
-  return res.json();
+  const data = await res.json();
+  if (Array.isArray(data) && data.length > 0) {
+    return data;
+  }
+  return Array.from({ length: 25 }, (_, index) => ({
+    id: index + 1,
+    number: index + 1,
+    label: `Table ${index + 1}`,
+    status: 'vacant'
+  }));
 }
 
 export async function updateTableState(tableNumber, payload) {

@@ -5,6 +5,7 @@ import MetricCard from '../components/MetricCard';
 import TableCard from '../components/TableCard';
 import StatusBadge from '../components/StatusBadge';
 import StatisticsChart from '../components/StatisticsChart';
+import MonthlyTargetGauge from '../components/MonthlyTargetGauge';
 import { fetchDashboardStats, fetchRecentOrders, fetchRecentMessages } from '../services/dashboardService';
 
 // Metric Icons
@@ -118,20 +119,19 @@ function DashboardPage() {
   ]), [recentMessages]);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar />
-          <main className="flex-1 overflow-y-auto p-4 mx-auto max-w-7xl md:p-6">
-            {/* Page Header */}
-            <div className="mb-8">
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar />
+        <main className="flex-1 overflow-y-auto p-4 mx-auto w-full max-w-7xl md:p-6">
+          {/* Page Header */}
+          <div className="mb-8">
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
-              <p className="mt-1 text-gray-600 dark:text-gray-400">Welcome back! Here's an overview of your support system.</p>
+              <p className="mt-1 text-gray-600 dark:text-gray-400">Welcome back! Here's a quick view of your support system.</p>
             </div>
 
-            {/* Metric Cards Grid */}
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 mb-8">
+          {/* Metric Cards Grid */}
+          <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr_360px] md:gap-6">
               <MetricCard
                 icon={customerIcon}
                 label="Customers"
@@ -146,10 +146,11 @@ function DashboardPage() {
                 change={ordersChange}
                 changeType={ordersChange && ordersChange < 0 ? 'negative' : 'positive'}
               />
+              <MonthlyTargetGauge />
             </div>
 
-            {/* Tables Grid */}
-            <div className="grid grid-cols-12 gap-6">
+          {/* Tables Grid */}
+          <div className="grid grid-cols-12 gap-6">
               <div className="col-span-12 xl:col-span-7">
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]">
                   <div className="mb-4 flex items-start justify-between">
@@ -182,8 +183,7 @@ function DashboardPage() {
                 />
               </div>
             </div>
-          </main>
-        </div>
+        </main>
       </div>
     </div>
   );

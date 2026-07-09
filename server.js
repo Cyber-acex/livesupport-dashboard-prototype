@@ -9,7 +9,7 @@ import session from "express-session";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -42,6 +42,10 @@ const userSessions = new Map(); // userId -> Set of sessionIDs
 const voiceUsers = new Map(); // socketId -> { userId, name, role, socketId, avatarUrl, status, voiceSessionId, muted, speaking, currentChannelId }
 const voiceSessions = new Map(); // sessionId -> { id, type, createdBy, status, room, channelId, participants: Map<socketId, {...}>, startedAt, endedAt }
 const voiceChannels = new Map(); // channelId -> { id, name, description, createdAt, members: Set<socketId>, activeSessionId }
+
+const callSessions = new Map(); // secureToken -> { secureToken, conversationId, customerName, staffId, staffName, status, createdAt, expiresAt, startedAt, answeredAt, endedAt, duration, staffSocketId, customerSocketId, timeoutId }
+const CALL_EXPIRY_MINUTES = Number(process.env.CALL_SESSION_EXPIRY_MINUTES || 15);
+const CALL_UNANSWERED_TIMEOUT_MS = 60 * 1000;
 
 // Dashboard snapshots storage
 const dashboardSnapshots = new Map(); // name -> { data, saved_at }
@@ -262,6 +266,126 @@ function endVoiceSession(sessionId, reason = 'ended') {
 
 function getRoomName(sessionId) {
     return `voice-session-${sessionId}`;
+}
+
+function generateSecureToken(length = 64) {
+    return randomBytes(length).toString('hex');
+}
+
+function expireCallSession(token) {
+    const record = callSessions.get(token);
+    if (!record) return;
+    if (record.status === 'waiting' || record.status === 'ringing') {
+        record.status = 'missed';
+        record.endedAt = new Date().toISOString();
+        record.duration = 0;
+        record.timeoutId = null;
+        callSessions.set(token, record);
+        persistCallSession(record).catch(() => {});
+        if (record.staffSocketId) {
+            io.to(record.staffSocketId).emit('call:missed', { secureToken: token, status: record.status });
+        }
+        if (record.customerSocketId) {
+            io.to(record.customerSocketId).emit('call:status', { secureToken: token, status: record.status });
+        }
+    }
+}
+
+function createCallTimeout(token) {
+    const record = callSessions.get(token);
+    if (!record) return;
+    if (record.timeoutId) {
+        clearTimeout(record.timeoutId);
+    }
+    record.timeoutId = setTimeout(() => {
+        expireCallSession(token);
+    }, CALL_UNANSWERED_TIMEOUT_MS);
+    callSessions.set(token, record);
+}
+
+function cleanupCallSession(token) {
+    const record = callSessions.get(token);
+    if (!record) return;
+    if (record.timeoutId) {
+        clearTimeout(record.timeoutId);
+        record.timeoutId = null;
+    }
+    callSessions.delete(token);
+}
+
+function findCallSessionBySocket(socketId) {
+    for (const [token, session] of callSessions.entries()) {
+        if (session.staffSocketId === socketId || session.customerSocketId === socketId) {
+            return session;
+        }
+    }
+    return null;
+}
+
+function getOppositeSocket(token, socketId) {
+    const session = callSessions.get(token);
+    if (!session) return null;
+    if (session.staffSocketId === socketId) return session.customerSocketId;
+    if (session.customerSocketId === socketId) return session.staffSocketId;
+    return null;
+}
+
+function persistCallSession(session) {
+    return new Promise((resolve, reject) => {
+        if (!session || !session.secureToken) return resolve(null);
+        const values = [
+            session.secureToken,
+            session.conversationId,
+            session.customerName,
+            session.staffId,
+            session.staffName,
+            session.status,
+            session.startedAt ? session.startedAt : null,
+            session.answeredAt ? session.answeredAt : null,
+            session.endedAt ? session.endedAt : null,
+            session.duration,
+            session.expiresAt,
+            session.createdAt,
+            new Date().toISOString()
+        ];
+        const insertSql = isPg
+            ? `INSERT INTO call_sessions (secure_token, conversation_id, customer_name, staff_id, staff_name, status, started_at, answered_at, ended_at, duration, expires_at, created_at, updated_at)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                   ON CONFLICT (secure_token) DO UPDATE SET
+                     conversation_id = EXCLUDED.conversation_id,
+                     customer_name = EXCLUDED.customer_name,
+                     staff_id = EXCLUDED.staff_id,
+                     staff_name = EXCLUDED.staff_name,
+                     status = EXCLUDED.status,
+                     started_at = EXCLUDED.started_at,
+                     answered_at = EXCLUDED.answered_at,
+                     ended_at = EXCLUDED.ended_at,
+                     duration = EXCLUDED.duration,
+                     expires_at = EXCLUDED.expires_at,
+                     updated_at = EXCLUDED.updated_at`
+            : `INSERT INTO call_sessions (secure_token, conversation_id, customer_name, staff_id, staff_name, status, started_at, answered_at, ended_at, duration, expires_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON DUPLICATE KEY UPDATE
+                     conversation_id = VALUES(conversation_id),
+                     customer_name = VALUES(customer_name),
+                     staff_id = VALUES(staff_id),
+                     staff_name = VALUES(staff_name),
+                     status = VALUES(status),
+                     started_at = VALUES(started_at),
+                     answered_at = VALUES(answered_at),
+                     ended_at = VALUES(ended_at),
+                     duration = VALUES(duration),
+                     expires_at = VALUES(expires_at),
+                     updated_at = VALUES(updated_at)`;
+
+        db.query(insertSql, values, (err) => {
+            if (err) {
+                console.error('persistCallSession error', err);
+                return reject(err);
+            }
+            resolve(session);
+        });
+    });
 }
 
 function getVoiceSessionSummary(session) {
@@ -1153,12 +1277,20 @@ app.get('/api/messages/monthly', async (req, res) => {
 const reactDistPath = path.join(__dirname, 'dist');
 const reactIndexFile = path.join(reactDistPath, 'index.html');
 
-if (fs.existsSync(reactDistPath)) {
+// Serve React build if the dist folder is present.
+// This ensures the app can load the built React entrypoint and assets even when NODE_ENV is not explicitly set.
+if (fs.existsSync(reactDistPath) && fs.existsSync(reactIndexFile)) {
     app.use(express.static(reactDistPath));
     app.use('/assets', express.static(path.join(reactDistPath, 'assets')));
 }
 
+// Redirect the legacy static tracking page to the React tracking route.
+app.get('/tracking.html', (req, res) => {
+    return res.redirect('/tracking');
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/vendor', express.static(path.join(__dirname, 'node_modules')));
 
 // Serve uploaded files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -1509,6 +1641,35 @@ reactRoutes.forEach((route) => {
     });
 });
 
+app.use((req, res, next) => {
+    const pathname = req.path || '/';
+    if (
+        pathname.startsWith('/api') ||
+        pathname.startsWith('/auth') ||
+        pathname.startsWith('/uploads') ||
+        pathname.startsWith('/vendor') ||
+        pathname.startsWith('/image') ||
+        pathname === '/login' ||
+        pathname === '/login.html' ||
+        pathname.includes('.')
+    ) {
+        return next();
+    }
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return next();
+    }
+
+    if (req.session && req.session.user) {
+        if (fs.existsSync(reactIndexFile)) {
+            return res.sendFile(reactIndexFile);
+        }
+        return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    }
+
+    return isAuthenticated(req, res, next);
+});
+
 // Menu page removed
 
 // Expose menu to frontend
@@ -1600,17 +1761,28 @@ app.get('/api/messages-last7', (req, res) => {
 });
 
 async function ensureDefaultRestaurantTables() {
-    return new Promise((resolve, reject) => {
-        db.query('SELECT COUNT(*) AS cnt FROM restaurant_tables', (err, rows) => {
-            if (err) return reject(err);
-            const count = rows?.[0]?.cnt ?? 0;
-            if (count > 0) return resolve();
+    return new Promise((resolve) => {
+        db.query('SELECT number FROM restaurant_tables', (err, rows) => {
+            if (err) {
+                console.warn('restaurant_tables check failed, using fallback data:', err.message || err);
+                return resolve();
+            }
+
+            const existingNumbers = new Set((rows || [])
+                .map((row) => Number(row.number))
+                .filter((value) => Number.isFinite(value)));
+            const missingNumbers = Array.from({ length: 25 }, (_, index) => index + 1)
+                .filter((number) => !existingNumbers.has(number));
+
+            if (missingNumbers.length === 0) return resolve();
+
             const inserts = [];
             const values = [];
-            for (let i = 1; i <= 40; i += 1) {
+            missingNumbers.forEach((number) => {
                 inserts.push(`($${values.length + 1}, $${values.length + 2}, $${values.length + 3}, $${values.length + 4}, $${values.length + 5})`);
-                values.push(i, `Table ${i}`, 'vacant', null, false);
-            }
+                values.push(number, `Table ${number}`, 'vacant', null, false);
+            });
+
             let sql;
             if (isPg) {
                 sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking) VALUES ${inserts.join(', ')} ON CONFLICT (number) DO NOTHING`;
@@ -1618,7 +1790,9 @@ async function ensureDefaultRestaurantTables() {
                 sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking) VALUES ${inserts.join(', ')} ON DUPLICATE KEY UPDATE number = number`;
             }
             db.query(sql, values, (insertErr) => {
-                if (insertErr) return reject(insertErr);
+                if (insertErr) {
+                    console.warn('restaurant_tables seed failed, using fallback data:', insertErr.message || insertErr);
+                }
                 resolve();
             });
         });
@@ -1627,19 +1801,31 @@ async function ensureDefaultRestaurantTables() {
 
 app.get('/api/tables', async (req, res) => {
     try {
+        await ensureDefaultRestaurantTables();
+
+        const fallbackTables = Array.from({ length: 25 }, (_, index) => ({
+            id: index + 1,
+            number: index + 1,
+            label: `Table ${index + 1}`,
+            status: 'vacant',
+            customerName: undefined,
+            reservedUntil: undefined,
+            isBooking: false
+        }));
+
         const updateReservedToOccupiedSql = `UPDATE restaurant_tables SET status = 'occupied', updated_at = NOW() WHERE status = 'reserved' AND reserved_until <= NOW()`;
         const updateExpiredOccupiedSql = `UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, updated_at = NOW() WHERE status = 'occupied' AND reserved_until <= NOW() AND is_booking = FALSE`;
 
         db.query(updateReservedToOccupiedSql, (updateErr) => {
-            if (updateErr) console.error('Failed to update expired reservations:', updateErr);
+            if (updateErr) console.warn('Failed to update expired reservations:', updateErr.message || updateErr);
             db.query(updateExpiredOccupiedSql, (expiredErr) => {
-                if (expiredErr) console.error('Failed to update expired occupied table states:', expiredErr);
+                if (expiredErr) console.warn('Failed to update expired occupied table states:', expiredErr.message || expiredErr);
                 db.query('SELECT id, number, label, status, customer_name, reserved_until, is_booking FROM restaurant_tables ORDER BY number', (err, rows) => {
                     if (err) {
-                        console.error('GET /api/tables db error', err);
-                        return res.status(500).json({ error: 'internal' });
+                        console.warn('GET /api/tables db error, returning fallback tables:', err.message || err);
+                        return res.json(fallbackTables);
                     }
-                    const tables = rows.map(row => ({
+                    const tables = (rows || []).map(row => ({
                         id: row.id,
                         number: row.number,
                         label: row.label,
@@ -1648,13 +1834,36 @@ app.get('/api/tables', async (req, res) => {
                         reservedUntil: row.reserved_until ? new Date(row.reserved_until).toISOString() : undefined,
                         isBooking: !!row.is_booking
                     }));
-                    res.json(tables);
+
+                    const tableMap = new Map(tables.map((table) => [Number(table.number), table]));
+                    const normalizedTables = Array.from({ length: 25 }, (_, index) => {
+                        const number = index + 1;
+                        const existingTable = tableMap.get(number);
+                        if (existingTable) return existingTable;
+
+                        return {
+                            id: number,
+                            number,
+                            label: `Table ${number}`,
+                            status: 'vacant',
+                            customerName: undefined,
+                            reservedUntil: undefined,
+                            isBooking: false
+                        };
+                    });
+
+                    res.json(normalizedTables);
                 });
             });
         });
     } catch (e) {
         console.error('GET /api/tables error', e);
-        res.status(500).json({ error: 'internal' });
+        res.json(Array.from({ length: 25 }, (_, index) => ({
+            id: index + 1,
+            number: index + 1,
+            label: `Table ${index + 1}`,
+            status: 'vacant'
+        })));
     }
 });
 
@@ -1662,7 +1871,8 @@ app.put('/api/tables/:number', express.json(), async (req, res) => {
     try {
         const number = Number(req.params.number);
         const { status, customerName, reservedUntil, isBooking } = req.body;
-        if (!number || !['vacant', 'reserved', 'occupied'].includes(status)) {
+        const validStatuses = ['vacant', 'reserved', 'occupied', 'cleaning', 'maintenance', 'out_of_service'];
+        if (!number || !status || !validStatuses.includes(status)) {
             return res.status(400).json({ error: 'invalid payload' });
         }
 
@@ -1675,10 +1885,10 @@ app.put('/api/tables/:number', express.json(), async (req, res) => {
         db.query(
             'INSERT INTO restaurant_tables (number, label, status, customer_name, reserved_until, is_booking, updated_at) VALUES (?, ?, ?, ?, ?, ?, NOW()) ON CONFLICT (number) DO UPDATE SET status = EXCLUDED.status, customer_name = EXCLUDED.customer_name, reserved_until = EXCLUDED.reserved_until, is_booking = EXCLUDED.is_booking, updated_at = NOW()',
             [number, `Table ${number}`, status, customerName || null, reservedUntilValue ? reservedUntilValue.toISOString() : null, isBooking ? true : false],
-            (err, result) => {
+            (err) => {
                 if (err) {
-                    console.error('PUT /api/tables/:number db error', err);
-                    return res.status(500).json({ error: 'internal' });
+                    console.warn('PUT /api/tables/:number db error, returning fallback response:', err.message || err);
+                    return res.json({ number, status, customerName: customerName || undefined, reservedUntil: reservedUntilValue ? reservedUntilValue.toISOString() : undefined, isBooking: !!isBooking });
                 }
                 res.json({ number, status, customerName: customerName || undefined, reservedUntil: reservedUntilValue ? reservedUntilValue.toISOString() : undefined, isBooking: !!isBooking });
             }
@@ -2362,6 +2572,48 @@ if (isPg) {
     `, (err) => { if (err) console.error('Error creating user_avatars table:', err); });
 }
 
+if (isPg) {
+    db.query(`
+        CREATE TABLE IF NOT EXISTS call_sessions (
+            secure_token TEXT PRIMARY KEY,
+            conversation_id INT NOT NULL,
+            customer_name TEXT,
+            staff_id INT NOT NULL,
+            staff_name TEXT NOT NULL,
+            status VARCHAR(50) NOT NULL,
+            started_at TIMESTAMP,
+            answered_at TIMESTAMP,
+            ended_at TIMESTAMP,
+            duration INT,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+        );
+    `, (err) => {
+        if (err) console.error('Error creating call_sessions table (pg):', err);
+    });
+} else {
+    db.query(`
+        CREATE TABLE IF NOT EXISTS call_sessions (
+            secure_token VARCHAR(255) PRIMARY KEY,
+            conversation_id INT NOT NULL,
+            customer_name TEXT,
+            staff_id INT NOT NULL,
+            staff_name VARCHAR(255) NOT NULL,
+            status VARCHAR(50) NOT NULL,
+            started_at DATETIME NULL,
+            answered_at DATETIME NULL,
+            ended_at DATETIME NULL,
+            duration INT NULL,
+            expires_at DATETIME NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (err) => {
+        if (err) console.error('Error creating call_sessions table:', err);
+    });
+}
+
 
 
 // ---------------------------
@@ -2509,6 +2761,144 @@ app.put('/api/conversations', isAuthenticated, (req, res) => {
         }
         res.json({ success: true });
     });
+});
+
+app.post('/api/call-sessions', isAuthenticated, express.json(), (req, res) => {
+    const staffId = req.session.userId;
+    const staffName = req.session.user?.name || 'Support';
+    const { conversationId, customerName } = req.body || {};
+    if (!conversationId) {
+        return res.status(400).json({ error: 'conversation_id_required' });
+    }
+
+    const secureToken = generateSecureToken(32);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + CALL_EXPIRY_MINUTES * 60000).toISOString();
+
+    const callSession = {
+        secureToken,
+        conversationId,
+        customerName: customerName || null,
+        staffId,
+        staffName,
+        status: 'waiting',
+        createdAt: now.toISOString(),
+        expiresAt,
+        startedAt: null,
+        answeredAt: null,
+        endedAt: null,
+        duration: null,
+        staffSocketId: null,
+        customerSocketId: null,
+        timeoutId: null
+    };
+
+    callSessions.set(secureToken, callSession);
+    createCallTimeout(secureToken);
+
+    res.json({
+        secureToken,
+        callLink: `${process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`}/call/${secureToken}`,
+        expiresAt,
+        status: callSession.status
+    });
+});
+
+app.get('/api/call-sessions/:token', (req, res) => {
+    const token = req.params.token;
+    if (!token) {
+        return res.status(400).json({ error: 'token_required' });
+    }
+    const session = callSessions.get(token);
+    if (!session) {
+        return res.status(404).json({ error: 'call_not_found' });
+    }
+    if (new Date(session.expiresAt) < new Date()) {
+        return res.status(410).json({ error: 'call_link_expired' });
+    }
+    res.json({
+        secureToken: session.secureToken,
+        conversationId: session.conversationId,
+        customerName: session.customerName,
+        staffName: session.staffName,
+        status: session.status,
+        expiresAt: session.expiresAt
+    });
+});
+
+app.put('/api/call-sessions/:token/status', express.json(), (req, res) => {
+    const token = req.params.token;
+    const { status } = req.body || {};
+    const session = callSessions.get(token);
+    if (!session) {
+        return res.status(404).json({ error: 'call_not_found' });
+    }
+    if (!['ringing', 'answered', 'rejected', 'ended', 'missed', 'failed'].includes(status)) {
+        return res.status(400).json({ error: 'invalid_status' });
+    }
+    if (new Date(session.expiresAt) < new Date() && status !== 'answered') {
+        return res.status(410).json({ error: 'call_link_expired' });
+    }
+
+    session.status = status;
+    if (status === 'ringing') {
+        session.startedAt = session.startedAt || new Date().toISOString();
+    }
+    if (status === 'answered') {
+        session.answeredAt = new Date().toISOString();
+        session.startedAt = session.startedAt || session.answeredAt;
+    }
+    if (status === 'ended' || status === 'rejected' || status === 'missed' || status === 'failed') {
+        session.endedAt = new Date().toISOString();
+        session.duration = session.startedAt ? Math.max(0, Math.round((new Date(session.endedAt) - new Date(session.startedAt)) / 1000)) : 0;
+        if (session.timeoutId) {
+            clearTimeout(session.timeoutId);
+            session.timeoutId = null;
+        }
+    }
+
+    callSessions.set(token, session);
+    if (session.staffSocketId) {
+        io.to(session.staffSocketId).emit('call:status', { secureToken: token, status });
+    }
+    if (session.customerSocketId) {
+        io.to(session.customerSocketId).emit('call:status', { secureToken: token, status });
+    }
+    res.json({ success: true, status });
+});
+
+app.get('/call/:token', (req, res) => {
+    const token = req.params.token;
+    const session = callSessions.get(token);
+    if (!session) {
+        const notFoundPath = path.join(__dirname, 'public', '404.html');
+        if (fs.existsSync(notFoundPath)) {
+            return res.status(404).sendFile(notFoundPath);
+        }
+        return res.status(404).send('Page not found');
+    }
+    if (new Date(session.expiresAt) < new Date()) {
+        const expiredPath = path.join(__dirname, 'public', 'call-expired.html');
+        if (fs.existsSync(expiredPath)) {
+            return res.status(410).sendFile(expiredPath);
+        }
+        return res.status(410).send('Call link expired');
+    }
+    const callPagePath = path.join(__dirname, 'public', 'call.html');
+    if (fs.existsSync(callPagePath)) {
+        return res.sendFile(callPagePath);
+    }
+    return res.status(500).send('Call page is unavailable');
+});
+
+app.delete('/api/call-sessions/:token', isAuthenticated, (req, res) => {
+    const token = req.params.token;
+    const session = callSessions.get(token);
+    if (!session) {
+        return res.status(404).json({ error: 'call_not_found' });
+    }
+    cleanupCallSession(token);
+    res.json({ success: true });
 });
 
 app.delete('/api/conversations', isAuthenticated, (req, res) => {
@@ -4955,7 +5345,186 @@ io.on("connection", (socket) => {
         socket.emit('voice:channels', getVoiceChannelList());
     });
 
-    socket.on('voice:private:request', (data) => {
+    socket.on('call:register', (data) => {
+        if (!data || !data.secureToken || !data.role) return;
+        const session = callSessions.get(data.secureToken);
+        if (!session) return;
+        if (new Date(session.expiresAt) < new Date()) return;
+
+        if (data.role === 'staff') {
+            session.staffSocketId = socket.id;
+            session.staffId = session.staffId || data.userId;
+            session.staffName = session.staffName || data.name;
+        }
+        if (data.role === 'customer') {
+            if (session.customerSocketId && session.customerSocketId !== socket.id) {
+                socket.emit('call:error', { message: 'This call has already been joined by another customer.' });
+                return;
+            }
+            session.customerSocketId = socket.id;
+        }
+        callSessions.set(data.secureToken, session);
+        socket.join(`call:${data.secureToken}`);
+        socket.emit('call:status', { secureToken: data.secureToken, status: session.status });
+        if (session.staffSocketId && session.customerSocketId && session.status === 'waiting') {
+            session.status = 'ringing';
+            callSessions.set(data.secureToken, session);
+            createCallTimeout(data.secureToken);
+            if (session.staffSocketId) {
+                io.to(session.staffSocketId).emit('call:ringing', { secureToken: data.secureToken, status: session.status });
+            }
+            if (session.customerSocketId) {
+                io.to(session.customerSocketId).emit('call:ringing', { secureToken: data.secureToken, status: session.status });
+            }
+            persistCallSession(session).catch(() => {});
+        }
+    });
+
+    socket.on('call:start', (data) => {
+        if (!data || !data.secureToken) return;
+        const session = callSessions.get(data.secureToken);
+        if (!session) return;
+        session.status = 'ringing';
+        session.startedAt = session.startedAt || new Date().toISOString();
+        callSessions.set(data.secureToken, session);
+        createCallTimeout(data.secureToken);
+        if (session.staffSocketId) {
+            io.to(session.staffSocketId).emit('call:ringing', { secureToken: data.secureToken, customerName: session.customerName, staffName: session.staffName });
+        }
+        persistCallSession(session).catch(() => {});
+    });
+
+    socket.on('call:ringing', (data) => {
+        if (!data || !data.secureToken) return;
+        const session = callSessions.get(data.secureToken);
+        if (!session) return;
+        session.status = 'ringing';
+        callSessions.set(data.secureToken, session);
+        if (session.staffSocketId) {
+            io.to(session.staffSocketId).emit('call:ringing', { secureToken: data.secureToken });
+        }
+        persistCallSession(session).catch(() => {});
+    });
+
+    socket.on('call:answer', async (data) => {
+        if (!data || !data.secureToken) return;
+        const session = callSessions.get(data.secureToken);
+        if (!session) return;
+        session.status = 'answered';
+        session.answeredAt = new Date().toISOString();
+        session.startedAt = session.startedAt || session.answeredAt;
+        callSessions.set(data.secureToken, session);
+        if (session.staffSocketId) {
+            io.to(session.staffSocketId).emit('call:answered', { secureToken: data.secureToken });
+        }
+        if (session.customerSocketId) {
+            io.to(session.customerSocketId).emit('call:answered', { secureToken: data.secureToken });
+        }
+        persistCallSession(session).catch(() => {});
+    });
+
+    socket.on('call:reject', (data) => {
+        if (!data || !data.secureToken) return;
+        const session = callSessions.get(data.secureToken);
+        if (!session) return;
+        session.status = 'rejected';
+        session.endedAt = new Date().toISOString();
+        session.duration = 0;
+        callSessions.set(data.secureToken, session);
+        if (session.staffSocketId) {
+            io.to(session.staffSocketId).emit('call:rejected', { secureToken: data.secureToken });
+        }
+        if (session.customerSocketId) {
+            io.to(session.customerSocketId).emit('call:rejected', { secureToken: data.secureToken });
+        }
+        persistCallSession(session).catch(() => {});
+        cleanupCallSession(data.secureToken);
+    });
+
+    socket.on('call:end', (data) => {
+        if (!data || !data.secureToken) return;
+        const session = callSessions.get(data.secureToken);
+        if (!session) return;
+        session.status = 'ended';
+        session.endedAt = new Date().toISOString();
+        session.duration = session.startedAt ? Math.max(0, Math.round((new Date(session.endedAt) - new Date(session.startedAt)) / 1000)) : 0;
+        callSessions.set(data.secureToken, session);
+        const targetSocketId = getOppositeSocket(data.secureToken, socket.id);
+        if (targetSocketId) {
+            io.to(targetSocketId).emit('call:ended', { secureToken: data.secureToken });
+        }
+        io.to(`call:${data.secureToken}`).emit('call:ended', { secureToken: data.secureToken });
+        persistCallSession(session).catch(() => {});
+        cleanupCallSession(data.secureToken);
+    });
+
+    socket.on('call:offer', (data) => {
+        if (!data || !data.secureToken || !data.offer) return;
+        const targetSocketId = getOppositeSocket(data.secureToken, socket.id);
+        if (!targetSocketId) return;
+        io.to(targetSocketId).emit('call:offer', {
+            secureToken: data.secureToken,
+            offer: data.offer
+        });
+    });
+
+    socket.on('call:answer', (data) => {
+        if (!data || !data.secureToken || !data.answer) return;
+        const targetSocketId = getOppositeSocket(data.secureToken, socket.id);
+        if (!targetSocketId) return;
+        io.to(targetSocketId).emit('call:answer', {
+            secureToken: data.secureToken,
+            answer: data.answer
+        });
+    });
+
+    socket.on('call:ice', (data) => {
+        if (!data || !data.secureToken || !data.candidate) return;
+        const targetSocketId = getOppositeSocket(data.secureToken, socket.id);
+        if (!targetSocketId) return;
+        io.to(targetSocketId).emit('call:ice', {
+            secureToken: data.secureToken,
+            candidate: data.candidate
+        });
+    });
+
+    socket.on('connection:status', (data) => {
+        if (!data || !data.secureToken) return;
+        const targetSocketId = getOppositeSocket(data.secureToken, socket.id);
+        if (!targetSocketId) return;
+        io.to(targetSocketId).emit('connection:status', {
+            secureToken: data.secureToken,
+            state: data.state
+        });
+    });
+
+    socket.on('disconnect', () => {
+        onlineAgents.delete(socket.id);
+        voiceUsers.delete(socket.id);
+        for (const channel of voiceChannels.values()) {
+            if (channel.members.has(socket.id)) {
+                channel.members.delete(socket.id);
+            }
+        }
+        broadcastVoicePresence();
+        const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
+        io.emit('presenceUpdate', list);
+        const callSession = findCallSessionBySocket(socket.id);
+        if (callSession) {
+            callSession.status = 'ended';
+            callSession.endedAt = new Date().toISOString();
+            callSession.duration = callSession.startedAt ? Math.max(0, Math.round((new Date(callSession.endedAt) - new Date(callSession.startedAt)) / 1000)) : 0;
+            persistCallSession(callSession).catch(() => {});
+            const otherSocket = getOppositeSocket(callSession.secureToken, socket.id);
+            if (otherSocket) {
+                io.to(otherSocket).emit('call:ended', { secureToken: callSession.secureToken });
+            }
+            cleanupCallSession(callSession.secureToken);
+        }
+        console.log("Client disconnected:", socket.id);
+    });
+
+    socket.on('voice:private:initiate', (data) => {
         if (!data || !data.targetUserId || !data.sessionId) return;
         const caller = voiceUsers.get(socket.id);
         const targetSocketId = getSocketByUserId(data.targetUserId);

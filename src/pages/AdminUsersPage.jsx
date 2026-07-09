@@ -212,16 +212,16 @@ function AdminUsersPage() {
   }
 
   return (
-    <div className="flex">
+    <div className="flex bg-gray-50 dark:bg-slate-950">
       <Sidebar />
       <div className="flex-1 flex flex-col">
         <TopBar />
-        <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="p-6 bg-gray-50 min-h-screen dark:bg-slate-950">
           <div className="max-w-7xl">
             {/* Header */}
             <div className="mb-8">
-              <h1 className="text-3xl font-bold text-gray-900">Admin Users</h1>
-              <p className="text-gray-600 mt-2">Manage system users and permissions</p>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Admin Users</h1>
+              <p className="text-gray-600 mt-2 dark:text-slate-400">Manage system users and permissions</p>
             </div>
 
             {error && (
@@ -231,34 +231,34 @@ function AdminUsersPage() {
             )}
 
             {/* Create User Section */}
-            <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-              <h2 className="text-xl font-semibold text-gray-800 mb-4">Create New User</h2>
+            <div className="bg-white rounded-lg shadow-md p-6 mb-8 dark:bg-slate-900 dark:text-slate-200">
+              <h2 className="text-xl font-semibold text-gray-800 mb-4 dark:text-white">Create New User</h2>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                 <input
                   type="text"
                   placeholder="Name"
                   value={newUser.name}
                   onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-900 dark:border-slate-700 dark:text-white"
                 />
                 <input
                   type="email"
                   placeholder="Email"
                   value={newUser.email}
                   onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-900 dark:border-slate-700 dark:text-white"
                 />
                 <input
                   type="password"
                   placeholder="Password"
                   value={newUser.password}
                   onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-900 dark:border-slate-700 dark:text-white"
                 />
                 <select
                   value={newUser.role}
                   onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-900 dark:border-slate-700 dark:text-white"
                 >
                   {roleOptions.map((role) => (
                     <option key={role} value={role}>
@@ -279,17 +279,17 @@ function AdminUsersPage() {
             </div>
 
             {/* Users Table */}
-            <div className="bg-white rounded-lg shadow-md overflow-x-auto">
+            <div className="bg-white rounded-lg shadow-md overflow-x-auto dark:bg-slate-900 dark:text-slate-200">
               <table className="w-full text-left text-sm">
-                <thead className="bg-gray-100 border-b border-gray-200">
+                <thead className="bg-gray-100 border-b border-gray-200 dark:bg-slate-800 dark:border-slate-700">
                   <tr>
-                    <th className="px-6 py-3 font-semibold text-gray-700">ID</th>
-                    <th className="px-6 py-3 font-semibold text-gray-700">Name</th>
-                    <th className="px-6 py-3 font-semibold text-gray-700">Email</th>
-                    <th className="px-6 py-3 font-semibold text-gray-700">Role</th>
-                    <th className="px-6 py-3 font-semibold text-gray-700">Active</th>
-                    <th className="px-6 py-3 font-semibold text-gray-700">Disabled</th>
-                    <th className="px-6 py-3 font-semibold text-gray-700">Actions</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">ID</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">Name</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">Email</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">Role</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">Active</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">Disabled</th>
+                    <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-300">Actions</th>
                   </tr>
                 </thead>
                 <tbody>

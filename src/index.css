@@ -30,6 +30,47 @@ body.dark {
   @apply bg-gray-900 text-white;
 }
 
+.dark input,
+.dark select,
+.dark textarea {
+  border-color: #334155;
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #94a3b8;
+}
+
+.dark .bg-white {
+  background-color: #0f172a;
+}
+
+.dark .bg-slate-50,
+.dark .bg-slate-100,
+.dark .bg-gray-50 {
+  background-color: #111827;
+}
+
+.dark .border-slate-200,
+.dark .border-gray-200 {
+  border-color: #334155;
+}
+
+.dark .text-slate-900,
+.dark .text-gray-900 {
+  color: #f8fafc;
+}
+
+.dark .text-slate-700,
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-gray-700,
+.dark .text-gray-600 {
+  color: #cbd5e1;
+}
+
 /* Orders page light mode override */
 .orders-page-light {
   background-color: white !important;

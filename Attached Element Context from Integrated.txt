@@ -1,0 +1,59 @@
+Attached Element Context from Integrated Browser
+
+Element: div.divider
+
+URL: http://127.0.0.1:3000/login.html
+
+HTML Path: div.login-container > div.login-panel > div.login-card > form.login-form > div.divider
+
+Outer HTML:
+```html
+<div class="divider">
+                        <span>or</span>
+                    </div>
+```
+
+Dimensions:
+- top: 424px
+- left: 52px
+- width: 860px
+- height: 32px
+
+CSS:
+```css
+* { margin: 0;
+    padding: 0;
+    box-sizing: border-box; }
+.divider { display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 0; }
+
+/* Pseudo-elements */
+.divider::before, .divider::after { content: '';
+    flex: 1;
+    height: 1px;
+    background-color: #e5e7eb; }
+
+/* Inherited */
+body { font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1f2937 }
+
+/* Resolved values */
+margin: 8px 0px;
+padding: 0px;
+align-items: center;
+background-color: rgba(0, 0, 0, 0);
+box-sizing: border-box;
+color: rgb(31, 41, 55);
+column-gap: 12px;
+content: normal;
+display: flex;
+flex-basis: auto;
+flex-grow: 0;
+flex-shrink: 1;
+font-family: Outfit, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+height: 16px;
+row-gap: 12px;
+unicode-bidi: isolate /*UA*/;
+width: 860px;
+```

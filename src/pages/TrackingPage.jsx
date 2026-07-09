@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import {
@@ -12,12 +16,13 @@ import {
   generateTestDelivery
 } from '../services/trackingService';
 
-// Fix Leaflet default icons
+// Fix Leaflet default icons using bundled local assets
+const iconBaseUrl = '/vendor/leaflet/dist/images';
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png'
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow
 });
 
 function TrackingPage() {
@@ -49,16 +54,25 @@ function TrackingPage() {
   useEffect(() => {
     if (mapInstanceRef.current) return;
 
-    const map = L.map(mapRef.current).setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], 13);
+    const map = L.map(mapRef.current, {
+      zoomControl: true,
+      scrollWheelZoom: true
+    }).setView([DEFAULT_CENTER.lat, DEFAULT_CENTER.lng], 13);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors',
       maxZoom: 19
     }).addTo(map);
 
+    requestAnimationFrame(() => map.invalidateSize());
+
+    const handleResize = () => map.invalidateSize();
+    window.addEventListener('resize', handleResize);
+
     mapInstanceRef.current = map;
 
     return () => {
+      window.removeEventListener('resize', handleResize);
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
@@ -261,7 +275,6 @@ function TrackingPage() {
               <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.28em] text-sky-500">Live tracking</p>
-                  <h1 className="mt-3 text-3xl font-semibold text-slate-900">Delivery operations</h1>
                   <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">
                     Keep every route visible with a focused map view, live delivery cards, and fast search actions.
                   </p>

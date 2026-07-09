@@ -100,6 +100,35 @@ function createBarChart(ctx, data) {
   });
 }
 
+function createSupportActivityBarChart(ctx, data) {
+  if (!ctx || !window.Chart) return null;
+  return new window.Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: ['Active Chats', 'Total Tickets', 'Feedback Count'],
+      datasets: [{
+        label: 'Support Activity',
+        data,
+        backgroundColor: ['#3b82f6', '#10b981', '#6366f1'],
+        borderRadius: 12,
+        maxBarThickness: 48
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: true }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#334155' } },
+        y: { beginAtZero: true, ticks: { color: '#334155' }, grid: { color: 'rgba(148,163,184,0.18)', borderDash: [4, 4] } }
+      }
+    }
+  });
+}
+
 function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState('analytics');
   const [analytics, setAnalytics] = useState({});
@@ -116,8 +145,10 @@ function AnalyticsPage() {
   const [notification, setNotification] = useState('');
   const aiStaffRef = useRef(null);
   const ticketsRef = useRef(null);
+  const barRef = useRef(null);
   const [aiStaffChart, setAiStaffChart] = useState(null);
   const [ticketChart, setTicketChart] = useState(null);
+  const [barChart, setBarChart] = useState(null);
 
   useEffect(() => {
     const today = new Date();
@@ -167,6 +198,14 @@ function AnalyticsPage() {
   }, [ticketStats, ticketChart]);
 
   useEffect(() => {
+    if (window.Chart && barRef.current) {
+      const chartData = [analytics.activeChats || 0, analytics.numTickets || 0, analytics.aiFeedbackCount || 0];
+      const chart = barChart || createSupportActivityBarChart(barRef.current.getContext('2d'), chartData);
+      if (!barChart) setBarChart(chart);
+    }
+  }, [analytics, barChart]);
+
+  useEffect(() => {
     if (!socket) return;
     socket.on('ticketCreated', () => setNotification('Ticket created.'));
     socket.on('ticketDeleted', () => setNotification('Ticket deleted.'));
@@ -195,19 +234,18 @@ function AnalyticsPage() {
   const presenceFiltered = useMemo(() => staffPresence.filter((agent) => filter === 'all' || agent.status === filter), [staffPresence, filter]);
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar />
-          <main className="flex-1 p-4 sm:p-6 lg:p-7">
-            {notification ? (
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar />
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-7">
+          {notification ? (
               <div className="mb-4 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
                 {notification}
               </div>
             ) : null}
 
-            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-full bg-slate-100 p-2 shadow-sm">
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-full bg-slate-100 p-2 shadow-sm">
               {['analytics', 'staff'].map((tab) => (
                 <button
                   key={tab}
@@ -251,6 +289,13 @@ function AnalyticsPage() {
                   <InfoCard title="Active Chats" value={analytics.activeChats ?? '—'} description="Currently live" />
                   <InfoCard title="AI Feedback Avg" value={analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'} description="Average rating from staff/customers" />
                   <InfoCard title="Feedback Count" value={analytics.aiFeedbackCount ?? '—'} description="Total feedback entries" />
+                </div>
+
+                <div className="rounded-3xl bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.07)]">
+                  <h3 className="mb-4 text-xl font-semibold text-slate-900">Support Activity</h3>
+                  <div className="h-[380px] rounded-3xl bg-slate-50 p-4">
+                    <canvas ref={barRef} />
+                  </div>
                 </div>
 
                 <div className="rounded-3xl bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.07)]">
@@ -426,8 +471,7 @@ function AnalyticsPage() {
                 </div>
               </section>
             )}
-          </main>
-        </div>
+        </main>
       </div>
     </div>
   );

@@ -19,7 +19,7 @@ function App() {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/tickets" element={<TicketsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
-        <Route path="/orders" element={<OrdersPage />} />
+        <Route path="/orders/*" element={<OrdersPage />} />
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/tracking" element={<TrackingPage />} />
         <Route path="/settings" element={<SettingsPage />} />

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 /**
@@ -6,6 +6,7 @@ import { io } from 'socket.io-client';
  */
 export const useVoiceSocket = (user, handlers = {}) => {
   const socketRef = useRef(null);
+  const [socket, setSocket] = useState(null);
   const handlersRef = useRef(handlers);
 
   useEffect(() => {
@@ -18,21 +19,43 @@ export const useVoiceSocket = (user, handlers = {}) => {
         socketRef.current.disconnect();
         socketRef.current = null;
       }
+      setSocket(null);
       return;
     }
 
-    if (!socketRef.current) {
-      socketRef.current = io();
-      if (socketRef.current) {
-        socketRef.current.emit('voice:register', {
+    let activeSocket = socketRef.current;
+    let connectListener;
+    let connectErrorListener;
+    let disconnectListener;
+
+    if (!activeSocket) {
+      const newSocket = io({ transports: ['websocket', 'polling'] });
+      socketRef.current = newSocket;
+      setSocket(newSocket);
+      activeSocket = newSocket;
+
+      connectListener = () => {
+        console.log('Voice socket connected:', newSocket.id);
+        newSocket.emit('voice:register', {
           userId: user.id,
           name: user.name || user.displayName || 'Staff',
           role: user.role || 'agent'
         });
-      }
+      };
+      connectErrorListener = (error) => {
+        console.error('Voice socket connection error:', error);
+      };
+
+      newSocket.on('connect', connectListener);
+      newSocket.on('connect_error', connectErrorListener);
+    } else if (activeSocket.connected) {
+      activeSocket.emit('voice:register', {
+        userId: user.id,
+        name: user.name || user.displayName || 'Staff',
+        role: user.role || 'agent'
+      });
     }
 
-    const socket = socketRef.current;
     const eventMap = [
       ['voice:presenceUpdate', 'onPresenceUpdate'],
       ['voice:channels', 'onChannelsUpdate'],
@@ -55,24 +78,27 @@ export const useVoiceSocket = (user, handlers = {}) => {
     eventMap.forEach(([event, key]) => {
       const handler = handlersRef.current[key];
       if (typeof handler === 'function') {
-        socket.on(event, handler);
+        activeSocket.on(event, handler);
       }
     });
 
-    socket.on('disconnect', () => {
+    disconnectListener = () => {
       console.warn('Voice socket disconnected');
-    });
+    };
+    activeSocket.on('disconnect', disconnectListener);
 
     return () => {
       eventMap.forEach(([event, key]) => {
         const handler = handlersRef.current[key];
         if (typeof handler === 'function') {
-          socket.off(event, handler);
+          activeSocket.off(event, handler);
         }
       });
-      socket.off('disconnect');
+      if (connectListener) activeSocket.off('connect', connectListener);
+      if (connectErrorListener) activeSocket.off('connect_error', connectErrorListener);
+      if (disconnectListener) activeSocket.off('disconnect', disconnectListener);
     };
-  }, [user?.id]);
+  }, [user?.id, user?.name, user?.role]);
 
-  return socketRef.current;
+  return socket;
 };

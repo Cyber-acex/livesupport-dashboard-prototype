@@ -1710,6 +1710,85 @@ function updateConversationEntry(msg, isCurrentConversation) {
     } catch (e) {
         // ignore
     }
+}
+
+// ---------------------------
+// Call Customer Functionality
+// ---------------------------
+async function initiateCallWithCustomer() {
+    if (!currentConversationId) {
+        alert('Please select a conversation first');
+        return;
+    }
+
+    const callBtn = document.getElementById('callCustomerBtn');
+    if (callBtn) callBtn.disabled = true;
+    
+    try {
+        // Get customer info from the current conversation
+        const customerName = document.getElementById('info-name')?.textContent || 'Customer';
+        const customerPhone = document.getElementById('info-phone')?.textContent || '';
+
+        // Create a call session on the backend
+        const response = await fetch('/api/call-sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                conversation_id: currentConversationId,
+                name: customerName || customerPhone || 'Customer'
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to create call session: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const callLink = data.callLink || `/call/${data.secureToken}`;
+        const baseUrl = window.location.origin;
+        const fullCallLink = callLink.startsWith('http') ? callLink : (baseUrl + callLink);
+
+        console.log('[Call] Session created:', data.secureToken);
+        console.log('[Call] Call link:', fullCallLink);
+
+        // Send the call link as a message to the customer
+        const staffName = document.getElementById('profileName')?.textContent || 'Staff';
+        const callMessage = `📞 Incoming voice call from ${staffName}. Click here to join: ${fullCallLink}`;
+
+        // Send message to customer
+        const sendResponse = await fetch('/api/send-message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                conversation_id: currentConversationId,
+                message: callMessage,
+                sender: 'sent'
+            })
+        });
+
+        if (sendResponse.ok) {
+            console.log('[Call] Call link sent to customer');
+        }
+
+        // Show notification
+        showNotification(`Call initiated. Customer has been notified.`);
+
+        // Open the call link in a new window for staff to monitor
+        window.open(fullCallLink, 'livesupportCall', 'width=800,height=600');
+
+    } catch (error) {
+        console.error('[Call] Error:', error);
+        alert('Failed to initiate call: ' + error.message);
+    } finally {
+        if (callBtn) callBtn.disabled = false;
+    }
+}
+
+// Add event listener for Call Customer button
+const callCustomerBtn = document.getElementById('callCustomerBtn');
+if (callCustomerBtn) {
+    callCustomerBtn.addEventListener('click', initiateCallWithCustomer);
+}
     const previewText = msg.message ? (msg.message.length > 50 ? msg.message.slice(0, 47) + '...' : msg.message) : '';
     const convDiv = findConversationElement(msg.conversation_id);
     const unreadDiff = msg.sender !== 'sent' && !isCurrentConversation ? 1 : 0;

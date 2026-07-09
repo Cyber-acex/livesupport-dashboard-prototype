@@ -23,6 +23,230 @@ body {
     color: #1f2937;
 }
 
+.dark body {
+    background-color: #020617;
+    color: #e2e8f0;
+}
+
+.dark .login-panel {
+    background-color: #020617;
+}
+
+.dark .login-card {
+    background: #0f172a;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.dark .logo-title .live {
+    color: #e2e8f0;
+}
+
+.dark .logo-subtitle {
+    color: #94a3b8;
+}
+
+.dark .welcome-heading {
+    color: #f8fafc;
+}
+
+.dark .welcome-text {
+    color: #cbd5e1;
+}
+
+.dark .form-group label {
+    color: #cbd5e1;
+}
+
+.dark .input-wrapper {
+    background: #0f172a;
+    border-color: #334155;
+}
+
+.dark .input-wrapper:focus-within {
+    background: #14263a;
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+}
+
+.dark .input-wrapper input {
+    color: #e2e8f0;
+}
+
+.dark .input-wrapper input::placeholder {
+    color: #94a3b8;
+}
+
+.dark .toggle-password {
+    color: #94a3b8;
+}
+
+.dark .toggle-password:hover {
+    color: #cbd5e1;
+}
+
+.dark .remember-row label {
+    color: #cbd5e1;
+}
+
+.dark .forgot-link {
+    color: #38bdf8;
+}
+
+.dark .sign-in-btn {
+    box-shadow: 0 4px 20px rgba(56, 189, 248, 0.18);
+}
+
+.dark .divider::before,
+.dark .divider::after {
+    background-color: #334155;
+}
+
+.dark .divider span {
+    color: #94a3b8;
+}
+
+.dark .google-btn {
+    background: #0f172a;
+    border-color: #334155;
+    color: #cbd5e1;
+}
+
+.dark .google-btn:hover {
+    background: #14263a;
+    border-color: #475569;
+}
+
+.dark .signup-text {
+    color: #cbd5e1;
+}
+
+.dark .signup-link {
+    color: #38bdf8;
+}
+
+.dark .hero-card,
+.dark .chat-card {
+    background: rgba(15, 23, 42, 0.95);
+    color: #e2e8f0;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.35);
+}
+
+.dark .hero-section {
+    background: linear-gradient(135deg, #111827 0%, #0f172a 50%, #020617 100%);
+}
+
+.dark body {
+    background-color: #020617;
+    color: #e2e8f0;
+}
+
+.dark .login-panel {
+    background-color: #020617;
+}
+
+.dark .login-card {
+    background: #0f172a;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.dark .logo-title .live {
+    color: #e2e8f0;
+}
+
+.dark .logo-subtitle {
+    color: #94a3b8;
+}
+
+.dark .welcome-heading {
+    color: #f8fafc;
+}
+
+.dark .welcome-text {
+    color: #cbd5e1;
+}
+
+.dark .form-group label {
+    color: #cbd5e1;
+}
+
+.dark .input-wrapper {
+    background: #0f172a;
+    border-color: #334155;
+}
+
+.dark .input-wrapper:focus-within {
+    background: #14263a;
+    border-color: #38bdf8;
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+}
+
+.dark .input-wrapper input {
+    color: #e2e8f0;
+}
+
+.dark .input-wrapper input::placeholder {
+    color: #94a3b8;
+}
+
+.dark .toggle-password {
+    color: #94a3b8;
+}
+
+.dark .toggle-password:hover {
+    color: #cbd5e1;
+}
+
+.dark .remember-row label {
+    color: #cbd5e1;
+}
+
+.dark .forgot-link {
+    color: #38bdf8;
+}
+
+.dark .sign-in-btn {
+    box-shadow: 0 4px 20px rgba(56, 189, 248, 0.18);
+}
+
+.dark .divider::before,
+.dark .divider::after {
+    background-color: #334155;
+}
+
+.dark .divider span {
+    color: #94a3b8;
+}
+
+.dark .google-btn {
+    background: #0f172a;
+    border-color: #334155;
+    color: #cbd5e1;
+}
+
+.dark .google-btn:hover {
+    background: #14263a;
+    border-color: #475569;
+}
+
+.dark .signup-text {
+    color: #cbd5e1;
+}
+
+.dark .signup-link {
+    color: #38bdf8;
+}
+
+.dark .hero-card,
+.dark .chat-card {
+    background: rgba(15, 23, 42, 0.95);
+    color: #e2e8f0;
+    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.35);
+}
+
+.dark .hero-section {
+    background: linear-gradient(135deg, #111827 0%, #0f172a 50%, #020617 100%);
+}
+
 /* ===========================
    MAIN CONTAINER LAYOUT
    =========================== */
@@ -398,6 +622,16 @@ body {
     transition: all 0.3s ease;
     box-shadow: 0 4px 12px rgba(255, 107, 61, 0.2);
     letter-spacing: 0.3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.button-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
 }
 
 .sign-in-btn:hover {

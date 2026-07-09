@@ -1,49 +1,146 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
+import { useSidebar } from '../contexts/SidebarContext';
 
 const menuItems = [
-  { to: '/dashboard', label: 'Dashboard', icon: <path d="M19 3H5c-1.1 0-2 .9-2 2v14l4-4h12c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z" /> },
-  { to: '/tickets', label: 'Tickets', icon: <path d="M20 7V4H4v3H2v10h18V7h-0zM6 6h12v2H6V6zm12 10H6v-6h12v6z" /> },
-  { to: '/analytics', label: 'Analytics', icon: <path d="M3 17h2V9H3v8zm4 0h2V3H7v14zm4 0h2v-6h-2v6zm4 0h2v-9h-2v9z" /> },
-  { to: '/knowledge', label: 'Knowledge Base', icon: <path d="M12 2L2 7v6c0 5 4 9 10 9s10-4 10-9V7l-10-5zM12 4.4L18.6 8 12 11.6 5.4 8 12 4.4z" /> },
-  { to: '/orders', label: 'Orders', icon: <path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2zM7.16 14l.84-2h7.45l1.24 3H7.16zM7.6 6h10.8l-1.2 3H8.8L7.6 6z" /> },
-  { to: '/inbox', label: 'Inbox', icon: <path d="M21 6.5V17c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V6.5L12 12l9-5.5zM12 13.2L4 8V17h16V8l-8 5.2z" /> },
-  { to: '/tracking', label: 'Tracking', icon: <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm0-6c-6.6 0-12 5.4-12 12 0 3.6 1.6 6.8 4.2 9l.8-2.6C4.1 19.1 3 16.6 3 14 3 8.5 7.6 4 13 4s10 4.5 10 10c0 2.6-1.1 5.1-2.9 6.4L21 23c2.6-2.2 4-5.4 4-9 0-6.6-5.4-12-12-12z" /> },
-  { to: '/settings', label: 'Settings', icon: <path d="M19.14 12.94a7.89 7.89 0 000-1.88l2.03-1.58-2-3.46-2.39.96a8.1 8.1 0 00-1.6-.93l-.36-2.5h-4l-.36 2.5c-.57.24-1.1.55-1.6.93L6.8 6.02l-2 3.46L6.83 11a7.89 7.89 0 000 1.88l-2.03 1.58 2 3.46 2.39-.96c.5.38 1.03.69 1.6.93l.36 2.5h4l.36-2.5c.57-.24 1.1-.55 1.6-.93l2.39.96 2-3.46-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8.5a3.5 3.5 0 010 7z" /> }
+  { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/tickets', label: 'Tickets', icon: <path d="M5 7h14M5 12h14M5 17h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/analytics', label: 'Analytics', icon: <path d="M5 19V10m7 9V5m7 14v-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/knowledge', label: 'Knowledge Base', icon: <path d="M7 4.5h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Zm0 3h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  {
+    to: '/orders',
+    label: 'Orders',
+    icon: <path d="M6 5h12l-1 7H7L6 5Zm1 7 1 7h8l1-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />,
+    children: [
+      { to: '/orders', label: 'Overview' },
+      { to: '/orders/menu', label: 'Menu' },
+      { to: '/orders/tables', label: 'Tables' }
+    ]
+  },
+  { to: '/inbox', label: 'Inbox', icon: <path d="M4 6h16v12H4zM4 6l8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/tracking', label: 'Tracking', icon: <path d="M12 4a7 7 0 0 1 7 7c0 4.5-4.5 8.5-7 9-2.5-.5-7-4.5-7-9a7 7 0 0 1 7-7Zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/settings', label: 'Settings', icon: <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 3.5-.9-.4a7.9 7.9 0 0 0-.4-1l.5-.8-1.4-1.4-.8.4a7.4 7.4 0 0 0-1-.4L15 4h-2l-.4 1a7.4 7.4 0 0 0-1 .4l-.8-.5-1.4 1.4.5.8a7.9 7.9 0 0 0-.4 1L4 12v2l.9.4c.1.3.2.7.4 1l-.5.8 1.4 1.4.8-.5c.3.2.7.3 1 .4L13 20h2l.4-1c.3-.1.7-.2 1-.4l.8.5 1.4-1.4-.5-.8c.2-.3.3-.7.4-1l.9-.4v-2Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /> }
 ];
 
 function Sidebar() {
+  const { sidebarToggle, closeSidebar } = useSidebar();
+  const location = useLocation();
+
+  const isActivePath = (to) => {
+    if (to === '/orders') {
+      return location.pathname === '/orders' || location.pathname.startsWith('/orders/');
+    }
+    return location.pathname === to || location.pathname.startsWith(`${to}/`);
+  };
+
   return (
-    <aside className="hidden lg:flex w-[220px] flex-col gap-[18px] rounded-none border-r border-white/10 bg-[#0f1724]/95 p-[18px] text-white">
-      <div className="flex items-center gap-3">
-        <svg viewBox="0 0 24 24" className="h-10 w-10 stroke-[#6ee7b7]" aria-hidden="true">
-          <circle cx="12" cy="12" r="10" />
-        </svg>
-        <div>
-          <div className="text-base font-semibold">LiveSupport</div>
-          <div className="text-[12px] text-white/65">Support Console</div>
-        </div>
-      </div>
-
-
-      <nav className="mt-2 flex flex-col gap-2">
-        {menuItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
-                isActive ? 'bg-white/10 text-white' : 'text-white/65 hover:bg-white/5 hover:text-white'
-              }`
-            }
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-              {item.icon}
-            </svg>
-            <span>{item.label}</span>
+    <>
+      <aside
+        className={`${sidebarToggle ? 'translate-x-0 lg:w-[90px]' : '-translate-x-full'} fixed left-0 top-0 z-50 flex h-screen w-[290px] flex-col overflow-y-hidden border-r border-gray-200 bg-white px-5 transition duration-300 ease-linear dark:border-gray-800 dark:bg-black lg:static lg:translate-x-0`}
+      >
+        <div
+          className={`flex items-center gap-2 pt-8 pb-7 ${sidebarToggle ? 'justify-center' : 'justify-between'}`}
+        >
+          <NavLink to="/dashboard" onClick={closeSidebar} className="flex items-center gap-2">
+            <span className={`logo ${sidebarToggle ? 'hidden' : 'flex items-center gap-2'}`}>
+              <svg viewBox="0 0 32 32" className="h-10 w-10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="16" cy="16" r="14" stroke="#0f1724" strokeWidth="2" />
+                <path d="M8 16h16M16 8v16" stroke="#0f1724" strokeWidth="2" />
+              </svg>
+              <div>
+                <div className="text-base font-semibold text-gray-900 dark:text-white">LiveSupport</div>
+                <div className="text-[12px] uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Support Console</div>
+              </div>
+            </span>
+            <span className={`${sidebarToggle ? 'lg:block hidden' : 'hidden'}`}>
+              <svg viewBox="0 0 24 24" className="h-10 w-10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="12" r="10" stroke="#0f1724" strokeWidth="2" />
+              </svg>
+            </span>
           </NavLink>
-        ))}
-      </nav>
-    </aside>
+        </div>
+
+        <div className="flex flex-col overflow-y-auto duration-300 ease-linear no-scrollbar">
+          <nav>
+            <div>
+              <h3 className="mb-4 text-xs uppercase leading-[20px] text-gray-400">
+                <span className={`${sidebarToggle ? 'lg:hidden' : ''}`}>MENU</span>
+                <svg
+                  className={`${sidebarToggle ? 'lg:block hidden' : 'hidden'} mx-auto h-6 w-6 fill-current text-gray-500`}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path
+                    fillRule="evenodd"
+                    clipRule="evenodd"
+                    d="M5.99915 10.2451C6.96564 10.2451 7.74915 11.0286 7.74915 11.9951V12.0051C7.74915 12.9716 6.96564 13.7551 5.99915 13.7551C5.03265 13.7551 4.24915 12.9716 4.24915 12.0051V11.9951C4.24915 11.0286 5.03265 10.2451 5.99915 10.2451ZM17.9991 10.2451C18.9656 10.2451 19.7491 11.0286 19.7491 11.9951V12.0051C19.7491 12.9716 18.9656 13.7551 17.9991 13.7551C17.0326 13.7551 16.2491 12.9716 16.2491 12.0051V11.9951C16.2491 11.0286 17.0326 10.2451 17.9991 10.2451ZM13.7491 11.9951C13.7491 11.0286 12.9656 10.2451 11.9991 10.2451C11.0326 10.2451 10.2491 11.0286 10.2491 11.9951V12.0051C10.2491 12.9716 11.0326 13.7551 11.9991 13.7551C12.9656 13.7551 13.7491 12.9716 13.7491 12.0051V11.9951Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </h3>
+
+              <ul className="mb-6 flex flex-col gap-3">
+                {menuItems.map((item) => {
+                  const active = isActivePath(item.to);
+
+                  return (
+                    <li key={item.to}>
+                      <NavLink
+                        to={item.to}
+                        onClick={closeSidebar}
+                        className={() =>
+                          `group relative flex items-center gap-3 rounded-lg px-3 py-2 font-medium transition ${
+                            active
+                              ? 'bg-brand-50 text-brand-500 dark:bg-brand-500/[0.12] dark:text-brand-400'
+                              : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-gray-200'
+                          }`
+                        }
+                      >
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-100 text-gray-500 transition group-hover:bg-gray-200 group-hover:text-gray-700 dark:bg-white/5 dark:text-gray-400 dark:group-hover:bg-white/10">
+                          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            {item.icon}
+                          </svg>
+                        </span>
+                        <span className={`${sidebarToggle ? 'lg:hidden' : ''} truncate`}>{item.label}</span>
+                      </NavLink>
+                      {item.children && active ? (
+                        <ul className="mt-2 ml-10 space-y-2">
+                          {item.children.map((child) => {
+                            const childActive = isActivePath(child.to);
+                            return (
+                              <li key={child.to}>
+                                <NavLink
+                                  to={child.to}
+                                  onClick={closeSidebar}
+                                  className={() =>
+                                    `flex items-center rounded-md px-2 py-1.5 text-sm transition ${
+                                      childActive
+                                        ? 'font-semibold text-brand-500 dark:text-brand-400'
+                                        : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+                                    }`
+                                  }
+                                >
+                                  <span className="truncate">{child.label}</span>
+                                </NavLink>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </nav>
+        </div>
+      </aside>
+
+      <div
+        className={`fixed inset-0 z-40 bg-black/40 transition-opacity duration-300 lg:hidden ${sidebarToggle ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
+        onClick={closeSidebar}
+      />
+    </>
   );
 }
 

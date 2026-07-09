@@ -500,7 +500,7 @@ function updateOrderTableOptions(selectedTableNumber) {
 
   let tables = Array.isArray(tableLayout) && tableLayout.length ? tableLayout : [];
   if (tables.length === 0) {
-    tables = Array.from({ length: 40 }, (_, i) => ({ number: i + 1, label: `Table ${i + 1}`, status: 'vacant' }));
+    tables = Array.from({ length: 25 }, (_, i) => ({ number: i + 1, label: `Table ${i + 1}`, status: 'vacant' }));
   }
 
   const sortedTables = tables.slice().sort((a, b) => Number(a.number) - Number(b.number));
@@ -1082,7 +1082,7 @@ function getOccupiedUntil(now = new Date()) {
 
 function generateTableLayout() {
   tableLayout = [];
-  for (let i = 1; i <= 40; i += 1) {
+  for (let i = 1; i <= 25; i += 1) {
     tableLayout.push({ number: i, label: `Table ${i}`, status: 'vacant' });
   }
   renderTableLayout();

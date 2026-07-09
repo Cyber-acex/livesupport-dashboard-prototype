@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import {
@@ -12,6 +13,7 @@ import {
 } from '../services/settingsService';
 
 function SettingsPage() {
+  const location = useLocation();
   const [activeSection, setActiveSection] = useState('account');
   const [notification, setNotification] = useState('');
   const [settings, setSettings] = useState(getSettings());
@@ -22,8 +24,29 @@ function SettingsPage() {
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'agent' });
   const [createMessage, setCreateMessage] = useState('');
   const [createMessageColor, setCreateMessageColor] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const roleOptions = ['agent', 'admin', 'viewer', 'Delivery Support', 'Refund Manager', 'Kitchen Supervisor', 'Customer Support'];
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const requestedSection = params.get('section');
+    const validSections = ['account', 'notifications', 'chat', 'ai', 'appearance', 'admin-users'];
+
+    if (requestedSection && validSections.includes(requestedSection)) {
+      setActiveSection(requestedSection);
+    } else {
+      setActiveSection('account');
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    const storedAvatar = window.localStorage.getItem('userAvatar');
+    if (storedAvatar) {
+      setAvatarPreview(storedAvatar);
+    }
+  }, []);
 
   useEffect(() => {
     // Load initial settings
@@ -55,6 +78,10 @@ function SettingsPage() {
 
   const handleSaveSettings = () => {
     saveSettings(settings);
+    if (avatarPreview) {
+      window.localStorage.setItem('userAvatar', avatarPreview);
+      window.dispatchEvent(new Event('avatar:updated'));
+    }
     showNotification('Settings saved successfully!');
   };
 
@@ -209,8 +236,8 @@ function SettingsPage() {
     if (file) {
       const reader = new FileReader();
       reader.onload = (event) => {
-        localStorage.setItem('userAvatar', event.target?.result || '');
-        showNotification('Avatar updated');
+        const dataUrl = event.target?.result || '';
+        setAvatarPreview(dataUrl);
       };
       reader.readAsDataURL(file);
     }
@@ -235,7 +262,7 @@ function SettingsPage() {
       className={`w-full text-left px-4 py-3 rounded-lg transition-all ${
         activeSection === id
           ? 'bg-indigo-600 text-white shadow-md'
-          : 'text-slate-700 hover:bg-slate-100'
+          : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
       }`}
     >
       {label}
@@ -243,14 +270,14 @@ function SettingsPage() {
   );
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
+    <div className="flex h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden text-slate-900 dark:text-slate-100">
       <Sidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
         <TopBar />
 
         {/* Notification */}
         {notification && (
-          <div className="mx-4 mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm">
+          <div className="mx-4 mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm dark:bg-emerald-500/10 dark:border-emerald-400/20 dark:text-emerald-200">
             {notification}
           </div>
         )}
@@ -258,9 +285,9 @@ function SettingsPage() {
         {/* Settings Container */}
         <div className="flex-1 overflow-hidden flex">
           {/* Sidebar */}
-          <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-bold text-gray-900 dark:text-white">Settings</h3>
+          <div className="w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 overflow-y-auto">
+            <div className="p-6 border-b border-gray-200 dark:border-slate-800">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Settings</h3>
             </div>
             <nav className="p-4 space-y-2">
               {renderNavButton('account', 'Account')}
@@ -280,11 +307,15 @@ function SettingsPage() {
                 <div>
                   <h2 className="text-3xl font-bold text-slate-900 mb-8">Account Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 mb-6">
+                  <div className="bg-white rounded-lg shadow p-6 mb-6 dark:bg-slate-900 dark:text-slate-100">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                       <div className="md:col-span-1 flex flex-col items-center">
-                        <div className="w-24 h-24 rounded-full bg-indigo-100 flex items-center justify-center text-2xl font-bold text-indigo-600 mb-4">
-                          {(settings.displayName || 'User')[0].toUpperCase()}
+                        <div className="mb-4 flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-indigo-100 text-2xl font-bold text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-200">
+                          {avatarPreview ? (
+                            <img src={avatarPreview} alt="Avatar preview" className="h-full w-full object-cover" />
+                          ) : (
+                            <span>{(settings.displayName || 'User')[0].toUpperCase()}</span>
+                          )}
                         </div>
                         <label className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors cursor-pointer text-sm font-medium">
                           Upload Avatar
@@ -317,12 +348,34 @@ function SettingsPage() {
 
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
-                          <input
-                            type="password"
-                            placeholder="Enter new password (leave blank to keep current)"
-                            onChange={(e) => setPasswordChanged(e.target.value.length > 0)}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          />
+                          <div className="relative">
+                            <input
+                              type={showPassword ? 'text' : 'password'}
+                              placeholder="Enter new password (leave blank to keep current)"
+                              onChange={(e) => setPasswordChanged(e.target.value.length > 0)}
+                              className="w-full px-3 py-2 pr-10 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowPassword((value) => !value)}
+                              className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700"
+                              aria-label={showPassword ? 'Hide password' : 'Show password'}
+                            >
+                              {showPassword ? (
+                                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M3 3l18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                  <path d="M10.58 10.58A2 2 0 0 0 13.42 13.42" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                  <path d="M9.88 5.1A10.8 10.8 0 0 1 12 5c4.3 0 8 2.2 10 6.8a11 11 0 0 1-2.9 3.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                  <path d="M6.3 7.7A14.4 14.4 0 0 0 2 11.8c1.8 4.1 4.8 6.5 8.9 7.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                                </svg>
+                              ) : (
+                                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                  <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+                                </svg>
+                              )}
+                            </button>
+                          </div>
                           <p className="text-xs text-slate-500 mt-1">Leave blank if you don't want to change password</p>
                         </div>
                       </div>
@@ -341,13 +394,13 @@ function SettingsPage() {
               {/* Notifications Section */}
               {activeSection === 'notifications' && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 mb-8">Notification Settings</h2>
+                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-8">Notification Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                  <div className="bg-white rounded-lg shadow p-6 space-y-6 dark:bg-slate-900 dark:text-slate-100">
                     <div className="flex items-center justify-between">
                       <div>
-                        <label className="font-medium text-slate-900">Message Alerts</label>
-                        <p className="text-sm text-slate-500">Receive alerts for new messages</p>
+                        <label className="font-medium text-slate-900 dark:text-slate-100">Message Alerts</label>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Receive alerts for new messages</p>
                       </div>
                       <label className="flex items-center cursor-pointer">
                         <input
@@ -410,9 +463,9 @@ function SettingsPage() {
                 <div>
                   <h2 className="text-3xl font-bold text-slate-900 mb-8">Chat Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                  <div className="bg-white rounded-lg shadow p-6 space-y-6 dark:bg-slate-900 dark:text-slate-100">
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Auto Reply</label>
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-100 mb-2">Auto Reply</label>
                       <textarea
                         value={settings.autoReply}
                         onChange={(e) => setSettings({ ...settings, autoReply: e.target.value })}
@@ -458,8 +511,8 @@ function SettingsPage() {
                             onClick={() => setSettings({ ...settings, autopilotMode: mode })}
                             className={`px-4 py-3 rounded-lg border-2 transition-all font-medium ${
                               settings.autopilotMode === mode
-                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
-                                : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300'
+                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200'
+                                : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-indigo-400'
                             }`}
                           >
                             {info.title.split(' ')[0]}
@@ -467,8 +520,8 @@ function SettingsPage() {
                         ))}
                       </div>
 
-                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6">
-                        <h4 className="font-semibold text-slate-900 mb-2">
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200">
+                        <h4 className="font-semibold text-slate-900 dark:text-white mb-2">
                           {AUTOPILOT_MODES[settings.autopilotMode].title}
                         </h4>
                         <p className="text-sm text-slate-600 mb-3">
@@ -512,9 +565,9 @@ function SettingsPage() {
                 <div>
                   <h2 className="text-3xl font-bold text-slate-900 mb-8">Appearance</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                  <div className="bg-white rounded-lg shadow p-6 space-y-6 dark:bg-slate-900 dark:text-slate-100">
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Theme</label>
+                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-100 mb-2">Theme</label>
                       <select
                         value={settings.theme}
                         onChange={(e) => handleThemeChange(e.target.value)}
@@ -578,7 +631,7 @@ function SettingsPage() {
                       <div className="flex items-center gap-3">
                         <button
                           onClick={() => handleZoomChange(Math.max(25, Number(settings.pageZoom) - 5))}
-                          className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium"
+                          className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
                         >
                           −
                         </button>
@@ -603,8 +656,8 @@ function SettingsPage() {
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6 bg-slate-50 rounded-lg p-4">
-                      <p className="text-sm text-slate-600">
+                    <div className="border-t border-slate-200 pt-6 bg-slate-50 rounded-lg p-4 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                      <p className="text-sm text-slate-600 dark:text-slate-300">
                         <strong>Note:</strong> Sidebar position and width changes apply immediately. Refresh the page or navigate to see full effect.
                       </p>
                     </div>
@@ -627,8 +680,8 @@ function SettingsPage() {
                   <h2 className="text-3xl font-bold text-slate-900 mb-8">Manage Users</h2>
 
                   {/* Create User Section */}
-                  <div className="bg-white rounded-lg shadow p-6 mb-8">
-                    <h3 className="text-xl font-semibold text-gray-800 mb-4">Create New User</h3>
+                  <div className="bg-white rounded-lg shadow p-6 mb-8 dark:bg-slate-900 dark:text-slate-100">
+                    <h3 className="text-xl font-semibold text-gray-800 mb-4 dark:text-slate-100">Create New User</h3>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                       <input
                         type="text"
@@ -675,24 +728,24 @@ function SettingsPage() {
                   </div>
 
                   {/* Users Table */}
-                  <div className="bg-white rounded-lg shadow overflow-x-auto">
+                  <div className="bg-white rounded-lg shadow overflow-x-auto dark:bg-slate-900 dark:text-slate-100">
                     {usersLoading ? (
-                      <div className="p-6 text-center text-gray-600">Loading users...</div>
+                      <div className="p-6 text-center text-slate-500 dark:text-slate-400">Loading users...</div>
                     ) : users.length === 0 ? (
-                      <div className="p-6 text-center text-gray-600">
+                      <div className="p-6 text-center text-slate-500 dark:text-slate-400">
                         {users.length === 0 ? 'No users found' : 'Click "Manage Users" to load users'}
                       </div>
                     ) : (
                       <table className="w-full text-left text-sm">
-                        <thead className="bg-gray-100 border-b border-gray-200">
+                        <thead className="bg-gray-100 border-b border-gray-200 dark:bg-slate-800 dark:border-slate-700">
                           <tr>
-                            <th className="px-6 py-3 font-semibold text-gray-700">ID</th>
-                            <th className="px-6 py-3 font-semibold text-gray-700">Name</th>
-                            <th className="px-6 py-3 font-semibold text-gray-700">Email</th>
-                            <th className="px-6 py-3 font-semibold text-gray-700">Role</th>
-                            <th className="px-6 py-3 font-semibold text-gray-700">Active</th>
-                            <th className="px-6 py-3 font-semibold text-gray-700">Disabled</th>
-                            <th className="px-6 py-3 font-semibold text-gray-700">Actions</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">ID</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Name</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Email</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Role</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Active</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Disabled</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -742,10 +795,10 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
   };
 
   return (
-    <tr className="border-b border-gray-200 hover:bg-gray-50">
-      <td className="px-6 py-3 text-gray-900">{user.id}</td>
-      <td className="px-6 py-3 text-gray-900">{user.name}</td>
-      <td className="px-6 py-3 text-gray-600">{user.email}</td>
+    <tr className="border-b border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800">
+      <td className="px-6 py-3 text-gray-900 dark:text-slate-100">{user.id}</td>
+      <td className="px-6 py-3 text-gray-900 dark:text-slate-100">{user.name}</td>
+      <td className="px-6 py-3 text-gray-600 dark:text-slate-400">{user.email}</td>
       <td className="px-6 py-3">
         <select
           value={role}

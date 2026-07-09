@@ -37,10 +37,16 @@ export function saveSettings(settings) {
 }
 
 export function applyTheme(theme) {
-  if (theme === 'Dark') {
-    document.documentElement.classList.add('dark');
-  } else {
-    document.documentElement.classList.remove('dark');
+  try {
+    if (theme === 'Dark') {
+      document.documentElement.classList.add('dark');
+      if (document.body) document.body.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      if (document.body) document.body.classList.remove('dark');
+    }
+  } catch (e) {
+    // ignore
   }
 }
 

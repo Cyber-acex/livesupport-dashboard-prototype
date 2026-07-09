@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="./css/tracking.css">
   
   <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <link rel="stylesheet" href="/vendor/leaflet/dist/leaflet.css" />
   
   <script>
     // Apply theme from localStorage immediately to prevent flash
@@ -400,6 +400,7 @@
 </head>
 <body>
 <div class="dashboard">
+  <script src="/theme-init.js"></script>
   <!-- SIDEBAR -->
   <aside class="sidebar">
     <h2 class="logo">LiveSupport</h2>
@@ -505,7 +506,7 @@
 </div>
 
 <!-- Leaflet JS -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="/vendor/leaflet/dist/leaflet.js"></script>
 
 <!-- Tracking App -->
 <script src="./js/tracking.js"></script>

@@ -230,19 +230,18 @@ function TicketsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
-      <div className="flex min-h-screen">
-        <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar />
-          <main className="flex-1 p-4 sm:p-6 lg:p-7">
-            {notification ? (
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+      <Sidebar />
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar />
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-7">
+          {notification ? (
               <div className="mb-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
                 {notification}
               </div>
             ) : null}
 
-            <section className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 shadow-2xl shadow-black/20 sm:p-6">
+          <section className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 shadow-2xl shadow-black/20 sm:p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div className="space-y-3">
                   <h1 className="text-2xl font-semibold text-white">Tickets</h1>
@@ -289,8 +288,7 @@ function TicketsPage() {
                 )}
               </div>
             </section>
-          </main>
-        </div>
+        </main>
       </div>
 
       {showCreateModal ? (

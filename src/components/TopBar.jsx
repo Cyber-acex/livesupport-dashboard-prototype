@@ -1,197 +1,183 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import NotificationDropdown from './NotificationDropdown';
-import ProfileDropdown from './ProfileDropdown';
-import { getSettings, saveSettings, applyTheme } from '../services/settingsService';
+import React, { useState, useRef, useEffect } from 'react';
 
-function TopBar({ onToggleSidebar }) {
-  const [notificationOpen, setNotificationOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [theme, setTheme] = useState(() => getSettings().theme || 'Light');
-  const navigate = useNavigate();
+function TopBar({ onSidebarToggle }) {
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
+  const [currentUser, setCurrentUser] = useState({ name: 'Staff', role: 'agent' });
+  const notifRef = useRef();
+  const userRef = useRef();
+
+  // Initialize dark mode from localStorage and apply on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    const isDark = savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    setDarkMode(isDark);
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
 
   useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+    async function loadCurrentUser() {
+      if (typeof window !== 'undefined' && window.currentUser) {
+        setCurrentUser(window.currentUser);
+        return;
+      }
 
-  const toggleTheme = () => {
-    const newTheme = theme === 'Dark' ? 'Light' : 'Dark';
-    setTheme(newTheme);
-    applyTheme(newTheme);
-    saveSettings({ theme: newTheme });
-  };
+      try {
+        const res = await fetch('/api/user', { credentials: 'same-origin' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.name) {
+          setCurrentUser(data);
+          window.currentUser = data;
+        }
+      } catch (error) {
+        console.warn('Failed to load current user', error);
+      }
+    }
 
-  const mobileNavItems = [
-    { label: 'Dashboard', path: '/dashboard' },
-    { label: 'Tickets', path: '/tickets' },
-    { label: 'Analytics', path: '/analytics' },
-    { label: 'Orders', path: '/orders' },
-    { label: 'Inbox', path: '/inbox' },
-    { label: 'Knowledge', path: '/knowledge' },
-    { label: 'Tracking', path: '/tracking' },
-    { label: 'Settings', path: '/settings' }
-  ];
+    loadCurrentUser();
+  }, []);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (notifRef.current && !notifRef.current.contains(e.target)) {
+        setNotificationsOpen(false);
+      }
+      if (userRef.current && !userRef.current.contains(e.target)) {
+        setUserOpen(false);
+      }
+    }
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, []);
+
+  function getInitials(name) {
+    if (!name) return 'ST';
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  }
+
+  const userInitials = getInitials(currentUser.name);
+  const displayName = currentUser.name || 'Staff';
+  const displayRole = currentUser.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Agent';
 
   return (
-    <>
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-gray-200 bg-white/95 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95 lg:left-[220px] lg:right-0">
-      <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
-        <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 dark:border-gray-800 lg:border-b-0 lg:px-0 lg:py-4">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              className="flex h-11 w-11 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white lg:h-11 lg:w-11"
-              aria-label="Toggle sidebar"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </button>
-
-            <div className="lg:hidden">
-              <span className="text-lg font-semibold text-gray-900 dark:text-white">LiveSupport</span>
-            </div>
-          </div>
-
+    <header className="sticky top-0 z-50 flex w-full border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+      <div className="flex grow flex-col items-center justify-between lg:flex-row lg:px-6">
+        <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 lg:justify-normal lg:border-b-0 lg:px-0 lg:py-4 dark:border-gray-800">
           <button
-            type="button"
-            onClick={() => setMenuOpen((prev) => !prev)}
-            className="flex h-11 w-11 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white lg:hidden"
-            aria-label="Toggle menu"
+            onClick={() => onSidebarToggle ? onSidebarToggle() : null}
+            className="z-50 flex h-10 w-10 items-center justify-center rounded-lg border-gray-200 text-gray-500 lg:h-11 lg:w-11 lg:border dark:border-gray-800 dark:text-gray-400"
+            aria-label="Toggle sidebar"
           >
-            <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" xmlns="http://www.w3.org/2000/svg">
-              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
+            <svg className="hidden fill-current lg:block" width="16" height="12" viewBox="0 0 16 12" xmlns="http://www.w3.org/2000/svg"><path d="M0.583 1C0.583 0.586 0.919 0.25 1.333 0.25H14.667C15.081 0.25 15.417 0.586 15.417 1C15.417 1.414 15.081 1.75 14.667 1.75L1.333 1.75C0.919 1.75 0.583 1.414 0.583 1ZM0.583 11C0.583 10.586 0.919 10.25 1.333 10.25L14.667 10.25C15.081 10.25 15.417 10.586 15.417 11C15.417 11.414 15.081 11.75 14.667 11.75L1.333 11.75C0.919 11.75 0.583 11.414 0.583 11ZM1.333 5.25C0.919 5.25 0.583 5.586 0.583 6C0.583 6.414 0.919 6.75 1.333 6.75L7.999 6.75C8.414 6.75 8.75 6.414 8.75 6C8.75 5.586 8.414 5.25 7.999 5.25L1.333 5.25Z"/></svg>
+            <svg className="fill-current lg:hidden" width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3.25 6C3.25 5.586 3.586 5.25 4 5.25L20 5.25C20.414 5.25 20.75 5.586 20.75 6C20.75 6.414 20.414 6.75 20 6.75L4 6.75C3.586 6.75 3.25 6.414 3.25 6ZM3.25 18C3.25 17.586 3.586 17.25 4 17.25L20 17.25C20.414 17.25 20.75 17.586 20.75 18C20.75 18.414 20.414 18.75 20 18.75L4 18.75C3.586 18.75 3.25 18.414 3.25 18ZM4 11.25C3.586 11.25 3.25 11.586 3.25 12C3.25 12.414 3.586 12.75 4 12.75L12 12.75C12.414 12.75 12.75 12.414 12.75 12C12.75 11.586 12.414 11.25 12 11.25L4 11.25Z"/></svg>
           </button>
 
-          <div className="hidden lg:block lg:w-full">
+          <a href="/" className="lg:hidden">
+            <img className="dark:hidden" src="/images/logo/logo.svg" alt="Logo" />
+            <img className="hidden dark:block" src="/images/logo/logo-dark.svg" alt="Logo" />
+          </a>
+
+          <div className="hidden lg:block">
             <form>
               <div className="relative">
-                <span className="absolute top-1/2 left-4 -translate-y-1/2 text-gray-500 dark:text-gray-400">
-                  <svg viewBox="0 0 20 20" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.5" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="9" cy="9" r="6" />
-                    <path d="m14.5 14.5 3 3" />
-                  </svg>
+                <span className="absolute top-1/2 left-4 -translate-y-1/2 text-gray-500">
+                  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.042 9.374C3.042 5.877 5.877 3.042 9.375 3.042C12.873 3.042 15.708 5.877 15.708 9.374C15.708 12.87 12.873 15.705 9.375 15.705C5.877 15.705 3.042 12.87 3.042 9.374Z" fill="currentColor"/></svg>
                 </span>
-                <input
-                  placeholder="Search or type command..."
-                  className="h-11 w-full rounded-xl border border-gray-200 bg-transparent py-2.5 pr-14 pl-12 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none focus:ring-3 focus:ring-brand-500/10 dark:border-gray-800 dark:bg-gray-900 dark:text-white dark:placeholder:text-gray-500"
-                />
-                <button
-                  type="button"
-                  className="absolute top-1/2 right-2.5 -translate-y-1/2 inline-flex items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-[6px] text-xs text-gray-500 dark:border-gray-800 dark:bg-white/5 dark:text-gray-400"
-                >
-                  <span>⌘</span>
-                  <span>K</span>
+                <input type="text" placeholder="Search or type command..." id="search-input" className="dark:bg-dark-900 h-11 w-full rounded-lg border border-gray-200 bg-transparent py-2.5 pr-14 pl-12 text-sm text-gray-800 placeholder:text-gray-400 xl:w-[430px] dark:border-gray-800 dark:bg-gray-900 dark:text-white/90" />
+                <button id="search-button" className="absolute top-1/2 right-2.5 inline-flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-[7px] py-[4.5px] text-xs text-gray-500 dark:border-gray-800 dark:bg-white/[0.03]">
+                  <span> ⌘ </span>
+                  <span> K </span>
                 </button>
               </div>
             </form>
           </div>
         </div>
 
-        <div className={`shadow-theme-md w-full items-center justify-between gap-4 px-5 py-4 lg:flex lg:justify-end lg:px-0 lg:shadow-none ${menuOpen ? 'flex' : 'hidden'}`}>
-          <div className="flex w-full flex-col gap-2 lg:hidden">
-            {mobileNavItems.map((item) => (
-              <button
-                key={item.path}
-                type="button"
-                onClick={() => {
-                  navigate(item.path);
-                  setMenuOpen(false);
-                }}
-                className="w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-left text-sm font-medium text-gray-700 transition hover:border-brand-300 hover:bg-gray-50 hover:text-gray-900 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-white"
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
-            aria-label={theme === 'Dark' ? 'Switch to Light mode' : 'Switch to Dark mode'}
-            title={theme === 'Dark' ? 'Switch to Light mode' : 'Switch to Dark mode'}
-          >
-            <svg className="hidden dark:block" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path fillRule="evenodd" clipRule="evenodd" d="M9.99998 1.5415C10.4142 1.5415 10.75 1.87729 10.75 2.2915V3.5415C10.75 3.95572 10.4142 4.2915 9.99998 4.2915C9.58577 4.2915 9.24998 3.95572 9.24998 3.5415V2.2915C9.24998 1.87729 9.58577 1.5415 9.99998 1.5415ZM10.0009 6.79327C8.22978 6.79327 6.79402 8.22904 6.79402 10.0001C6.79402 11.7712 8.22978 13.207 10.0009 13.207C11.772 13.207 13.2078 11.7712 13.2078 10.0001C13.2078 8.22904 11.772 6.79327 10.0009 6.79327ZM5.29402 10.0001C5.29402 7.40061 7.40135 5.29327 10.0009 5.29327C12.6004 5.29327 14.7078 7.40061 14.7078 10.0001C14.7078 12.5997 12.6004 14.707 10.0009 14.707C7.40135 14.707 5.29402 12.5997 5.29402 10.0001ZM15.9813 5.08035C16.2742 4.78746 16.2742 4.31258 15.9813 4.01969C15.6884 3.7268 15.2135 3.7268 14.9207 4.01969L14.0368 4.90357C13.7439 5.19647 13.7439 5.67134 14.0368 5.96423C14.3297 6.25713 14.8045 6.25713 15.0974 5.96423L15.9813 5.08035ZM18.4577 10.0001C18.4577 10.4143 18.1219 10.7501 17.7077 10.7501H16.4577C16.0435 10.7501 15.7077 10.4143 15.7077 10.0001C15.7077 9.58592 16.0435 9.25013 16.4577 9.25013H17.7077C18.1219 9.25013 18.4577 9.58592 18.4577 10.0001ZM14.9207 15.9806C15.2135 16.2735 15.6884 16.2735 15.9813 15.9806C16.2742 15.6877 16.2742 15.2128 15.9813 14.9199L15.0974 14.036C14.8045 13.7431 14.3297 13.7431 14.0368 14.036C13.7439 14.3289 13.7439 14.8038 14.0368 15.0967L14.9207 15.9806ZM9.99998 15.7088C10.4142 15.7088 10.75 16.0445 10.75 16.4588V17.7088C10.75 18.123 10.4142 18.4588 9.99998 18.4588C9.58577 18.4588 9.24998 18.123 9.24998 17.7088V16.4588C9.24998 16.0445 9.58577 15.7088 9.99998 15.7088Zm5.96356-0.6116C15.2566 15.0972 15.2566 14.6225 14.9636 14.3296C14.6707 14.0367 14.1958 14.0367 13.9029 14.3296L13.019 15.2134C12.7261 15.5063 12.7261 15.9811 13.019 16.274C13.3119 16.5669 13.7868 16.5669 14.0797 16.274L14.9636 15.3922Z" fill="currentColor"/>
-            </svg>
-            <svg className="dark:hidden" width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M17.4547 11.97L18.1799 12.1611C18.265 11.8383 18.1265 11.4982 17.8401 11.3266C17.5538 11.1551 17.1885 11.1934 16.944 11.4207L17.4547 11.97ZM8.0306 2.5459L8.57989 3.05657C8.80718 2.81209 8.84554 2.44682 8.67398 2.16046C8.50243 1.8741 8.16227 1.73559 7.83948 1.82066L8.0306 2.5459Z" fill="currentColor"/>
-            </svg>
-          </button>
-
-          <div className="relative">
+        <div className={`w-full items-center justify-between gap-4 px-5 py-4 lg:flex lg:justify-end lg:px-0`}>
+          <div className="2xsm:gap-3 flex items-center gap-2">
             <button
-              onClick={() => setNotificationOpen(!notificationOpen)}
-              className={`relative flex h-11 w-11 items-center justify-center rounded-full border shadow-theme-xs transition ${
-                notificationOpen
-                  ? 'border-brand-300 bg-brand-50 text-brand-600 dark:border-brand-500 dark:bg-gray-700 dark:text-brand-400'
-                  : 'border-gray-200 bg-white text-gray-600 hover:border-brand-300 hover:bg-brand-50 hover:text-brand-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:hover:border-brand-500 dark:hover:bg-gray-800 dark:hover:text-brand-400'
-              }`}
-              aria-label="Notifications"
-            >
-                <span className="absolute right-1.5 top-1.5 h-3 w-3 rounded-full bg-gradient-to-br from-orange-400 to-orange-500 shadow-md ring-2 ring-white dark:ring-gray-900" />
-                <svg width="20" height="20" viewBox="0 0 20 20" className="h-5 w-5" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path fillRule="evenodd" clipRule="evenodd" d="M10.75 2.29248C10.75 1.87827 10.4143 1.54248 10 1.54248C9.58583 1.54248 9.25004 1.87827 9.25004 2.29248V2.83613C6.08266 3.20733 3.62504 5.9004 3.62504 9.16748V14.4591H3.33337C2.91916 14.4591 2.58337 14.7949 2.58337 15.2091C2.58337 15.6234 2.91916 15.9591 3.33337 15.9591H4.37504H15.625H16.6667C17.0809 15.9591 17.4167 15.6234 17.4167 15.2091C17.4167 14.7949 17.0809 14.4591 16.6667 14.4591H16.375V9.16748C16.375 5.9004 13.9174 3.20733 10.75 2.83613V2.29248ZM14.875 14.4591V9.16748C14.875 6.47509 12.6924 4.29248 10 4.29248C7.30765 4.29248 5.12504 6.47509 5.12504 9.16748V14.4591H14.875Z" fill="currentColor"/>
-                </svg>
-            </button>
-            <NotificationDropdown
-              isOpen={notificationOpen}
-              onClose={() => setNotificationOpen(false)}
-            />
-          </div>
-
-          <div className="relative flex items-center gap-3 rounded-2xl border border-gray-200 bg-white px-3 py-2 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
-            <button
-              type="button"
               onClick={() => {
-                setProfileOpen(!profileOpen);
-                setNotificationOpen(false);
+                const newDarkMode = !darkMode;
+                setDarkMode(newDarkMode);
+                if (newDarkMode) {
+                  document.documentElement.classList.add('dark');
+                  localStorage.setItem('theme', 'dark');
+                } else {
+                  document.documentElement.classList.remove('dark');
+                  localStorage.setItem('theme', 'light');
+                }
               }}
-              className="flex items-center gap-3 rounded-2xl bg-transparent text-left focus:outline-none"
+              className="relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400"
+              aria-label="Toggle dark mode"
             >
-              <span className="h-11 w-11 overflow-hidden rounded-full bg-gradient-to-br from-indigo-500 to-sky-500 text-center text-sm font-semibold text-white leading-11">
-                A
-              </span>
-              <div className="hidden min-w-0 flex-col truncate sm:flex">
-                <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">Musharof</span>
-                <span className="truncate text-xs text-gray-500 dark:text-gray-400">Admin</span>
-              </div>
-              <svg
-                className="h-4 w-4 text-gray-500 dark:text-gray-400"
-                viewBox="0 0 18 20"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <path
-                  d="M4.3125 8.65625L9 13.3437L13.6875 8.65625"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              {darkMode ? (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4.293 2.293a1 1 0 011.414 0l.707.707a1 1 0 11-1.414 1.414l-.707-.707a1 1 0 010-1.414zm2.828 2.828a1 1 0 011.414 0l.707.707a1 1 0 11-1.414 1.414l-.707-.707a1 1 0 010-1.414zM10 7a3 3 0 100 6 3 3 0 000-6zm-4.293-.707a1 1 0 00-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707zm2.828 9.172a1 1 0 011.414 0l.707.707a1 1 0 11-1.414 1.414l-.707-.707a1 1 0 010-1.414zm10-10a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM10 18a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm-4.293-2.293a1 1 0 00-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707zm-2.828-2.828a1 1 0 00-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707z" clipRule="evenodd"/></svg>
+              )}
             </button>
-            <ProfileDropdown
-              isOpen={profileOpen}
-              onClose={() => setProfileOpen(false)}
-              onSelect={(action) => {
-                setProfileOpen(false);
-                if (action === 'profile') navigate('/settings');
-                if (action === 'settings') navigate('/settings');
-                if (action === 'support') navigate('/knowledge');
-                if (action === 'logout') window.location.href = '/logout';
-              }}
-            />
+
+            <div className="relative" ref={notifRef}>
+              <button
+                onClick={(e) => { e.stopPropagation(); setNotificationsOpen(!notificationsOpen); }}
+                className="relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900"
+                aria-label="Notifications"
+              >
+                <span className={`absolute top-0.5 right-0 h-2 w-2 rounded-full bg-orange-400 ${notificationsOpen ? 'hidden' : 'inline-block'}`} />
+                <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 2C6.13 2 3.25 4.9 3.25 8.77V14.46H2.58C2.26 14.46 2 14.72 2 15.04C2 15.36 2.26 15.62 2.58 15.62H17.42C17.74 15.62 18 15.36 18 15.04C18 14.72 17.74 14.46 17.42 14.46H16.75V8.77C16.75 4.9 13.87 2 10 2Z"/></svg>
+              </button>
+
+              {notificationsOpen && (
+                <div className="absolute right-0 mt-3 w-[320px] rounded-2xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-800 dark:bg-gray-900">
+                  <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
+                    <h5 className="text-lg font-semibold text-gray-800 dark:text-white/90">Notification</h5>
+                    <button onClick={() => setNotificationsOpen(false)} className="text-gray-500">Close</button>
+                  </div>
+                  <ul className="max-h-72 overflow-y-auto">
+                    <li className="flex gap-3 p-3"><img src="/images/user/user-02.jpg" className="h-10 w-10 rounded-full" alt="user" /><div><div className="font-medium">Terry Franci</div><div className="text-sm text-gray-500">5 min ago</div></div></li>
+                    <li className="flex gap-3 p-3"><img src="/images/user/user-03.jpg" className="h-10 w-10 rounded-full" alt="user" /><div><div className="font-medium">Alena Franci</div><div className="text-sm text-gray-500">8 min ago</div></div></li>
+                  </ul>
+                  <a href="#" className="mt-3 block text-center rounded-lg border border-gray-300 bg-white p-3 text-gray-700">View All Notification</a>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="relative ml-4" ref={userRef}>
+            <button onClick={(e) => { e.stopPropagation(); setUserOpen(!userOpen); }} className="flex items-center text-gray-700 dark:text-gray-400">
+              <span className="mr-3 flex h-11 w-11 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-white">
+                {userInitials}
+              </span>
+              <span className="mr-1 block font-medium">{displayName}</span>
+              <svg className={`${userOpen ? 'rotate-180' : ''} transition-transform`} width="18" height="20" viewBox="0 0 18 20"><path d="M4.3125 8.65625L9 13.3437L13.6875 8.65625" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+
+            {userOpen && (
+              <div className="absolute right-0 mt-3 w-[260px] rounded-2xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-800 dark:bg-gray-900">
+                <div>
+                  <span className="block font-medium text-gray-700 dark:text-gray-400">{displayName}</span>
+                  <span className="block text-sm text-gray-500">{displayRole}</span>
+                </div>
+                <ul className="flex flex-col gap-1 border-b border-gray-200 pt-4 pb-3 dark:border-gray-800">
+                  <li><a href="/profile" className="block px-3 py-2">Edit profile</a></li>
+                  <li><a href="/messages" className="block px-3 py-2">Messages</a></li>
+                  <li><a href="/settings" className="block px-3 py-2">Account settings</a></li>
+                </ul>
+                <button className="mt-3 block w-full text-left px-3 py-2">Sign out</button>
+              </div>
+            )}
           </div>
         </div>
       </div>
     </header>
-    <div className="h-28 lg:h-24" />
-    </>
   );
 }
 

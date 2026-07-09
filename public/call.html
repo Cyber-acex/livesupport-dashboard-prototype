@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiveSupport Call</title>
+  <link rel="icon" href="/favicon.png" type="image/png" />
+  <style>
+    body { margin:0; font-family:Inter, system-ui, sans-serif; background:#0f172a; color:#e2e8f0; display:flex; min-height:100vh; align-items:center; justify-content:center; }
+    .call-card { width:min(640px,calc(100vw-24px)); background:#111827; border:1px solid rgba(148,163,184,.16); border-radius:28px; padding:32px; box-shadow:0 24px 80px rgba(15,23,42,.35); }
+    h1 { margin:0 0 10px; font-size:1.8rem; }
+    p { margin:.75rem 0; line-height:1.6; }
+    .status { display:inline-flex; align-items:center; gap:.5rem; padding:.85rem 1rem; border-radius:999px; background:rgba(14,165,233,.12); color:#cffafe; font-weight:600; }
+    .actions { margin-top:24px; display:flex; flex-wrap:wrap; gap:12px; }
+    .btn { border:none; border-radius:999px; padding:14px 22px; cursor:pointer; font-weight:700; transition:transform .15s ease, background .15s ease; }
+    .btn:hover { transform:translateY(-1px); }
+    .btn-primary { background:#22c55e; color:#0f172a; }
+    .btn-secondary { background:#334155; color:#e2e8f0; }
+    .disabled { opacity:.55; cursor:not-allowed; }
+    .info-box { margin-top:20px; padding:18px 20px; background:rgba(148,163,184,.08); border-radius:20px; font-size:.95rem; }
+    .token { word-break:break-all; color:#38bdf8; }
+    .hidden { display:none !important; }
+    audio { width:100%; margin-top:20px; border-radius:18px; background:#0f172a; }
+  </style>
+</head>
+<body>
+  <div class="call-card">
+    <h1>Incoming LiveSupport call</h1>
+    <p id="description">Join the voice call securely using this browser window.</p>
+    <div class="info-box">
+      <div>Status: <strong id="statusText">Connecting...</strong></div>
+      <div class="token">Session token: <span id="sessionToken">loading…</span></div>
+    </div>
+    <div class="actions">
+      <button id="answerBtn" class="btn btn-primary hidden">Answer call</button>
+      <button id="rejectBtn" class="btn btn-secondary hidden">Reject call</button>
+    </div>
+    <audio id="remoteAudio" autoplay playsinline class="hidden"></audio>
+    <p id="errorText" style="color:#fca5a5; margin-top:18px; display:none;"></p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="./js/call.js"></script>
+</body>
+</html>
