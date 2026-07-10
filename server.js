@@ -1779,15 +1779,15 @@ async function ensureDefaultRestaurantTables() {
             const inserts = [];
             const values = [];
             missingNumbers.forEach((number) => {
-                inserts.push(`($${values.length + 1}, $${values.length + 2}, $${values.length + 3}, $${values.length + 4}, $${values.length + 5})`);
-                values.push(number, `Table ${number}`, 'vacant', null, false);
+                inserts.push(`($${values.length + 1}, $${values.length + 2}, $${values.length + 3}, $${values.length + 4}, $${values.length + 5}, $${values.length + 6})`);
+                values.push(number, `Table ${number}`, 'vacant', null, false, new Date().toISOString());
             });
 
             let sql;
             if (isPg) {
-                sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking) VALUES ${inserts.join(', ')} ON CONFLICT (number) DO NOTHING`;
+                sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking, updated_at) VALUES ${inserts.join(', ')} ON CONFLICT (number) DO NOTHING`;
             } else {
-                sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking) VALUES ${inserts.join(', ')} ON DUPLICATE KEY UPDATE number = number`;
+                sql = `INSERT INTO restaurant_tables (number, label, status, customer_name, is_booking, updated_at) VALUES ${inserts.join(', ')} ON DUPLICATE KEY UPDATE number = number`;
             }
             db.query(sql, values, (insertErr) => {
                 if (insertErr) {

@@ -234,17 +234,40 @@ function InboxPage() {
       if (!message || !message.conversation_id) return;
       const conversationId = String(message.conversation_id);
       const activeConversationId = String(selectedConversationIdRef.current);
+      const createdAt = message.created_at || new Date().toISOString();
+      const content = message.message || message.content || '';
 
-      setConversations((prev) => prev.map((conv) => {
-        if (String(conv.id) !== conversationId) return conv;
-        const isActive = activeConversationId === conversationId;
-        return {
-          ...conv,
-          last_message: message.message || conv.last_message,
-          last_message_at: message.created_at || new Date().toISOString(),
-          unread_count: isActive ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
-        };
-      }));
+      setConversations((prev) => {
+        let found = false;
+        const updated = prev.map((conv) => {
+          if (String(conv.id) !== conversationId) return conv;
+          found = true;
+          const isActive = activeConversationId === conversationId;
+          return {
+            ...conv,
+            last_message: content || conv.last_message,
+            last_message_at: createdAt,
+            unread_count: isActive ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
+          };
+        });
+
+        if (found) {
+          return [...updated].sort((a, b) => new Date(b.last_message_at || b.updated_at || b.created_at) - new Date(a.last_message_at || a.updated_at || a.created_at));
+        }
+
+        return [
+          {
+            id: message.conversation_id,
+            name: message.sender_name || `Customer ${message.conversation_id}`,
+            phone: message.phone || null,
+            platform: message.platform || 'WhatsApp',
+            last_message: content,
+            last_message_at: createdAt,
+            unread_count: activeConversationId === conversationId ? 0 : 1
+          },
+          ...prev
+        ];
+      });
 
       if (activeConversationId === conversationId) {
         setMessages((prev) => {
