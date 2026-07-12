@@ -8,15 +8,17 @@ function calculatePercentageChange(current, previous) {
 }
 
 export async function fetchDashboardStats() {
-  const [conversationsRes, ordersRes, snapshotRes] = await Promise.all([
+  const [conversationsRes, ordersRes, snapshotRes, revenueRes] = await Promise.all([
     fetch('/api/conversations'),
     fetch('/api/dashboard-stats'),
-    fetch('/api/dashboard-snapshot/instant').catch(() => null)
+    fetch('/api/dashboard-snapshot/instant').catch(() => null),
+    fetch('/api/dashboard-revenue').catch(() => null)
   ]);
 
   const conversations = conversationsRes.ok ? await conversationsRes.json() : [];
   const ordersData = ordersRes.ok ? await ordersRes.json() : { orders: 0 };
   const snapshot = snapshotRes?.ok ? await snapshotRes.json() : null;
+  const revenueData = revenueRes?.ok ? await revenueRes.json() : null;
 
   const customerCount = Array.isArray(conversations) ? conversations.length : 0;
   const ordersCount = Number(ordersData.orders || 0);
@@ -34,6 +36,9 @@ export async function fetchDashboardStats() {
   return {
     customers: customerCount,
     orders: ordersCount,
+    revenueAmount: Number(revenueData?.revenue || revenueData?.amount || 0) || 0,
+    todayAmount: Number(revenueData?.today || revenueData?.todayRevenue || 0) || 0,
+    yesterdayAmount: Number(revenueData?.yesterday || revenueData?.yesterdayRevenue || 0) || 0,
     previousSnapshot
   };
 }

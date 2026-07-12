@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ApexCharts from 'apexcharts';
 import { calculateMonthlyTargetPercent } from '../utils/monthlyTarget';
 
@@ -13,6 +14,8 @@ function formatCurrency(value) {
 
 function MonthlyTargetGauge({ targetAmount = 20000, revenueAmount = 0, todayAmount = 0, yesterdayAmount = 0, progressPercent = null }) {
   const chartRef = useRef(null);
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
   const safeTarget = Number(targetAmount) || 0;
   const safeRevenue = Number(revenueAmount) || 0;
   const safeToday = Number(todayAmount) || 0;
@@ -106,14 +109,44 @@ function MonthlyTargetGauge({ targetAmount = 20000, revenueAmount = 0, todayAmou
 
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-white/[0.03]">
-      <div className="mb-3 flex items-start justify-between">
+      <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Monthly Target</h3>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Target you’ve set for each month</p>
         </div>
-        <span className="rounded-full bg-success-50 px-3 py-1 text-xs font-semibold text-success-600 dark:bg-success-500/15 dark:text-success-400">
-          {computedPercent.toFixed(0)}%
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-success-50 px-3 py-1 text-xs font-semibold text-success-600 dark:bg-success-500/15 dark:text-success-400">
+            {computedPercent.toFixed(0)}%
+          </span>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((open) => !open)}
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              aria-label="Open gauge actions"
+            >
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+                <circle cx="12" cy="5" r="1.4" />
+                <circle cx="12" cy="12" r="1.4" />
+                <circle cx="12" cy="19" r="1.4" />
+              </svg>
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-full z-20 mt-2 min-w-[150px] rounded-xl border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    navigate('/settings?section=account');
+                  }}
+                  className="flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-medium text-gray-700 transition hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  Go to Settings
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-col gap-4">

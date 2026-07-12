@@ -4598,6 +4598,37 @@ app.get('/api/dashboard-stats', (req, res) => {
     });
 });
 
+app.get('/api/dashboard-revenue', (req, res) => {
+    const query = isPg
+        ? `
+            SELECT
+              COALESCE(SUM(CASE WHEN order_date >= DATE_TRUNC('month', CURRENT_DATE) THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS revenue,
+              COALESCE(SUM(CASE WHEN order_date >= CURRENT_DATE THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS today,
+              COALESCE(SUM(CASE WHEN order_date >= CURRENT_DATE - INTERVAL '1 day' AND order_date < CURRENT_DATE THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS yesterday
+            FROM orders
+        `
+        : `
+            SELECT
+              COALESCE(SUM(CASE WHEN order_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS revenue,
+              COALESCE(SUM(CASE WHEN order_date >= CURDATE() THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS today,
+              COALESCE(SUM(CASE WHEN order_date >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND order_date < CURDATE() THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS yesterday
+            FROM orders
+        `;
+
+    db.query(query, (err, results) => {
+        if (err) {
+            console.error('Error fetching dashboard revenue:', err);
+            return res.status(500).json({ error: 'Database error' });
+        }
+        const row = Array.isArray(results) ? results[0] : results?.rows?.[0] || {};
+        res.json({
+            revenue: Number(row.revenue || row.amount || 0),
+            today: Number(row.today || 0),
+            yesterday: Number(row.yesterday || 0)
+        });
+    });
+});
+
 app.get('/api/dashboard-snapshot/instant', (req, res) => {
     res.json({ data: dashboardSnapshots.get('instant') || null });
 });
