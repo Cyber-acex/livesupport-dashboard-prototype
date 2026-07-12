@@ -434,13 +434,15 @@ function emitNewMessageEvent(conversationId, messageData) {
             : null;
         const payload = Object.assign({}, messageData, { conversation_id: id });
         if (senderName) payload.sender_name = senderName;
-        
-        // Emit to all connected clients
-        io.emit("newMessage", payload);
+
+        const roomName = `conversation:${id}`;
+        io.to(roomName).emit("newMessage", payload);
+        io.to("inbox").emit("conversation:updated", { conversationId: id, message: payload });
         console.log(`📤 Socket.IO newMessage event emitted for conversation ${id}:`, {
             conversationId: id,
             sender: payload.sender,
             messageLength: payload.message ? payload.message.length : 0,
+            room: roomName,
             connectedSockets: io.engine.clientsCount || 'unknown'
         });
     });
@@ -1350,7 +1352,17 @@ app.get("/", isAuthenticated, (req, res) => {
 });
 
 app.get("/login", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "login.html"));
+    if (fs.existsSync(reactIndexFile)) {
+        return res.sendFile(reactIndexFile);
+    }
+    return res.sendFile(path.join(__dirname, "public", "login.html"));
+});
+
+app.get("/login.html", (req, res) => {
+    if (fs.existsSync(reactIndexFile)) {
+        return res.sendFile(reactIndexFile);
+    }
+    return res.sendFile(path.join(__dirname, "public", "login.html"));
 });
 
 app.post("/login", (req, res) => {
@@ -1394,7 +1406,7 @@ app.post("/login", (req, res) => {
             // Redirect to dashboard and indicate a fresh login so client can show welcome animation
             res.redirect("/dashboard?welcome=1");
         } else {
-            res.redirect("/login.html?error=invalid");
+            res.redirect("/login?error=invalid");
         }
     });
 });
@@ -1423,11 +1435,11 @@ app.get('/auth/google/callback', async (req, res) => {
     const { code, error } = req.query;
     
     if (error) {
-        return res.redirect(`/login.html?error=google_${error}`);
+        return res.redirect(`/login?error=google_${error}`);
     }
     
     if (!code) {
-        return res.redirect('/login.html?error=google_no_code');
+        return res.redirect('/login?error=google_no_code');
     }
     
     const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -1454,7 +1466,7 @@ app.get('/auth/google/callback', async (req, res) => {
         const tokenData = await tokenRes.json();
         if (!tokenRes.ok || !tokenData || !tokenData.access_token) {
             console.error('Google token exchange failed', tokenData);
-            return res.redirect('/login.html?error=google_token_failed');
+            return res.redirect('/login?error=google_token_failed');
         }
 
         // Fetch userinfo
@@ -1464,14 +1476,14 @@ app.get('/auth/google/callback', async (req, res) => {
         const userInfo = await uiRes.json();
         if (!userInfo || !userInfo.email) {
             console.error('Failed to fetch Google userinfo', userInfo);
-            return res.redirect('/login.html?error=google_userinfo_failed');
+            return res.redirect('/login?error=google_userinfo_failed');
         }
 
         // Find or create user in local DB
         db.query('SELECT * FROM users WHERE email = ?', [userInfo.email], (err, rows) => {
             if (err) {
                 console.error('DB lookup error during Google auth', err);
-                return res.redirect('/login.html?error=google_db_error');
+                return res.redirect('/login?error=google_db_error');
             }
 
             const finishLogin = (user) => {
@@ -1501,7 +1513,7 @@ app.get('/auth/google/callback', async (req, res) => {
             db.query(sql, [name, email, pw, 'agent'], (insertErr, result) => {
                 if (insertErr) {
                     console.error('Error creating new Google user', insertErr);
-                    return res.redirect('/login.html?error=google_create_failed');
+                    return res.redirect('/login?error=google_create_failed');
                 }
                 
                 const newUser = { id: result.insertId, email, name, role: 'agent' };
@@ -1510,7 +1522,7 @@ app.get('/auth/google/callback', async (req, res) => {
         });
     } catch (err) {
         console.error('Google OAuth error:', err);
-        res.redirect('/login.html?error=google_exception');
+        res.redirect('/login?error=google_exception');
     }
 });
 
@@ -2224,11 +2236,33 @@ app.get('/health', (req, res) => {
 // ---------------------------
 app.get("/api/user", (req, res) => {
     if (!req.session.user) return res.status(401).json({ error: "Not logged in" });
-    res.json({
-        id: req.session.userId,
-        name: req.session.user.name,
-        role: req.session.user.role,
-        password: req.session.user.password || ''
+    // Include latest avatar URL when available
+    const userId = req.session.userId;
+    const base = req.protocol + '://' + req.get('host');
+    const avatarQuery = isPg
+        ? 'SELECT url FROM user_avatars WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+        : 'SELECT url FROM user_avatars WHERE user_id = ? ORDER BY created_at DESC LIMIT 1';
+
+    db.query(avatarQuery, [userId], (err, avatarResult) => {
+        if (err) {
+            console.error('Error fetching avatar for /api/user:', err);
+            return res.json({
+                id: req.session.userId,
+                name: req.session.user.name,
+                role: req.session.user.role,
+                password: req.session.user.password || ''
+            });
+        }
+
+        const avatarUrl = avatarResult && avatarResult[0] && avatarResult[0].url ? (avatarResult[0].url.startsWith('http') ? avatarResult[0].url : base + avatarResult[0].url) : null;
+
+        res.json({
+            id: req.session.userId,
+            name: req.session.user.name,
+            role: req.session.user.role,
+            password: req.session.user.password || '',
+            avatar_url: avatarUrl
+        });
     });
 });
 
@@ -5239,6 +5273,17 @@ const io = new Server(httpServer, {
 
 io.on("connection", (socket) => {
     console.log("New client connected:", socket.id);
+    socket.join("inbox");
+
+    socket.on("conversation:join", (data) => {
+        if (!data || !data.conversationId) return;
+        socket.join(`conversation:${data.conversationId}`);
+    });
+
+    socket.on("conversation:leave", (data) => {
+        if (!data || !data.conversationId) return;
+        socket.leave(`conversation:${data.conversationId}`);
+    });
 
     // Agent registers after connecting with their user info
     socket.on("agent:register", (agent) => {
@@ -5333,12 +5378,16 @@ io.on("connection", (socket) => {
         });
     });
 
-    socket.on('voice:register', (data) => {
+    socket.on('voice:register', (data, ack) => {
         const record = normalizeVoiceUser(socket, Object.assign({}, data, { status: 'online', socketId: socket.id }));
-        if (!record || !record.userId) return;
+        if (!record || !record.userId) {
+            if (typeof ack === 'function') ack({ ok: false, error: 'Missing userId' });
+            return;
+        }
         voiceUsers.set(socket.id, record);
         broadcastVoicePresence();
         socket.emit('voice:channels', getVoiceChannelList());
+        if (typeof ack === 'function') ack({ ok: true, userId: record.userId, socketId: socket.id });
     });
 
     socket.on('voice:getChannels', () => {
@@ -5524,11 +5573,27 @@ io.on("connection", (socket) => {
         console.log("Client disconnected:", socket.id);
     });
 
-    socket.on('voice:private:initiate', (data) => {
+    const handlePrivateCallRequest = (data) => {
         if (!data || !data.targetUserId || !data.sessionId) return;
-        const caller = voiceUsers.get(socket.id);
+        const caller = voiceUsers.get(socket.id) || (data.caller ? {
+            userId: data.caller.userId || data.caller.id || null,
+            name: data.caller.name || data.caller.displayName || 'Staff',
+            role: data.caller.role || 'agent'
+        } : null);
         const targetSocketId = getSocketByUserId(data.targetUserId);
-        if (!caller || !targetSocketId) return;
+        if (!caller?.userId || !targetSocketId) {
+            console.warn('Private voice call could not be routed', {
+                targetUserId: data.targetUserId,
+                callerUserId: caller?.userId || null,
+                targetSocketId: targetSocketId || null,
+                sessionId: data.sessionId
+            });
+            socket.emit('voice:private:error', {
+                sessionId: data.sessionId,
+                message: 'The selected staff is not online or not registered for voice calls.'
+            });
+            return;
+        }
         const sessionId = data.sessionId;
         const session = {
             id: sessionId,
@@ -5547,14 +5612,21 @@ io.on("connection", (socket) => {
             sessionId,
             from: { userId: caller.userId, name: caller.name, role: caller.role }
         });
-    });
+    };
+
+    socket.on('voice:private:request', (data) => handlePrivateCallRequest(data));
+    socket.on('voice:private:initiate', (data) => handlePrivateCallRequest(data));
 
     socket.on('voice:private:response', async (data) => {
         if (!data || !data.sessionId || typeof data.accepted === 'undefined') return;
         const session = getVoiceSessionById(data.sessionId);
         if (!session || session.type !== 'private' || session.status !== 'pending') return;
-        const responder = voiceUsers.get(socket.id);
-        if (!responder) return;
+        const responder = voiceUsers.get(socket.id) || (data.responder ? {
+            userId: data.responder.userId || data.responder.id || null,
+            name: data.responder.name || data.responder.displayName || 'Staff',
+            role: data.responder.role || 'agent'
+        } : null);
+        if (!responder?.userId) return;
         const callerSocketId = Array.from(session.participants.keys())[0];
         const caller = voiceUsers.get(callerSocketId);
         if (!caller) return;
@@ -6051,6 +6123,37 @@ app.get('/api/tickets-by-period', async (req, res) => {
     }
 });
 
+app.get('/api/tickets-monthly', async (req, res) => {
+    try {
+        const now = new Date();
+        const year = now.getFullYear();
+
+        const sql = isPg
+            ? `SELECT TO_CHAR(created_at, 'YYYY-MM') AS ym, COUNT(*) AS total FROM tickets WHERE created_at >= DATE_TRUNC('year', CURRENT_DATE) AND created_at < DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year' GROUP BY ym ORDER BY ym`
+            : `SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym, COUNT(*) AS total FROM tickets WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01') AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR) GROUP BY ym ORDER BY ym`;
+
+        const rows = await db.promise().query(sql);
+        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const rowMap = {};
+        (rows || []).forEach(r => { rowMap[String(r.ym)] = r; });
+
+        const labels = [];
+        const counts = [];
+        for (let month = 0; month < 12; month++) {
+            const d = new Date(year, month, 1);
+            const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+            labels.push(monthNames[d.getMonth()]);
+            const row = rowMap[ym] || {};
+            counts.push(Number(row.total || 0));
+        }
+
+        res.json({ labels, counts });
+    } catch (error) {
+        console.error('Error fetching tickets-monthly:', error);
+        res.status(500).json({ error: 'Failed to fetch tickets monthly' });
+    }
+});
+
 // API endpoint for message counts by time period (received messages only)
 app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
     try {
@@ -6066,7 +6169,7 @@ app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
                     SUM(CASE WHEN sender <> 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS monthly
                 FROM messages`;
 
-        const [rows] = await db.promise().query(messageCountsSql);
+        const rows = await db.promise().query(messageCountsSql);
         const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
 
         res.json({
@@ -6094,7 +6197,7 @@ app.get('/api/outward-messages-by-period', isAuthenticated, async (req, res) => 
                     SUM(CASE WHEN sender = 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS monthly
                 FROM messages`;
 
-        const [rows] = await db.promise().query(messageCountsSql);
+        const rows = await db.promise().query(messageCountsSql);
         const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
 
         res.json({

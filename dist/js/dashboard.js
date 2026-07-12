@@ -709,6 +709,68 @@ dashboardReady(()=>{
     initProfile();
   }
 
+  // --- Monthly sales chart ---
+  function initMonthlySalesChart(){
+    const canvas = document.getElementById('monthlySalesChart');
+    if(!canvas) return;
+
+    try {
+      const existingChart = window.Chart.getChart(canvas);
+      if (existingChart) existingChart.destroy();
+    } catch (e) {}
+
+    const ctx = canvas.getContext('2d');
+    const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const values = [168, 385, 201, 298, 187, 195, 291, 110, 215, 390, 280, 112];
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Sales',
+          data: values,
+          backgroundColor: '#465FFF',
+          borderRadius: 8,
+          borderSkipped: 'bottom',
+          maxBarThickness: 30,
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            enabled: true,
+            backgroundColor: 'rgba(15,23,42,0.95)',
+            titleColor: '#fff',
+            bodyColor: '#fff',
+            borderColor: 'rgba(255,255,255,0.08)',
+            borderWidth: 1,
+            padding: 10,
+            displayColors: false,
+            cornerRadius: 8,
+            bodyFont: { weight: '600' }
+          }
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { color: 'rgba(55,65,81,0.85)', font: { weight: '600' } }
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(15,23,42,0.08)' },
+            ticks: { color: 'rgba(55,65,81,0.75)', stepSize: 100 },
+            border: { display: false }
+          }
+        }
+      }
+    });
+  }
+
   // --- Monthly outward messages chart ---
   function initMessagesChart(){
     const canvas = document.getElementById('messagesChart');
@@ -833,6 +895,7 @@ dashboardReady(()=>{
     };
     chart.update();
   }
+  initMonthlySalesChart();
   initMessagesChart();
   window.__dashboard_progress.push('after_initMessagesChart');
 

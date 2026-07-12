@@ -28,6 +28,42 @@ export const useVoiceSocket = (user, handlers = {}) => {
     let connectErrorListener;
     let disconnectListener;
 
+    const registerVoiceSocket = (socketInstance) => {
+      if (!socketInstance || socketInstance.__voiceRegistrationPromise) {
+        return socketInstance?.__voiceRegistrationPromise || null;
+      }
+
+      const registerPayload = {
+        userId: user.id,
+        name: user.name || user.displayName || 'Staff',
+        role: user.role || 'agent'
+      };
+
+      socketInstance.__voiceRegistrationPromise = new Promise((resolve) => {
+        const finish = (response) => {
+          clearTimeout(timeoutId);
+          resolve(response || { ok: true });
+        };
+
+        const timeoutId = setTimeout(() => {
+          finish({ ok: false, timedOut: true });
+        }, 5000);
+
+        if (socketInstance.connected) {
+          socketInstance.emit('voice:register', registerPayload, finish);
+        } else {
+          const onConnect = () => {
+            socketInstance.off('connect', onConnect);
+            socketInstance.emit('voice:register', registerPayload, finish);
+          };
+          socketInstance.once('connect', onConnect);
+        }
+      });
+
+      socketInstance.waitForVoiceRegistration = () => socketInstance.__voiceRegistrationPromise;
+      return socketInstance.__voiceRegistrationPromise;
+    };
+
     if (!activeSocket) {
       const newSocket = io({ transports: ['websocket', 'polling'] });
       socketRef.current = newSocket;
@@ -36,11 +72,7 @@ export const useVoiceSocket = (user, handlers = {}) => {
 
       connectListener = () => {
         console.log('Voice socket connected:', newSocket.id);
-        newSocket.emit('voice:register', {
-          userId: user.id,
-          name: user.name || user.displayName || 'Staff',
-          role: user.role || 'agent'
-        });
+        registerVoiceSocket(newSocket);
       };
       connectErrorListener = (error) => {
         console.error('Voice socket connection error:', error);
@@ -49,11 +81,7 @@ export const useVoiceSocket = (user, handlers = {}) => {
       newSocket.on('connect', connectListener);
       newSocket.on('connect_error', connectErrorListener);
     } else if (activeSocket.connected) {
-      activeSocket.emit('voice:register', {
-        userId: user.id,
-        name: user.name || user.displayName || 'Staff',
-        role: user.role || 'agent'
-      });
+      registerVoiceSocket(activeSocket);
     }
 
     const eventMap = [
@@ -61,6 +89,8 @@ export const useVoiceSocket = (user, handlers = {}) => {
       ['voice:channels', 'onChannelsUpdate'],
       ['voice:private:incoming', 'onPrivateIncoming'],
       ['voice:private:accepted', 'onPrivateAccepted'],
+      ['voice:private:started', 'onPrivateStarted'],
+      ['voice:private:error', 'onPrivateError'],
       ['voice:signal', 'onSignal'],
       ['voice:ended', 'onSessionEnded'],
       ['voice:broadcast:incoming', 'onBroadcastIncoming'],

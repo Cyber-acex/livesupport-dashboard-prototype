@@ -1,6 +1,9 @@
 // Settings Service - localStorage and appearance helpers
 
 export function getSettings() {
+  const savedTarget = Number(localStorage.getItem('monthlyTargetAmount'));
+  const monthlyTargetAmount = Number.isFinite(savedTarget) && savedTarget > 0 ? savedTarget : 20000;
+
   return {
     displayName: localStorage.getItem('displayName') || '',
     email: localStorage.getItem('email') || '',
@@ -15,7 +18,8 @@ export function getSettings() {
     autoReply: localStorage.getItem('autoReply') || '',
     chatEnabled: localStorage.getItem('chatEnabled') || 'on',
     autopilotMode: localStorage.getItem('autopilotMode') || 'assist',
-    autoAssign: localStorage.getItem('autoAssign') || 'on'
+    autoAssign: localStorage.getItem('autoAssign') || 'on',
+    monthlyTargetAmount
   };
 }
 
@@ -34,6 +38,9 @@ export function saveSettings(settings) {
   if (settings.chatEnabled !== undefined) localStorage.setItem('chatEnabled', settings.chatEnabled);
   if (settings.autopilotMode !== undefined) localStorage.setItem('autopilotMode', settings.autopilotMode);
   if (settings.autoAssign !== undefined) localStorage.setItem('autoAssign', settings.autoAssign);
+  if (settings.monthlyTargetAmount !== undefined) {
+    localStorage.setItem('monthlyTargetAmount', String(Number(settings.monthlyTargetAmount || 0)));
+  }
 }
 
 export function applyTheme(theme) {

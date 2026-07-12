@@ -9,6 +9,7 @@ function LoginPage() {
   const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loginStatus, setLoginStatus] = useState('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
@@ -34,6 +35,7 @@ function LoginPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setIsSubmitting(true);
+    setLoginStatus('typing');
     setErrorMessage('');
 
     const form = event.currentTarget;
@@ -47,20 +49,28 @@ function LoginPage() {
         redirect: 'manual'
       });
 
-      if (response.type === 'opaqueredirect' || response.status >= 300 && response.status < 400) {
-        window.location.assign('/dashboard?welcome=1');
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        setLoginStatus('success');
+        window.setTimeout(() => {
+          window.location.assign('/dashboard?welcome=1');
+        }, 1200);
         return;
       }
 
       if (response.ok) {
-        window.location.assign('/dashboard?welcome=1');
+        setLoginStatus('success');
+        window.setTimeout(() => {
+          window.location.assign('/dashboard?welcome=1');
+        }, 1200);
         return;
       }
 
       setErrorMessage('Unable to sign in right now. Please try again.');
+      setLoginStatus('idle');
       setIsSubmitting(false);
     } catch (error) {
       setErrorMessage('Unable to sign in right now. Please try again.');
+      setLoginStatus('idle');
       setIsSubmitting(false);
     }
   };
@@ -89,7 +99,7 @@ function LoginPage() {
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Customer success workspace</p>
               </div>
             </div>
-            <SupportAgentScene />
+            <SupportAgentScene status={loginStatus} />
           </div>
         </motion.section>
 

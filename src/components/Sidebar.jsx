@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
+import SidebarRobot from './SidebarRobot';
 
 const menuItems = [
   { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -24,6 +26,7 @@ const menuItems = [
 function Sidebar() {
   const { sidebarToggle, closeSidebar } = useSidebar();
   const location = useLocation();
+  const [isHovered, setIsHovered] = useState(false);
 
   const isActivePath = (to) => {
     if (to === '/orders') {
@@ -32,30 +35,27 @@ function Sidebar() {
     return location.pathname === to || location.pathname.startsWith(`${to}/`);
   };
 
+  const isCollapsed = sidebarToggle && !isHovered;
+  const showExpandedContent = !sidebarToggle || isHovered;
+
   return (
     <>
       <aside
-        className={`${sidebarToggle ? 'translate-x-0 lg:w-[90px]' : '-translate-x-full'} fixed left-0 top-0 z-50 flex h-screen w-[290px] flex-col overflow-y-hidden border-r border-gray-200 bg-white px-5 transition duration-300 ease-linear dark:border-gray-800 dark:bg-black lg:static lg:translate-x-0`}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        className={`${sidebarToggle ? 'translate-x-0' : '-translate-x-full'} ${isCollapsed ? 'lg:w-[90px]' : 'lg:w-[290px]'} fixed left-0 top-0 z-50 flex h-screen w-[290px] flex-col overflow-y-hidden border-r border-gray-200 bg-white px-5 transition-[width,transform] duration-300 ease-linear dark:border-gray-800 dark:bg-black lg:static lg:translate-x-0`}
       >
-        <div
-          className={`flex items-center gap-2 pt-8 pb-7 ${sidebarToggle ? 'justify-center' : 'justify-between'}`}
-        >
-          <NavLink to="/dashboard" onClick={closeSidebar} className="flex items-center gap-2">
-            <span className={`logo ${sidebarToggle ? 'hidden' : 'flex items-center gap-2'}`}>
-              <svg viewBox="0 0 32 32" className="h-10 w-10" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="16" cy="16" r="14" stroke="#0f1724" strokeWidth="2" />
-                <path d="M8 16h16M16 8v16" stroke="#0f1724" strokeWidth="2" />
-              </svg>
-              <div>
+        <div className={`flex items-center pt-8 pb-7 ${showExpandedContent ? 'justify-between' : 'justify-center'}`}>
+          <NavLink to="/dashboard" onClick={closeSidebar} className="flex w-full items-center gap-3">
+            <div className={`${showExpandedContent ? '' : 'mx-auto'}`}>
+              <SidebarRobot compact={isCollapsed} />
+            </div>
+            {showExpandedContent ? (
+              <div className="min-w-0">
                 <div className="text-base font-semibold text-gray-900 dark:text-white">LiveSupport</div>
                 <div className="text-[12px] uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Support Console</div>
               </div>
-            </span>
-            <span className={`${sidebarToggle ? 'lg:block hidden' : 'hidden'}`}>
-              <svg viewBox="0 0 24 24" className="h-10 w-10" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="12" cy="12" r="10" stroke="#0f1724" strokeWidth="2" />
-              </svg>
-            </span>
+            ) : null}
           </NavLink>
         </div>
 
@@ -63,9 +63,9 @@ function Sidebar() {
           <nav>
             <div>
               <h3 className="mb-4 text-xs uppercase leading-[20px] text-gray-400">
-                <span className={`${sidebarToggle ? 'lg:hidden' : ''}`}>MENU</span>
+                <span className={`${showExpandedContent ? '' : 'lg:hidden'}`}>MENU</span>
                 <svg
-                  className={`${sidebarToggle ? 'lg:block hidden' : 'hidden'} mx-auto h-6 w-6 fill-current text-gray-500`}
+                  className={`${showExpandedContent ? 'hidden' : 'lg:block hidden'} mx-auto h-6 w-6 fill-current text-gray-500`}
                   viewBox="0 0 24 24"
                   fill="none"
                   xmlns="http://www.w3.org/2000/svg"
@@ -101,9 +101,9 @@ function Sidebar() {
                             {item.icon}
                           </svg>
                         </span>
-                        <span className={`${sidebarToggle ? 'lg:hidden' : ''} truncate`}>{item.label}</span>
+                        <span className={`${showExpandedContent ? '' : 'lg:hidden'} truncate`}>{item.label}</span>
                       </NavLink>
-                      {item.children && active ? (
+                      {item.children && active && showExpandedContent ? (
                         <ul className="mt-2 ml-10 space-y-2">
                           {item.children.map((child) => {
                             const childActive = isActivePath(child.to);

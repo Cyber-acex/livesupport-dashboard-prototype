@@ -3,7 +3,10 @@ import { createContext, useContext, useState } from 'react';
 const SidebarContext = createContext(null);
 
 export function SidebarProvider({ children }) {
-  const [sidebarToggle, setSidebarToggle] = useState(false);
+  const [sidebarToggle, setSidebarToggle] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth >= 1024; // open by default on large screens
+  });
 
   const toggleSidebar = () => {
     setSidebarToggle((prev) => !prev);

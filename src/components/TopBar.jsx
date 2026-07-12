@@ -1,10 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useSidebar } from '../contexts/SidebarContext';
 
 function TopBar({ onSidebarToggle }) {
+  const { toggleSidebar } = useSidebar();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
-  const [currentUser, setCurrentUser] = useState({ name: 'Staff', role: 'agent' });
+  const [currentUser, setCurrentUser] = useState({ name: 'Staff', role: 'agent', avatar_url: null });
+  const [sessionStartedAt, setSessionStartedAt] = useState(() => {
+    if (typeof window === 'undefined') return Date.now();
+    const stored = window.localStorage.getItem('sessionStartedAt');
+    const parsed = Number(stored);
+    if (stored && !Number.isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+    const now = Date.now();
+    window.localStorage.setItem('sessionStartedAt', String(now));
+    return now;
+  });
+  const [sessionTick, setSessionTick] = useState(0);
   const notifRef = useRef();
   const userRef = useRef();
 
@@ -21,9 +35,22 @@ function TopBar({ onSidebarToggle }) {
   }, []);
 
   useEffect(() => {
+    function syncAvatarFromStorage() {
+      const storedAvatar = typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null;
+      if (storedAvatar) {
+        setCurrentUser((prev) => ({ ...prev, avatar_url: storedAvatar }));
+      }
+    }
+
     async function loadCurrentUser() {
       if (typeof window !== 'undefined' && window.currentUser) {
-        setCurrentUser(window.currentUser);
+        setCurrentUser({
+          ...window.currentUser,
+          name: window.currentUser.name || 'Staff',
+          role: window.currentUser.role || 'agent',
+          avatar_url: window.currentUser.avatar_url || window.currentUser.avatarUrl || null
+        });
+        syncAvatarFromStorage();
         return;
       }
 
@@ -32,8 +59,17 @@ function TopBar({ onSidebarToggle }) {
         if (!res.ok) return;
         const data = await res.json();
         if (data && data.name) {
-          setCurrentUser(data);
-          window.currentUser = data;
+          const resolvedAvatar = data.avatar_url || data.avatarUrl || (typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null);
+          const mergedUser = {
+            ...data,
+            name: data.name || 'Staff',
+            role: data.role || 'agent',
+            avatar_url: resolvedAvatar
+          };
+          setCurrentUser(mergedUser);
+          if (typeof window !== 'undefined') {
+            window.currentUser = mergedUser;
+          }
         }
       } catch (error) {
         console.warn('Failed to load current user', error);
@@ -41,6 +77,33 @@ function TopBar({ onSidebarToggle }) {
     }
 
     loadCurrentUser();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('avatar:updated', syncAvatarFromStorage);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('avatar:updated', syncAvatarFromStorage);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const stored = window.localStorage.getItem('sessionStartedAt');
+    const parsed = Number(stored);
+    if (stored && !Number.isNaN(parsed) && parsed > 0) {
+      setSessionStartedAt(parsed);
+    } else {
+      const now = Date.now();
+      window.localStorage.setItem('sessionStartedAt', String(now));
+      setSessionStartedAt(now);
+    }
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setSessionTick((value) => value + 1), 1000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -66,13 +129,54 @@ function TopBar({ onSidebarToggle }) {
   const userInitials = getInitials(currentUser.name);
   const displayName = currentUser.name || 'Staff';
   const displayRole = currentUser.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Agent';
+  const avatarUrl = currentUser.avatar_url || currentUser.avatarUrl || (typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null);
+
+  const handleSignOut = async () => {
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('userAvatar');
+        window.localStorage.removeItem('sessionStartedAt');
+        window.sessionStorage.removeItem('auth');
+        window.currentUser = null;
+      }
+      await fetch('/logout', { method: 'GET', credentials: 'same-origin' });
+    } catch (error) {
+      console.warn('Sign out request failed', error);
+    } finally {
+      if (typeof window !== 'undefined') {
+        window.location.assign('/login.html');
+      }
+    }
+  };
+
+  const formatSessionTimestamp = (startTime) => {
+    if (!startTime) return 'Unknown';
+    return new Intl.DateTimeFormat(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    }).format(new Date(startTime));
+  };
+
+  const formatSessionDuration = (startTime) => {
+    if (!startTime) return '0s';
+    const diffMs = Math.max(0, Date.now() - startTime);
+    const hours = Math.floor(diffMs / 3600000);
+    const minutes = Math.floor((diffMs % 3600000) / 60000);
+    const seconds = Math.floor((diffMs % 60000) / 1000);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${seconds}s`;
+    return `${seconds}s`;
+  };
 
   return (
     <header className="sticky top-0 z-50 flex w-full border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
       <div className="flex grow flex-col items-center justify-between lg:flex-row lg:px-6">
         <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 lg:justify-normal lg:border-b-0 lg:px-0 lg:py-4 dark:border-gray-800">
           <button
-            onClick={() => onSidebarToggle ? onSidebarToggle() : null}
+            onClick={() => (onSidebarToggle ? onSidebarToggle() : toggleSidebar())}
             className="z-50 flex h-10 w-10 items-center justify-center rounded-lg border-gray-200 text-gray-500 lg:h-11 lg:w-11 lg:border dark:border-gray-800 dark:text-gray-400"
             aria-label="Toggle sidebar"
           >
@@ -153,8 +257,12 @@ function TopBar({ onSidebarToggle }) {
 
           <div className="relative ml-4" ref={userRef}>
             <button onClick={(e) => { e.stopPropagation(); setUserOpen(!userOpen); }} className="flex items-center text-gray-700 dark:text-gray-400">
-              <span className="mr-3 flex h-11 w-11 items-center justify-center rounded-full bg-slate-200 text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-white">
-                {userInitials}
+              <span className="mr-3 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-white">
+                {avatarUrl ? (
+                  <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" />
+                ) : (
+                  userInitials
+                )}
               </span>
               <span className="mr-1 block font-medium">{displayName}</span>
               <svg className={`${userOpen ? 'rotate-180' : ''} transition-transform`} width="18" height="20" viewBox="0 0 18 20"><path d="M4.3125 8.65625L9 13.3437L13.6875 8.65625" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -166,12 +274,68 @@ function TopBar({ onSidebarToggle }) {
                   <span className="block font-medium text-gray-700 dark:text-gray-400">{displayName}</span>
                   <span className="block text-sm text-gray-500">{displayRole}</span>
                 </div>
+                <div className="mt-3 rounded-xl border border-gray-100 bg-gray-50/80 px-3 py-3 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-800/50 dark:text-gray-300">
+                  <div className="mb-2 flex items-center gap-2">
+                    <svg className="h-4 w-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M10 3.5a4.5 4.5 0 0 0-4.5 4.5v1.3c0 .4-.1.8-.4 1.1L4 11.2a1 1 0 0 0-.2.6v1.2a1 1 0 0 0 1 1h10.4a1 1 0 0 0 1-1v-1.2a1 1 0 0 0-.2-.6l-1.1-1.3c-.3-.3-.4-.7-.4-1.1V8a4.5 4.5 0 0 0-4.5-4.5Z" />
+                      <path d="M8 15.5a2 2 0 0 0 4 0" />
+                    </svg>
+                    <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500 dark:text-gray-400">Session</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-gray-500 dark:text-gray-400">Login time</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-200">{formatSessionTimestamp(sessionStartedAt)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-gray-500 dark:text-gray-400">Active for</span>
+                      <span className="font-medium text-gray-700 dark:text-gray-200">{formatSessionDuration(sessionStartedAt)}</span>
+                    </div>
+                  </div>
+                </div>
                 <ul className="flex flex-col gap-1 border-b border-gray-200 pt-4 pb-3 dark:border-gray-800">
-                  <li><a href="/profile" className="block px-3 py-2">Edit profile</a></li>
-                  <li><a href="/messages" className="block px-3 py-2">Messages</a></li>
-                  <li><a href="/settings" className="block px-3 py-2">Account settings</a></li>
+                  <li>
+                    <a
+                      href="/settings?section=notifications"
+                      onClick={() => setUserOpen(false)}
+                      className="flex items-center gap-3 rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      <svg className="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M10 3.5a3 3 0 0 0-3 3v.8c0 .4-.1.8-.3 1.2L5.7 9.7a1 1 0 0 0-.2.6v1.2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-1.2a1 1 0 0 0-.2-.6l-.9-1.2c-.2-.4-.3-.8-.3-1.2v-.8a3 3 0 0 0-3-3Z" />
+                        <path d="M8 14.5a2 2 0 0 0 4 0" />
+                      </svg>
+                      <span>Notification settings</span>
+                    </a>
+                  </li>
+                  <li>
+                    <a href="/messages" className="flex items-center gap-3 rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800">
+                      <svg className="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 5.5h12a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 16 14.5H7l-3 2V7A1.5 1.5 0 0 1 4 5.5Z" />
+                      </svg>
+                      <span>Messages</span>
+                    </a>
+                  </li>
+                  <li>
+                    <a href="/settings" className="flex items-center gap-3 rounded-lg px-3 py-2 text-gray-700 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800">
+                      <svg className="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <circle cx="10" cy="10" r="3" />
+                        <path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.2 4.2l1.5 1.5M14.3 14.3l1.5 1.5M4.2 15.8l1.5-1.5M14.3 5.7l1.5-1.5" />
+                      </svg>
+                      <span>Account settings</span>
+                    </a>
+                  </li>
                 </ul>
-                <button className="mt-3 block w-full text-left px-3 py-2">Sign out</button>
+                <button
+                  onClick={handleSignOut}
+                  className="mt-3 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-gray-700 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  <svg className="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M7.5 5.5H5.25A1.75 1.75 0 0 0 3.5 7.25v7.5A1.75 1.75 0 0 0 5.25 16.5h2.25" />
+                    <path d="M8 10h8" />
+                    <path d="m13.5 7 3 3-3 3" />
+                  </svg>
+                  <span>Sign out</span>
+                </button>
               </div>
             )}
           </div>

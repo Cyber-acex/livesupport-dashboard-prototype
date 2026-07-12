@@ -7,6 +7,7 @@ import CallStatusBadge from '../components/CallStatusBadge';
 import CallLinkPanel from '../components/CallLinkPanel';
 import { useCallSocket } from '../hooks/useCallSocket';
 import { useCallWebRTC } from '../hooks/useCallWebRTC';
+import { formatInboxTimestamp } from '../utils/inboxTime';
 
 const queueFilters = [
   { id: 'all', label: 'All', icon: '✦' },
@@ -16,10 +17,7 @@ const queueFilters = [
 ];
 
 function formatDate(value) {
-  if (!value) return 'Unknown';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleString();
+  return formatInboxTimestamp(value);
 }
 
 function InboxPage() {
@@ -60,6 +58,7 @@ function InboxPage() {
   const [remoteStream, setRemoteStream] = useState(null);
   const socketRef = useRef(null);
   const selectedConversationIdRef = useRef(null);
+  const activeConversationRoomRef = useRef(null);
   const remoteAudioRef = useRef(null);
 
   const callSocket = useCallSocket(
@@ -234,40 +233,17 @@ function InboxPage() {
       if (!message || !message.conversation_id) return;
       const conversationId = String(message.conversation_id);
       const activeConversationId = String(selectedConversationIdRef.current);
-      const createdAt = message.created_at || new Date().toISOString();
-      const content = message.message || message.content || '';
 
-      setConversations((prev) => {
-        let found = false;
-        const updated = prev.map((conv) => {
-          if (String(conv.id) !== conversationId) return conv;
-          found = true;
-          const isActive = activeConversationId === conversationId;
-          return {
-            ...conv,
-            last_message: content || conv.last_message,
-            last_message_at: createdAt,
-            unread_count: isActive ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
-          };
-        });
-
-        if (found) {
-          return [...updated].sort((a, b) => new Date(b.last_message_at || b.updated_at || b.created_at) - new Date(a.last_message_at || a.updated_at || a.created_at));
-        }
-
-        return [
-          {
-            id: message.conversation_id,
-            name: message.sender_name || `Customer ${message.conversation_id}`,
-            phone: message.phone || null,
-            platform: message.platform || 'WhatsApp',
-            last_message: content,
-            last_message_at: createdAt,
-            unread_count: activeConversationId === conversationId ? 0 : 1
-          },
-          ...prev
-        ];
-      });
+      setConversations((prev) => prev.map((conv) => {
+        if (String(conv.id) !== conversationId) return conv;
+        const isActive = activeConversationId === conversationId;
+        return {
+          ...conv,
+          last_message: message.message || conv.last_message,
+          last_message_at: message.created_at || new Date().toISOString(),
+          unread_count: isActive ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
+        };
+      }));
 
       if (activeConversationId === conversationId) {
         setMessages((prev) => {
@@ -325,6 +301,9 @@ function InboxPage() {
     socket.on('call:error', handleCallEvent);
 
     return () => {
+      if (activeConversationRoomRef.current && socket) {
+        socket.emit('conversation:leave', { conversationId: activeConversationRoomRef.current });
+      }
       socket.off('connect', handleConnect);
       socket.off('newMessage', handleNewMessage);
       socket.off('messages:refreshed', handleMessagesRefreshed);
@@ -341,17 +320,27 @@ function InboxPage() {
   // When user selects a conversation, tell the server and request a socket refresh
   useEffect(() => {
     if (!selectedConversation?.id) return;
-    selectedConversationIdRef.current = selectedConversation.id;
     const socket = socketRef.current;
+    const previousConversationId = activeConversationRoomRef.current;
+
+    if (previousConversationId && previousConversationId !== selectedConversation.id && socket) {
+      socket.emit('conversation:leave', { conversationId: previousConversationId });
+    }
+
+    selectedConversationIdRef.current = selectedConversation.id;
+    activeConversationRoomRef.current = selectedConversation.id;
+
     if (!socket) return;
 
     try {
+      socket.emit('conversation:join', { conversationId: selectedConversation.id });
       socket.emit('agent:activeConversation', { conversationId: selectedConversation.id });
       socket.emit('messages:refresh', { conversationId: selectedConversation.id });
     } catch (e) {
       // If not connected yet, wait for connect and then emit
       socket.once('connect', () => {
         try {
+          socket.emit('conversation:join', { conversationId: selectedConversation.id });
           socket.emit('agent:activeConversation', { conversationId: selectedConversation.id });
           socket.emit('messages:refresh', { conversationId: selectedConversation.id });
         } catch (err) { console.error('emit after connect failed', err); }
@@ -761,18 +750,17 @@ function InboxPage() {
   });
 
   return (
-    <>
-      <div className="flex min-h-screen overflow-hidden bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-white">
+    <div className="min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-white">
+      <div className="flex min-h-screen">
         <Sidebar />
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-            <div className="flex min-h-[calc(100vh-8rem)] flex-col">
-              <div className="mb-6 flex flex-col gap-4 rounded-[32px] border border-slate-200 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 md:flex-row md:items-center md:justify-between">
+          <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+            <div className="mb-6 flex flex-col gap-4 rounded-[32px] border border-slate-200 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-[0.24em] text-brand-500">Customer inbox</p>
-                <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">Conversations</h1>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">A refined space for tickets, follow-ups, and live support replies.</p>
+                <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">TailAdmin-style conversations</h1>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">A refined chat workspace for tickets, follow-ups, and live support replies.</p>
               </div>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <input
@@ -797,9 +785,9 @@ function InboxPage() {
               </div>
             ) : null}
 
-            <div className="flex min-h-[70vh] flex-1 overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
-              <div className="grid h-full min-h-0 flex-1 grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
-                <aside className="flex h-full min-h-0 flex-col border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-b-0 xl:border-r">
+            <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
+              <div className="grid h-[calc(100dvh-12rem)] min-h-[720px] max-h-[calc(100dvh-12rem)] grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
+                <aside className="border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-b-0 xl:border-r">
                   <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -829,20 +817,18 @@ function InboxPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex-1 overflow-y-auto pr-1">
-                    <div className="space-y-3">
-                      {loading ? (
-                        <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
-                          Loading chats...
-                        </div>
-                      ) : conversationRows.length > 0 ? (
-                        conversationRows
-                      ) : (
-                        <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
-                          No conversations found.
-                        </div>
-                      )}
-                    </div>
+                  <div className="mt-4 space-y-3">
+                    {loading ? (
+                      <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
+                        Loading chats...
+                      </div>
+                    ) : conversationRows.length > 0 ? (
+                      conversationRows
+                    ) : (
+                      <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
+                        No conversations found.
+                      </div>
+                    )}
                   </div>
                 </aside>
 
@@ -892,7 +878,7 @@ function InboxPage() {
                               }`}>
                                 <div className="mb-1 flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
                                   <span>{message.sender === 'agent' ? 'Support agent' : 'Customer'}</span>
-                                  {message.createdAt ? <span>{new Date(message.createdAt).toLocaleString()}</span> : null}
+                                  {message.createdAt ? <span>{formatInboxTimestamp(message.createdAt)}</span> : null}
                                 </div>
                                 {message.content}
                               </div>
@@ -955,7 +941,7 @@ function InboxPage() {
                   )}
                 </section>
 
-                <aside className="flex h-full min-h-0 flex-col border-t border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-l xl:border-t-0">
+                <aside className="border-t border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-l xl:border-t-0">
                   <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Customer info</h3>
@@ -1028,7 +1014,6 @@ function InboxPage() {
                 </aside>
               </div>
             </div>
-          </div>
           </main>
         </div>
       </div>
@@ -1279,7 +1264,7 @@ function InboxPage() {
           </div>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 

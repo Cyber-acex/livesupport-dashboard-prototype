@@ -5,8 +5,10 @@ import MetricCard from '../components/MetricCard';
 import TableCard from '../components/TableCard';
 import StatusBadge from '../components/StatusBadge';
 import StatisticsChart from '../components/StatisticsChart';
+import MonthlySalesChart from '../components/MonthlySalesChart';
 import MonthlyTargetGauge from '../components/MonthlyTargetGauge';
 import { fetchDashboardStats, fetchRecentOrders, fetchRecentMessages } from '../services/dashboardService';
+import { getSettings } from '../services/settingsService';
 
 // Metric Icons
 const customerIcon = (
@@ -29,6 +31,10 @@ function DashboardPage() {
   const [recentOrders, setRecentOrders] = useState([]);
   const [recentMessages, setRecentMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [targetAmount, setTargetAmount] = useState(20000);
+  const [revenueAmount, setRevenueAmount] = useState(0);
+  const [todayAmount, setTodayAmount] = useState(0);
+  const [yesterdayAmount, setYesterdayAmount] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -37,8 +43,19 @@ function DashboardPage() {
       try {
         const data = await fetchDashboardStats();
         if (!mounted) return;
+
+        const settings = getSettings();
+        const dashboardTarget = Number(settings.monthlyTargetAmount || 0) || 20000;
+        const revenue = Number(data.revenueAmount || data.revenue || data.monthlyRevenue || 0) || 0;
+        const today = Number(data.todayAmount || data.todayRevenue || 0) || 0;
+        const yesterday = Number(data.yesterdayAmount || data.yesterdayRevenue || 0) || 0;
+
         setCustomers(data.customers.toLocaleString());
         setOrders(data.orders.toLocaleString());
+        setTargetAmount(dashboardTarget);
+        setRevenueAmount(revenue);
+        setTodayAmount(today);
+        setYesterdayAmount(yesterday);
 
         const customersDelta = typeof data.previousSnapshot.customers_change !== 'undefined' && data.previousSnapshot.customers_change !== null
           ? Number(data.previousSnapshot.customers_change)
@@ -131,27 +148,47 @@ function DashboardPage() {
             </div>
 
           {/* Metric Cards Grid */}
-          <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr_360px] md:gap-6">
-              <MetricCard
-                icon={customerIcon}
-                label="Customers"
-                value={customers}
-                change={customersChange}
-                changeType={customersChange && customersChange < 0 ? 'negative' : 'positive'}
-              />
-              <MetricCard
-                icon={orderIcon}
-                label="Orders"
-                value={orders}
-                change={ordersChange}
-                changeType={ordersChange && ordersChange < 0 ? 'negative' : 'positive'}
-              />
-              <MonthlyTargetGauge />
+          <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px] items-start md:gap-6">
+              <div className="flex flex-col gap-4">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <MetricCard
+                    icon={customerIcon}
+                    label="Customers"
+                    value={customers}
+                    change={customersChange}
+                    changeType={customersChange && customersChange < 0 ? 'negative' : 'positive'}
+                  />
+                  <MetricCard
+                    icon={orderIcon}
+                    label="Orders"
+                    value={orders}
+                    change={ordersChange}
+                    changeType={ordersChange && ordersChange < 0 ? 'negative' : 'positive'}
+                  />
+                </div>
+                <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]">
+                  <div className="mb-4 flex items-start justify-between">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800 dark:text-white">Monthly Sales</h3>
+                      <p className="text-sm text-gray-500">A quick snapshot of monthly revenue</p>
+                    </div>
+                  </div>
+                  <MonthlySalesChart />
+                </div>
+              </div>
+              <div className="lg:row-span-2">
+                <MonthlyTargetGauge
+                  targetAmount={targetAmount}
+                  revenueAmount={revenueAmount}
+                  todayAmount={todayAmount}
+                  yesterdayAmount={yesterdayAmount}
+                />
+              </div>
             </div>
 
-          {/* Tables Grid */}
+          {/* Charts Grid */}
           <div className="grid grid-cols-12 gap-6">
-              <div className="col-span-12 xl:col-span-7">
+              <div className="col-span-12 xl:col-span-12">
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]">
                   <div className="mb-4 flex items-start justify-between">
                     <div>

@@ -25,6 +25,7 @@ function SettingsPage() {
   const [createMessage, setCreateMessage] = useState('');
   const [createMessageColor, setCreateMessageColor] = useState('');
   const [avatarPreview, setAvatarPreview] = useState('');
+  const [avatarFile, setAvatarFile] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
 
   const roleOptions = ['agent', 'admin', 'viewer', 'Delivery Support', 'Refund Manager', 'Kitchen Supervisor', 'Customer Support'];
@@ -77,12 +78,36 @@ function SettingsPage() {
   };
 
   const handleSaveSettings = () => {
-    saveSettings(settings);
-    if (avatarPreview) {
-      window.localStorage.setItem('userAvatar', avatarPreview);
-      window.dispatchEvent(new Event('avatar:updated'));
-    }
-    showNotification('Settings saved successfully!');
+    // If there's a selected file, upload it first
+    const doSave = async () => {
+      try {
+        if (avatarFile) {
+          const form = new FormData();
+          form.append('avatar', avatarFile);
+          const res = await fetch('/api/settings/avatar', { method: 'POST', body: form, credentials: 'same-origin' });
+          if (res.ok) {
+            const data = await res.json();
+            const avatarUrl = data && data.url ? (data.url.startsWith('http') ? data.url : window.location.origin + data.url) : null;
+            if (avatarUrl) {
+              window.localStorage.setItem('userAvatar', avatarUrl);
+              setAvatarPreview(avatarUrl);
+              window.dispatchEvent(new Event('avatar:updated'));
+            }
+          } else {
+            console.warn('Avatar upload failed', res.statusText);
+          }
+        }
+
+        // Save other settings
+        await saveSettings(settings);
+        showNotification('Settings saved successfully!');
+      } catch (e) {
+        console.error('Error saving settings/avatar', e);
+        showNotification('Failed to save settings');
+      }
+    };
+
+    doSave();
   };
 
   // Admin Users Functions
@@ -234,6 +259,7 @@ function SettingsPage() {
   const handleAvatarUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
+      setAvatarFile(file);
       const reader = new FileReader();
       reader.onload = (event) => {
         const dataUrl = event.target?.result || '';
@@ -344,6 +370,20 @@ function SettingsPage() {
                             className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             placeholder="Enter your email"
                           />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-medium text-slate-700 mb-1">Monthly Sales Target ($)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="100"
+                            value={settings.monthlyTargetAmount ?? 20000}
+                            onChange={(e) => setSettings({ ...settings, monthlyTargetAmount: Number(e.target.value || 0) })}
+                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            placeholder="20000"
+                          />
+                          <p className="text-xs text-slate-500 mt-1">This value is used by the monthly target gauge on the dashboard.</p>
                         </div>
 
                         <div>

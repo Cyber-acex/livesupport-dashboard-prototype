@@ -41,6 +41,8 @@ const VoicePanel = () => {
     onChannelsUpdate: setChannels,
     onPrivateIncoming: handlePrivateIncoming,
     onPrivateAccepted: handlePrivateAccepted,
+    onPrivateStarted: handlePrivateStarted,
+    onPrivateError: handlePrivateError,
     onSignal: handleSignal,
     onSessionEnded: handleSessionEnded,
     onBroadcastIncoming: handleBroadcastIncoming,
@@ -101,14 +103,28 @@ const VoicePanel = () => {
     setIncomingCall(null);
   }, []);
 
+  const waitForVoiceRegistration = useCallback(async () => {
+    if (!socket?.waitForVoiceRegistration) return;
+    try {
+      const response = await socket.waitForVoiceRegistration();
+      if (response?.ok === false) {
+        console.warn('Voice registration not acknowledged yet', response);
+      }
+    } catch (err) {
+      console.warn('Voice registration wait failed', err);
+    }
+  }, [socket]);
+
   const getLocalStream = useCallback(async (forceNew = false) => {
     const state = stateRef.current;
     if (!state.rawLocalStream || forceNew) {
       if (state.rawLocalStream) {
+        console.log('🛑 Stopping existing raw audio tracks...');
         state.rawLocalStream.getTracks().forEach(track => track.stop());
         state.rawLocalStream = null;
       }
       try {
+        console.log('🎤 Requesting microphone access...');
         const rawStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             noiseSuppression: true,
@@ -116,16 +132,23 @@ const VoicePanel = () => {
             autoGainControl: true
           }
         });
+        console.log('✅ Microphone granted, audio tracks:', rawStream.getAudioTracks().length);
         state.rawLocalStream = rawStream;
       } catch (err) {
-        console.warn('getUserMedia failed', err);
-        showToast('Microphone permission required for voice chat.', 'warning');
+        console.error('❌ getUserMedia failed:', err);
+        showToast(`Microphone permission required for voice chat. Error: ${err.name}`, 'warning');
         throw err;
       }
     }
 
     const stream = selectLocalStreamSource();
-    stream?.getAudioTracks().forEach(track => {
+    if (!stream) {
+      console.error('⚠️ selectLocalStreamSource returned null');
+      return null;
+    }
+    console.log(`📤 Local stream ready with ${stream.getAudioTracks().length} audio tracks`);
+    stream?.getAudioTracks().forEach((track, idx) => {
+      console.log(`  Track ${idx}: enabled=${track.enabled}, state=${track.readyState}`);
       track.enabled = !state.isMuted;
     });
     if (forceNew) {
@@ -244,34 +267,6 @@ const VoicePanel = () => {
     });
   }, []);
 
-  const createPeerConnection = useCallback((targetUserId, sessionId, onTrack) => {
-    const state = stateRef.current;
-    const ICE_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-    const pc = new RTCPeerConnection(ICE_CONFIG);
-    pc.onicecandidate = event => {
-      if (event.candidate && socket) {
-        socket.emit('voice:signal', {
-          targetUserId,
-          sessionId,
-          signal: { candidate: event.candidate },
-          type: 'ice'
-        });
-      }
-    };
-    pc.ontrack = event => {
-      if (typeof onTrack === 'function') onTrack(event);
-    };
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-        cleanupPeer(targetUserId);
-      }
-    };
-    if (state.localStream && !state.isDeafened) {
-      state.localStream.getAudioTracks().forEach(track => pc.addTrack(track, state.localStream));
-    }
-    return pc;
-  }, [socket]);
-
   const cleanupPeer = useCallback((userId) => {
     const state = stateRef.current;
     const peer = state.peers[userId];
@@ -286,24 +281,103 @@ const VoicePanel = () => {
     delete state.peers[userId];
   }, []);
 
+  const createPeerConnection = useCallback((targetUserId, sessionId, onTrack) => {
+    const state = stateRef.current;
+    const ICE_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    const pc = new RTCPeerConnection(ICE_CONFIG);
+    console.log(`🔊 Creating peer connection for user ${targetUserId}, session ${sessionId}`);
+    
+    pc.onicecandidate = event => {
+      if (event.candidate && socket) {
+        console.log(`📡 ICE candidate for ${targetUserId}:`, event.candidate.candidate);
+        socket.emit('voice:signal', {
+          targetUserId,
+          sessionId,
+          signal: { candidate: event.candidate },
+          type: 'ice'
+        });
+      }
+    };
+    
+    pc.ontrack = event => {
+      console.log(`🎵 ontrack event received from ${targetUserId}:`, event);
+      if (typeof onTrack === 'function') {
+        onTrack(event);
+      } else {
+        console.warn(`No onTrack handler provided for ${targetUserId}`);
+      }
+    };
+    
+    pc.onconnectionstatechange = () => {
+      console.log(`🔗 Connection state change for ${targetUserId}: ${pc.connectionState}`);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+        console.warn(`Cleaning up peer ${targetUserId} due to connection state: ${pc.connectionState}`);
+        cleanupPeer(targetUserId);
+      }
+    };
+    
+    if (state.localStream && !state.isDeafened) {
+      console.log(`🗣️ Adding local audio tracks for ${targetUserId}`);
+      state.localStream.getAudioTracks().forEach((track, idx) => {
+        console.log(`  Track ${idx}: enabled=${track.enabled}, kind=${track.kind}, state=${track.readyState}`);
+        pc.addTrack(track, state.localStream);
+      });
+    } else {
+      console.warn(`⚠️ No local stream available for ${targetUserId} (isDeafened=${state.isDeafened})`);
+    }
+    return pc;
+  }, [socket, cleanupPeer]);
+
   const attachRemoteAudio = useCallback((event, userId, meta) => {
     const state = stateRef.current;
     const stream = event.streams && event.streams[0];
-    if (!stream) return;
+    if (!stream) {
+      console.warn(`❌ No remote stream in ontrack event for user ${userId}`);
+      return;
+    }
+    console.log(`🔗 Attaching remote audio for user ${userId}:`, stream);
     let audio = state.audioElements[userId];
     if (!audio) {
+      console.log(`📻 Creating new audio element for ${userId}`);
       audio = document.createElement('audio');
+      audio.id = `remote-audio-${userId}`;
       audio.autoplay = true;
       audio.playsInline = true;
       audio.muted = state.isDeafened;
-      audio.srcObject = stream;
-      document.body.appendChild(audio);
-      state.audioElements[userId] = audio;
+      try {
+        audio.srcObject = stream;
+        document.body.appendChild(audio);
+        state.audioElements[userId] = audio;
+        console.log(`✅ Audio element created and appended: ${audio.id}`);
+        audio.play().catch(err => console.warn(`Play error for ${userId}:`, err));
+      } catch (err) {
+        console.error(`Failed to set up audio element for ${userId}:`, err);
+      }
     } else {
-      audio.srcObject = stream;
+      console.log(`🔄 Updating existing audio element for ${userId}`);
+      try {
+        audio.srcObject = stream;
+        audio.play().catch(err => console.warn(`Play error on update for ${userId}:`, err));
+      } catch (err) {
+        console.error(`Failed to update audio for ${userId}:`, err);
+      }
     }
     if (state.isDeafened) audio.muted = true;
   }, []);
+
+  function handlePrivateStarted(payload) {
+    if (!payload?.sessionId || !payload?.peer) return;
+    console.log('✅ Private call session started with peer:', payload.peer.name);
+    setCurrentSession(prev => prev?.id === payload.sessionId
+      ? { ...prev, peer: payload.peer, status: 'active' }
+      : { id: payload.sessionId, type: 'private', peer: payload.peer, status: 'active' });
+  }
+
+  function handlePrivateError(payload) {
+    console.warn('Voice private call error:', payload);
+    showToast(payload?.message || 'Voice call could not be established', 'warning');
+    setCurrentSession(null);
+  }
 
   // Socket event handlers
   function handlePrivateIncoming(payload) {
@@ -317,14 +391,25 @@ const VoicePanel = () => {
       onAccept: () => {
         setIncomingCall(null);
         setCurrentSession({ id: payload.sessionId, type: 'private', peer: payload.from, status: 'incoming' });
-        getLocalStream().then(() => {
-          socket?.emit('voice:private:response', { sessionId: payload.sessionId, accepted: true });
-        }).catch(() => {
+        getLocalStream().then(async () => {
+          await waitForVoiceRegistration();
+          socket?.emit('voice:private:response', {
+            sessionId: payload.sessionId,
+            accepted: true,
+            responder: {
+              userId: user?.id,
+              name: user?.name || user?.displayName || 'Staff',
+              role: user?.role || 'agent'
+            }
+          });
+        }).catch(async () => {
+          await waitForVoiceRegistration();
           socket?.emit('voice:private:response', { sessionId: payload.sessionId, accepted: false });
         });
       },
-      onReject: () => {
+      onReject: async () => {
         setIncomingCall(null);
+        await waitForVoiceRegistration();
         socket?.emit('voice:private:response', { sessionId: payload.sessionId, accepted: false });
       }
     });
@@ -332,41 +417,60 @@ const VoicePanel = () => {
 
   function handlePrivateAccepted(payload) {
     if (!payload?.sessionId || !payload?.peer) return;
+    console.log('✅ Call accepted, setting up peer connection for:', payload.peer.name);
     setCurrentSession({ id: payload.sessionId, type: 'private', peer: payload.peer, status: 'active' });
     getLocalStream().then(async () => {
-      const targetId = payload.peer.userId;
-      const pc = createPeerConnection(targetId, payload.sessionId, (event) => attachRemoteAudio(event, targetId, payload.peer));
-      stateRef.current.peers[targetId] = { pc, meta: payload.peer, audio: null };
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket?.emit('voice:signal', { targetUserId: targetId, sessionId: payload.sessionId, signal: offer, type: 'offer' });
-      markSessionStarted();
-    }).catch(() => {});
+      try {
+        await waitForVoiceRegistration();
+        const targetId = payload.peer.userId;
+        console.log(`📞 Creating offer for ${targetId}...`);
+        const pc = createPeerConnection(targetId, payload.sessionId, (event) => attachRemoteAudio(event, targetId, payload.peer));
+        stateRef.current.peers[targetId] = { pc, meta: payload.peer, audio: null };
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        console.log(`📤 Sending offer to ${targetId}`);
+        socket?.emit('voice:signal', { targetUserId: targetId, sessionId: payload.sessionId, signal: offer, type: 'offer' });
+        markSessionStarted();
+      } catch (err) {
+        console.error('Error in handlePrivateAccepted:', err);
+        showToast('Failed to establish voice connection', 'error');
+      }
+    }).catch((err) => {
+      console.error('Failed to get local stream:', err);
+      showToast('Microphone access denied', 'error');
+    });
   }
 
   async function handleSignal(payload) {
     if (!payload?.sessionId || !payload?.fromUserId || !payload?.signal) return;
     const fromId = payload.fromUserId;
+    console.log(`📡 Received signal from ${fromId}:`, payload.signal.type);
     const peerMeta = (stateRef.current.peers[fromId]?.meta) || { userId: fromId, name: 'Peer' };
     let peerConnection = stateRef.current.peers[fromId]?.pc;
     const createAudioTrack = event => attachRemoteAudio(event, fromId, peerMeta);
     
     if (!peerConnection) {
+      console.log(`Creating peer connection for incoming signal from ${fromId}`);
       peerConnection = createPeerConnection(fromId, payload.sessionId, createAudioTrack);
       stateRef.current.peers[fromId] = { pc: peerConnection, meta: peerMeta, audio: null };
     }
 
     if (payload.signal.type === 'offer') {
+      console.log(`📥 Setting remote offer from ${fromId}`);
       await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.signal));
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
+      console.log(`📤 Sending answer to ${fromId}`);
+      await waitForVoiceRegistration();
       socket?.emit('voice:signal', { targetUserId: fromId, sessionId: payload.sessionId, signal: answer, type: 'answer' });
       markSessionStarted();
     } else if (payload.signal.type === 'answer') {
+      console.log(`📥 Setting remote answer from ${fromId}`);
       await peerConnection.setRemoteDescription(new RTCSessionDescription(payload.signal));
       markSessionStarted();
     } else if (payload.signal.candidate) {
       try {
+        console.log(`❄️ Adding ICE candidate from ${fromId}`);
         await peerConnection.addIceCandidate(new RTCIceCandidate(payload.signal.candidate));
       } catch (err) {
         console.warn('Failed to add ICE candidate', err);
@@ -550,16 +654,25 @@ const VoicePanel = () => {
     setSessionDuration(0);
   }, [currentSession, socket]);
 
-  const onPrivateCallClick = useCallback((targetUser) => {
+  const onPrivateCallClick = useCallback(async (targetUser) => {
     if (!user) {
       showToast('Please sign in to start a call.', 'warning');
       return;
     }
     const sessionId = `private-${Date.now()}-${targetUser.userId}`;
     setCurrentSession({ id: sessionId, type: 'private', peer: targetUser, status: 'calling' });
-    socket?.emit('voice:private:request', { targetUserId: targetUser.userId, sessionId });
+    await waitForVoiceRegistration();
+    socket?.emit('voice:private:request', {
+      targetUserId: targetUser.userId,
+      sessionId,
+      caller: {
+        userId: user.id,
+        name: user.name || user.displayName || 'Staff',
+        role: user.role || 'agent'
+      }
+    });
     showToast(`Calling ${targetUser.name}...`);
-  }, [user, socket, showToast]);
+  }, [user, socket, showToast, waitForVoiceRegistration]);
 
   const onStartBroadcast = useCallback(async () => {
     if (!user) {

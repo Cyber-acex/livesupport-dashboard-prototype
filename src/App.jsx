@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
 import TicketsPage from './pages/TicketsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
@@ -9,12 +9,17 @@ import SettingsPage from './pages/SettingsPage';
 import InboxPage from './pages/InboxPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import VoicePanel from './components/VoicePanel';
+import LoginPage from './pages/LoginPage';
 
 function App() {
+  const location = useLocation();
+  const isLoginPage = location.pathname === '/login';
+
   return (
     <>
-      <VoicePanel />
+      {!isLoginPage && <VoicePanel />}
       <Routes>
+        <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/tickets" element={<TicketsPage />} />
