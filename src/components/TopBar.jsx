@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSidebar } from '../contexts/SidebarContext';
+import NotificationDropdown from './NotificationDropdown';
 
 function TopBar({ onSidebarToggle }) {
   const { toggleSidebar } = useSidebar();
@@ -239,19 +240,7 @@ function TopBar({ onSidebarToggle }) {
                 <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 2C6.13 2 3.25 4.9 3.25 8.77V14.46H2.58C2.26 14.46 2 14.72 2 15.04C2 15.36 2.26 15.62 2.58 15.62H17.42C17.74 15.62 18 15.36 18 15.04C18 14.72 17.74 14.46 17.42 14.46H16.75V8.77C16.75 4.9 13.87 2 10 2Z"/></svg>
               </button>
 
-              {notificationsOpen && (
-                <div className="absolute right-0 mt-3 w-[320px] rounded-2xl border border-gray-200 bg-white p-3 shadow-lg dark:border-gray-800 dark:bg-gray-900">
-                  <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-3 dark:border-gray-800">
-                    <h5 className="text-lg font-semibold text-gray-800 dark:text-white/90">Notification</h5>
-                    <button onClick={() => setNotificationsOpen(false)} className="text-gray-500">Close</button>
-                  </div>
-                  <ul className="max-h-72 overflow-y-auto">
-                    <li className="flex gap-3 p-3"><img src="/images/user/user-02.jpg" className="h-10 w-10 rounded-full" alt="user" /><div><div className="font-medium">Terry Franci</div><div className="text-sm text-gray-500">5 min ago</div></div></li>
-                    <li className="flex gap-3 p-3"><img src="/images/user/user-03.jpg" className="h-10 w-10 rounded-full" alt="user" /><div><div className="font-medium">Alena Franci</div><div className="text-sm text-gray-500">8 min ago</div></div></li>
-                  </ul>
-                  <a href="#" className="mt-3 block text-center rounded-lg border border-gray-300 bg-white p-3 text-gray-700">View All Notification</a>
-                </div>
-              )}
+              <NotificationDropdown isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
             </div>
           </div>
 

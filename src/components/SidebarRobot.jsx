@@ -141,7 +141,7 @@ export default function SidebarRobot({ compact = false }) {
   const [voiceActive, setVoiceActive] = useState(false);
   const [activityPulse, setActivityPulse] = useState(0);
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
-  const robotUrl = useMemo(() => new URL('../models/robot_custom.glb', import.meta.url).href, []);
+  const robotUrl = useMemo(() => new URL('../../uploads/logo.glb', import.meta.url).href, []);
   useGLTF.preload(robotUrl);
   const faceTextureUrl = useMemo(() => new URL('../../uploads/logo robo.jpg', import.meta.url).href, []);
 
