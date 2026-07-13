@@ -178,6 +178,8 @@ function OrdersPage() {
       const payload = buildOccupiedFromReservationPayload(table, now);
       try {
         await updateTableState(table.number, payload);
+        const tableLabel = table.label || `Table ${table.number}`;
+        showNotification(`${tableLabel} is now occupied.`);
       } catch (error) {
         console.error(`Failed to transition table ${table.number} to occupied`, error);
       }

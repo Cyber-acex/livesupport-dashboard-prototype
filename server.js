@@ -437,6 +437,7 @@ function emitNewMessageEvent(conversationId, messageData) {
 
         const roomName = `conversation:${id}`;
         io.to(roomName).emit("newMessage", payload);
+        io.to("inbox").emit("newMessage", payload);
         io.to("inbox").emit("conversation:updated", { conversationId: id, message: payload });
         console.log(`📤 Socket.IO newMessage event emitted for conversation ${id}:`, {
             conversationId: id,

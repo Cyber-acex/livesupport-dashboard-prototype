@@ -273,6 +273,11 @@ function InboxPage() {
 
     const handleConnect = () => {
       console.log('Inbox socket connected:', socket.id);
+      if (selectedConversationIdRef.current) {
+        socket.emit('conversation:join', { conversationId: selectedConversationIdRef.current });
+        socket.emit('agent:activeConversation', { conversationId: selectedConversationIdRef.current });
+        socket.emit('messages:refresh', { conversationId: selectedConversationIdRef.current });
+      }
     };
 
     const handleCallEvent = (payload) => {

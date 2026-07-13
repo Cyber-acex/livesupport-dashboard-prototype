@@ -2,6 +2,169 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVoiceSocket } from '../hooks/useVoiceSocket';
 import '../voice.css';
 
+const VoiceIcon = ({ name, className = '' }) => {
+  const commonProps = {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: '1.8',
+    strokeLinecap: 'round',
+    strokeLinejoin: 'round',
+    className: `voice-icon ${className}`.trim(),
+    'aria-hidden': 'true',
+  };
+
+  switch (name) {
+    case 'mic':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z" />
+          <path d="M19 11a7 7 0 0 1-14 0" />
+          <path d="M12 19v3" />
+          <path d="M9 22h6" />
+        </svg>
+      );
+    case 'mic-off':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Z" />
+          <path d="M19 11a7 7 0 0 1-14 0" />
+          <path d="M12 19v3" />
+          <path d="M9 22h6" />
+          <path d="m4 4 16 16" />
+        </svg>
+      );
+    case 'phone':
+      return (
+        <svg {...commonProps}>
+          <path d="M8 5h3a2 2 0 0 1 2 2v1a1 1 0 0 1-.3.7l-1.4 1.4a1 1 0 0 0-.3.7v2.2a1 1 0 0 0 .3.7l1.4 1.4a1 1 0 0 1 .3.7v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+          <path d="M16 8h3" />
+          <path d="M16 12h3" />
+          <path d="M16 16h3" />
+        </svg>
+      );
+    case 'phone-off':
+      return (
+        <svg {...commonProps}>
+          <path d="M8 5h3a2 2 0 0 1 2 2v1a1 1 0 0 1-.3.7l-1.4 1.4a1 1 0 0 0-.3.7v2.2a1 1 0 0 0 .3.7l1.4 1.4a1 1 0 0 1 .3.7v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
+          <path d="M16 8h3" />
+          <path d="M16 12h3" />
+          <path d="M16 16h3" />
+          <path d="m4 4 16 16" />
+        </svg>
+      );
+    case 'user-plus':
+      return (
+        <svg {...commonProps}>
+          <path d="M16 19a4 4 0 0 0-8 0" />
+          <circle cx="12" cy="9" r="3" />
+          <path d="M20 8v4" />
+          <path d="M22 10h-4" />
+        </svg>
+      );
+    case 'log-in':
+      return (
+        <svg {...commonProps}>
+          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+          <path d="m10 17 5-5-5-5" />
+          <path d="M15 12H3" />
+        </svg>
+      );
+    case 'log-out':
+      return (
+        <svg {...commonProps}>
+          <path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4" />
+          <path d="m16 17 5-5-5-5" />
+          <path d="M21 12H9" />
+        </svg>
+      );
+    case 'radio':
+      return (
+        <svg {...commonProps}>
+          <path d="M16 8.5a6 6 0 0 1 0 7" />
+          <path d="M12 10.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z" />
+          <path d="M8 8.5a8.5 8.5 0 0 1 0 7" />
+          <path d="M4 6.5a11.5 11.5 0 0 1 0 11" />
+        </svg>
+      );
+    case 'shield':
+      return (
+        <svg {...commonProps}>
+          <path d="M12 3 5 6v6c0 5 3.5 8 7 9 3.5-1 7-4 7-9V6l-7-3Z" />
+        </svg>
+      );
+    case 'shield-off':
+      return (
+        <svg {...commonProps}>
+          <path d="M5 6v6c0 5 3.5 8 7 9 1.4-.4 2.7-1.1 3.8-2.2" />
+          <path d="M9.3 3.8 12 3l7 3v6c0 2-1 3.8-2.7 5.1" />
+          <path d="m4 4 16 16" />
+        </svg>
+      );
+    case 'volume-2':
+      return (
+        <svg {...commonProps}>
+          <path d="M11 5 7 9H4v6h3l4 4V5Z" />
+          <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+          <path d="M17.7 6.3a8 8 0 0 1 0 11.4" />
+        </svg>
+      );
+    case 'volume-x':
+      return (
+        <svg {...commonProps}>
+          <path d="M11 5 7 9H4v6h3l4 4V5Z" />
+          <path d="m15 9 6 6" />
+          <path d="m21 9-6 6" />
+        </svg>
+      );
+    case 'check':
+      return (
+        <svg {...commonProps}>
+          <path d="m5 12 4 4 10-10" />
+        </svg>
+      );
+    case 'x':
+      return (
+        <svg {...commonProps}>
+          <path d="M6 6l12 12" />
+          <path d="M18 6 6 18" />
+        </svg>
+      );
+    case 'users':
+      return (
+        <svg {...commonProps}>
+          <path d="M16 19a4 4 0 0 0-8 0" />
+          <circle cx="12" cy="9" r="3" />
+          <path d="M20 19a3 3 0 0 0-2-3" />
+          <path d="M4 19a3 3 0 0 1 2-3" />
+        </svg>
+      );
+    case 'headphones':
+      return (
+        <svg {...commonProps}>
+          <path d="M4 12a8 8 0 1 1 16 0" />
+          <path d="M4 12v3a2 2 0 0 0 2 2h1v-5H6a2 2 0 0 0-2 2Z" />
+          <path d="M20 12v3a2 2 0 0 1-2 2h-1v-5h1a2 2 0 0 1 2 2Z" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...commonProps}>
+          <circle cx="12" cy="12" r="8" />
+        </svg>
+      );
+  }
+};
+
+const ButtonContent = ({ icon, label }) => (
+  <span className="voice-btn-content">
+    <span className="voice-btn-icon" aria-hidden="true">
+      <VoiceIcon name={icon} />
+    </span>
+    <span className="voice-btn-label">{label}</span>
+  </span>
+);
+
 const VoicePanel = () => {
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('staff');
@@ -740,10 +903,10 @@ const VoicePanel = () => {
               <div className="voice-notification-description">{incomingCall.message}</div>
               <div className="voice-notification-actions">
                 <button className="voice-btn-accept" onClick={handleAcceptIncomingCall}>
-                  {incomingCall.acceptLabel || 'Accept'}
+                  <ButtonContent icon="check" label={incomingCall.acceptLabel || 'Accept'} />
                 </button>
                 <button className="voice-btn-reject" onClick={handleRejectIncomingCall}>
-                  {incomingCall.rejectLabel || 'Decline'}
+                  <ButtonContent icon="x" label={incomingCall.rejectLabel || 'Decline'} />
                 </button>
               </div>
             </div>
@@ -778,7 +941,7 @@ const VoicePanel = () => {
               onClick={() => setIsPanelOpen(false)}
               aria-label="Close voice panel"
             >
-              ✕
+              <VoiceIcon name="x" />
             </button>
           </div>
 
@@ -815,18 +978,20 @@ const VoicePanel = () => {
                               className="voice-btn voice-btn-ptt"
                               title="Push and hold to talk"
                             >
-                              <span className="voice-ptt-icon">🎤</span>
+                              <span className="voice-ptt-icon">
+                                <VoiceIcon name="mic" />
+                              </span>
                               <span className="voice-ptt-wave"></span>
                             </button>
                             <button
                               className={`voice-btn ${isCallActive ? 'voice-btn-danger' : 'voice-btn-secondary'}`}
                               onClick={() => isCallActive ? leaveCurrentSession() : onPrivateCallClick(item)}
                             >
-                              {isCallActive ? 'Hang up' : 'Call'}
+                              <ButtonContent icon={isCallActive ? 'phone-off' : 'phone'} label={isCallActive ? 'Hang up' : 'Call'} />
                             </button>
                             {!isCallActive && isAdmin && (
                               <button className="voice-btn voice-btn-primary">
-                                Invite
+                                <ButtonContent icon="user-plus" label="Invite" />
                               </button>
                             )}
                           </div>
@@ -857,7 +1022,7 @@ const VoicePanel = () => {
                               className={`voice-btn ${active ? 'voice-btn-secondary' : 'voice-btn-primary'}`}
                               onClick={() => onChannelToggle(channel.id, active ? 'leave' : 'join')}
                             >
-                              {active ? 'Leave' : 'Join'}
+                              <ButtonContent icon={active ? 'log-out' : 'log-in'} label={active ? 'Leave' : 'Join'} />
                             </button>
                           </div>
                         </div>
@@ -870,7 +1035,7 @@ const VoicePanel = () => {
                     disabled={!isAdmin}
                     title={isAdmin ? (isBroadcastActive ? 'End the live broadcast' : 'Start a live broadcast') : 'Only admins can start broadcasts'}
                   >
-                    {isBroadcastActive ? 'End Broadcast' : 'Start Broadcast'}
+                    <ButtonContent icon="radio" label={isBroadcastActive ? 'End Broadcast' : 'Start Broadcast'} />
                   </button>
                 </div>
               )}
@@ -904,25 +1069,25 @@ const VoicePanel = () => {
                           className={`voice-btn ${isMuted ? 'voice-btn-secondary' : 'voice-btn-primary'}`}
                           onClick={toggleMute}
                         >
-                          {isMuted ? '🔇 Unmute' : '🔈 Mute'}
+                          <ButtonContent icon={isMuted ? 'mic-off' : 'mic'} label={isMuted ? 'Unmute' : 'Mute'} />
                         </button>
                         <button
                           className={`voice-btn ${noiseSuppressionEnabled ? 'voice-btn-primary' : 'voice-btn-secondary'}`}
                           onClick={toggleNoiseSuppression}
                         >
-                          {noiseSuppressionEnabled ? '🛡️ Noise On' : '🔊 Noise Off'}
+                          <ButtonContent icon={noiseSuppressionEnabled ? 'shield' : 'shield-off'} label={noiseSuppressionEnabled ? 'Noise On' : 'Noise Off'} />
                         </button>
                         <button
                           className={`voice-btn ${isDeafened ? 'voice-btn-secondary' : 'voice-btn-primary'}`}
                           onClick={toggleDeafen}
                         >
-                          {isDeafened ? '👂 Undeafen' : '🙉 Deafen'}
+                          <ButtonContent icon={isDeafened ? 'volume-x' : 'volume-2'} label={isDeafened ? 'Undeafen' : 'Deafen'} />
                         </button>
                         <button
                           className="voice-btn voice-btn-danger"
                           onClick={leaveCurrentSession}
                         >
-                          ❌ Leave
+                          <ButtonContent icon="phone-off" label="Leave" />
                         </button>
                       </div>
                     </>
@@ -937,7 +1102,7 @@ const VoicePanel = () => {
                 onClick={() => setActiveTab('staff')}
                 data-tab="staff"
               >
-                <span className="voice-tab-icon">👥</span>
+                <span className="voice-tab-icon"><VoiceIcon name="users" /></span>
                 <span>Staff</span>
               </button>
               <button
@@ -945,7 +1110,7 @@ const VoicePanel = () => {
                 onClick={() => setActiveTab('channels')}
                 data-tab="channels"
               >
-                <span className="voice-tab-icon">#️⃣</span>
+                <span className="voice-tab-icon"><VoiceIcon name="radio" /></span>
                 <span>Channel</span>
               </button>
               <button
@@ -953,7 +1118,7 @@ const VoicePanel = () => {
                 onClick={() => setActiveTab('active')}
                 data-tab="active"
               >
-                <span className="voice-tab-icon">🎧</span>
+                <span className="voice-tab-icon"><VoiceIcon name="headphones" /></span>
                 <span>Session</span>
               </button>
             </div>

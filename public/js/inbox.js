@@ -95,6 +95,16 @@ socket.on('connect', () => {
         messagePollingInterval = null;
         console.log('[Socket.IO] Polling disabled - socket connected');
     }
+
+    if (currentConversationId) {
+        try {
+            socket.emit('conversation:join', { conversationId: currentConversationId });
+            socket.emit('agent:activeConversation', { conversationId: currentConversationId });
+            socket.emit('messages:refresh', { conversationId: currentConversationId });
+        } catch (err) {
+            console.warn('[Socket.IO] Failed to rejoin conversation room after connect:', err);
+        }
+    }
     
     Promise.all([
         fetch('/api/user').then(r => r.json()).catch(() => ({})),
@@ -787,7 +797,13 @@ function createConversationElement(conv, filter = 'all') {
         if (chatHeaderName) chatHeaderName.textContent = displayName;
         const chatAvatar = document.getElementById('chatAvatar');
         if (chatAvatar) chatAvatar.textContent = getInitials(displayName);
-        try { socket.emit('agent:activeConversation', { conversationId: conv.id }); } catch (e) {}
+        try {
+            socket.emit('conversation:join', { conversationId: conv.id });
+            socket.emit('agent:activeConversation', { conversationId: conv.id });
+            socket.emit('messages:refresh', { conversationId: conv.id });
+        } catch (e) {
+            console.warn('[Socket.IO] Failed to join conversation room:', e);
+        }
     });
 
     return div;

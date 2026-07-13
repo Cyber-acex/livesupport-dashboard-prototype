@@ -265,6 +265,27 @@
   font-weight: 600;
   transition: transform 0.15s ease, background 0.15s ease;
 }
+.voice-btn-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.voice-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.voice-btn-label {
+  display: inline-block;
+}
+.voice-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
 .voice-btn:hover,
 .voice-btn-wide:hover {
   transform: translateY(-1px);
