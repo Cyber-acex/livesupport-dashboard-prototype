@@ -15,6 +15,7 @@ import {
   fetchTables,
   updateTableState
 } from '../services/ordersService';
+import { buildOccupiedFromReservationPayload, shouldTransitionReservedTable } from '../utils/tableReservation';
 
 const socket = io();
 const STATUS_OPTIONS = ['pending', 'processing', 'completed', 'cancelled'];
@@ -167,6 +168,35 @@ function OrdersPage() {
       setNotification('Unable to load tables');
     }
   };
+
+  const syncReservationTransitions = async (tableData = tables) => {
+    const now = new Date();
+    const pendingTransitions = (tableData || []).filter((table) => shouldTransitionReservedTable(table, now));
+    if (pendingTransitions.length === 0) return;
+
+    await Promise.all(pendingTransitions.map(async (table) => {
+      const payload = buildOccupiedFromReservationPayload(table, now);
+      try {
+        await updateTableState(table.number, payload);
+      } catch (error) {
+        console.error(`Failed to transition table ${table.number} to occupied`, error);
+      }
+    }));
+
+    await loadTables();
+  };
+
+  useEffect(() => {
+    if (!tables.length) return;
+    void syncReservationTransitions(tables);
+  }, [tables.length]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void syncReservationTransitions(tables);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [tables]);
 
   const filteredOrders = useMemo(() => {
     const term = filterText.toLowerCase();

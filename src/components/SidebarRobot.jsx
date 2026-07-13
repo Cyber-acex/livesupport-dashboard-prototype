@@ -4,7 +4,7 @@ import { ContactShadows, Environment, Float, OrbitControls, useGLTF, useTexture 
 import { motion, useMotionValue, useSpring } from 'framer-motion';
 import { useRobotAnimation } from '../hooks/useRobotAnimation';
 
-function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, robotUrl, faceTextureUrl }) {
+function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, danceActive, robotUrl, faceTextureUrl }) {
   const gltf = useGLTF(robotUrl);
   const faceTex = useTexture(faceTextureUrl);
   const scene = gltf.scene || gltf.scenes?.[0];
@@ -15,7 +15,8 @@ function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, rob
     modelObject: scene,
     enabled: true,
     voiceActive,
-    activityPulse
+    activityPulse,
+    danceActive
   });
 
   useMemo(() => {
@@ -55,7 +56,7 @@ function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, rob
   }, [scene, faceTex]);
 
   return (
-    <group ref={rootRef} scale={0.38}>
+    <group ref={rootRef} scale={0.30}>
       <primitive object={scene} />
       <mesh ref={glowRef} position={[0, 0.12, 0]}>
         <sphereGeometry args={[0.78, 24, 24]} />
@@ -76,26 +77,26 @@ function HolographicPlatform({ pulse = 0, voiceActive = false }) {
   return (
     <group position={[0, -0.34, 0]}>
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <ringGeometry args={[0.68, 0.86, 72]} />
+        <ringGeometry args={[0.54, 0.72, 72]} />
         <meshBasicMaterial color={voiceActive ? '#3cdcff' : '#6feaff'} transparent opacity={0.7} depthWrite={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[0.78, 0.025, 12, 80]} />
+        <torusGeometry args={[0.64, 0.021, 12, 80]} />
         <meshStandardMaterial color="#22cfff" emissive="#1a7dff" emissiveIntensity={1.35} transparent opacity={0.85} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.62 + pulse * 0.02, 64]} />
+        <circleGeometry args={[0.50 + pulse * 0.02, 64]} />
         <meshBasicMaterial color="#89ecff" transparent opacity={0.22 + pulse * 0.04} depthWrite={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <circleGeometry args={[0.56, 64]} />
+        <circleGeometry args={[0.46, 64]} />
         <meshStandardMaterial color="#c9f7ff" transparent opacity={0.16} roughness={0.2} metalness={0.15} />
       </mesh>
     </group>
   );
 }
 
-function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, robotUrl, faceTextureUrl }) {
+function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, danceActive, robotUrl, faceTextureUrl }) {
   return (
     <Canvas
       className="h-full w-full"
@@ -120,6 +121,7 @@ function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, rob
             pointer={pointer}
             voiceActive={voiceActive}
             activityPulse={activityPulse}
+            danceActive={danceActive}
             robotUrl={robotUrl}
             faceTextureUrl={faceTextureUrl}
           />
@@ -135,6 +137,7 @@ function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, rob
 export default function SidebarRobot({ compact = false }) {
   const [hovered, setHovered] = useState(false);
   const [clicked, setClicked] = useState(false);
+  const [danceActive, setDanceActive] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [activityPulse, setActivityPulse] = useState(0);
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
@@ -195,6 +198,18 @@ export default function SidebarRobot({ compact = false }) {
     return () => window.clearTimeout(timeout);
   }, [clicked]);
 
+  useEffect(() => {
+    if (!danceActive) return;
+    const timeout = window.setTimeout(() => setDanceActive(false), 1200);
+    return () => window.clearTimeout(timeout);
+  }, [danceActive]);
+
+  const handleTap = () => {
+    setClicked(true);
+    setDanceActive(true);
+    setActivityPulse(1);
+  };
+
   const handlePointerMove = (event) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -206,7 +221,7 @@ export default function SidebarRobot({ compact = false }) {
 
   return (
     <motion.div
-      className={`relative flex items-center justify-center rounded-[1.35rem] border border-sky-200/70 bg-[radial-gradient(circle_at_top_left,_rgba(125,211,252,0.45),_rgba(255,255,255,0.96)_65%,_rgba(224,242,254,0.96)_100%)] shadow-[0_20px_45px_-25px_rgba(14,116,144,0.45)] backdrop-blur-xl ${compact ? 'h-20 w-20' : 'h-32 w-32'} ${hovered ? 'scale-[1.04]' : 'scale-100'}`}
+      className={`relative flex items-center justify-center rounded-[1.35rem] border border-slate-200/80 bg-white shadow-[0_18px_40px_-24px_rgba(15,23,42,0.35)] backdrop-blur-xl ${compact ? 'h-16 w-16' : 'h-24 w-24'} ${hovered ? 'scale-[1.02]' : 'scale-100'}`}
       style={{ scale: springScale, cursor: hovered ? 'pointer' : 'default' }}
       onMouseMove={handlePointerMove}
       onMouseEnter={() => {
@@ -220,9 +235,10 @@ export default function SidebarRobot({ compact = false }) {
         hoverScale.set(1);
         hoverGlow.set(0);
       }}
-      onMouseDown={() => setClicked(true)}
+      onPointerDown={handleTap}
       onMouseUp={() => setClicked(false)}
-      onClick={() => setClicked(true)}
+      onTouchStart={handleTap}
+      onClick={handleTap}
       onPointerLeave={() => setClicked(false)}
     >
       <motion.div
@@ -239,6 +255,7 @@ export default function SidebarRobot({ compact = false }) {
           pointer={pointer}
           voiceActive={voiceActive}
           activityPulse={activityPulse}
+          danceActive={danceActive}
           robotUrl={robotUrl}
           faceTextureUrl={faceTextureUrl}
         />

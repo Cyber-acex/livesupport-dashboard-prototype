@@ -44,6 +44,18 @@ function MonthlyTargetGauge({ targetAmount = 20000, revenueAmount = 0, todayAmou
     return 'You earned the same as yesterday. Steady progress is still progress!';
   }, [safeToday, safeYesterday]);
 
+  const todayTrend = useMemo(() => {
+    if (!safeYesterday) return null;
+    if (safeToday > safeYesterday) return { type: 'up', label: 'up' };
+    if (safeToday < safeYesterday) return { type: 'down', label: 'down' };
+    return { type: 'steady', label: 'steady' };
+  }, [safeToday, safeYesterday]);
+
+  const revenueTrend = useMemo(() => {
+    if (safeRevenue >= safeTarget) return { type: 'up', label: 'up' };
+    return { type: 'down', label: 'down' };
+  }, [safeRevenue, safeTarget]);
+
   useEffect(() => {
     if (!chartRef.current) return;
 

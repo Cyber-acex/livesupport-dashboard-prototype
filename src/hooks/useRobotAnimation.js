@@ -15,7 +15,8 @@ export function useRobotAnimation({
   enabled = true,
   modelObject = null,
   voiceActive = false,
-  activityPulse = 0
+  activityPulse = 0,
+  danceActive = false
 } = {}) {
   const rootRef = useRef(null);
   const antennasRef = useRef([]);
@@ -86,26 +87,32 @@ export function useRobotAnimation({
     const spinAmount = clicked ? clickPulse.current * Math.PI * 2 : 0;
     const bounceAmount = clicked ? Math.sin(clickPulse.current * Math.PI) * 0.08 : 0;
     const blinkActive = (time % 6.2) < 0.08 && Math.floor(time / 6.2) % 2 === 0;
+    const danceSwing = danceActive ? Math.sin(time * 9.2) * 0.52 : 0;
+    const danceBob = danceActive ? Math.sin(time * 9.2) * 0.07 : 0;
+    const danceTilt = danceActive ? Math.sin(time * 8.6 + 0.4) * 0.2 : 0;
+    const danceTwist = danceActive ? Math.sin(time * 9.6) * 0.16 : (clicked ? 0.05 : 0);
 
-    rootRef.current.position.y = lerp(rootRef.current.position.y ?? 0, 0.04 + bobOffset + bounceAmount, 0.09);
-    rootRef.current.rotation.y = lerp(rootRef.current.rotation.y ?? 0, targetRotationY + spinAmount * 0.08, 0.1);
-    rootRef.current.rotation.x = lerp(rootRef.current.rotation.x ?? 0, targetRotationX - (clicked ? 0.08 : 0), 0.1);
-    rootRef.current.rotation.z = lerp(rootRef.current.rotation.z ?? 0, clicked ? 0.05 : 0, 0.1);
+    rootRef.current.position.y = lerp(rootRef.current.position.y ?? 0, 0.04 + bobOffset + bounceAmount + danceBob, 0.09);
+    rootRef.current.rotation.y = lerp(rootRef.current.rotation.y ?? 0, targetRotationY + spinAmount * 0.08 + danceSwing * 0.14, 0.1);
+    rootRef.current.rotation.x = lerp(rootRef.current.rotation.x ?? 0, targetRotationX - (clicked ? 0.08 : 0) + danceTilt * 0.26, 0.1);
+    rootRef.current.rotation.z = lerp(rootRef.current.rotation.z ?? 0, danceTwist, 0.1);
 
     if (bodyRef.current) {
-      bodyRef.current.rotation.y = lerp(bodyRef.current.rotation.y ?? 0, targetRotationY * 0.28, 0.12);
-      bodyRef.current.rotation.x = lerp(bodyRef.current.rotation.x ?? 0, targetRotationX * 0.18, 0.12);
-      bodyRef.current.scale.setScalar(1 + Math.sin(time * 2.4) * 0.012 + (hovered ? 0.018 : 0));
+      bodyRef.current.rotation.y = lerp(bodyRef.current.rotation.y ?? 0, targetRotationY * 0.28 + danceSwing * 0.22, 0.12);
+      bodyRef.current.rotation.x = lerp(bodyRef.current.rotation.x ?? 0, targetRotationX * 0.18 + danceTilt * 0.15, 0.12);
+      bodyRef.current.rotation.z = lerp(bodyRef.current.rotation.z ?? 0, danceActive ? Math.sin(time * 8.7) * 0.16 : 0, 0.12);
+      bodyRef.current.scale.setScalar(1 + Math.sin(time * 2.4) * 0.012 + (hovered ? 0.018 : 0) + (danceActive ? 0.016 : 0));
     }
 
     if (headRef.current) {
       const micro = Math.sin(time * 1.35 + 0.8) * 0.01 + Math.sin(time * 0.9) * 0.006;
-      headRef.current.rotation.y = lerp(headRef.current.rotation.y ?? 0, targetRotationY * 0.55 + micro, 0.1);
-      headRef.current.rotation.x = lerp(headRef.current.rotation.x ?? 0, targetRotationX * 0.45 + Math.sin(time * 1.2) * 0.003, 0.1);
+      headRef.current.rotation.y = lerp(headRef.current.rotation.y ?? 0, targetRotationY * 0.55 + micro + danceSwing * 0.08, 0.1);
+      headRef.current.rotation.x = lerp(headRef.current.rotation.x ?? 0, targetRotationX * 0.45 + Math.sin(time * 1.2) * 0.003 + danceTilt * 0.06, 0.1);
+      headRef.current.rotation.z = lerp(headRef.current.rotation.z ?? 0, danceActive ? Math.sin(time * 8.8) * 0.08 : 0, 0.1);
     }
 
     antennasRef.current.forEach((mesh, index) => {
-      const sway = Math.sin(time * 3.2 + index) * 0.03;
+      const sway = Math.sin(time * (danceActive ? 7.4 : 3.2) + index) * (danceActive ? 0.12 : 0.03);
       mesh.rotation.z = lerp(mesh.rotation.z ?? (index % 2 === 0 ? -0.2 : 0.2), (index % 2 === 0 ? -0.2 : 0.2) + sway, 0.12);
     });
 
@@ -129,13 +136,13 @@ export function useRobotAnimation({
         material.transparent = true;
       }
       if (glowRef.current && glowRef.current.material) {
-        glowRef.current.material.opacity = hovered ? 0.3 : 0.16 + activityPulse * 0.03;
+        glowRef.current.material.opacity = hovered ? 0.3 : 0.16 + activityPulse * 0.03 + (danceActive ? 0.08 : 0);
         glowRef.current.material.color.set(voiceActive ? '#4ad4ff' : '#66e6ff');
       }
     });
 
     if (glowRef.current) {
-      glowRef.current.scale.setScalar(hovered ? 1.12 : 1 + activityPulse * 0.05);
+      glowRef.current.scale.setScalar(hovered ? 1.12 : 1 + activityPulse * 0.05 + (danceActive ? 0.08 : 0));
     }
   });
 
