@@ -411,15 +411,25 @@ function getVoiceSessionSummary(session) {
 
 function getConversationAutopilotMode(conversationId) {
     const convId = Number(conversationId);
-    if (Number.isNaN(convId)) return 'assist';
+    if (Number.isNaN(convId)) return 'auto';
 
+    const observedModes = [];
     for (const record of onlineAgents.values()) {
+        if (!record) continue;
+
+        const normalizedMode = record.autopilotMode ? String(record.autopilotMode).toLowerCase() : 'auto';
         if (Number(record.activeConversation) === convId) {
-            return record.autopilotMode ? String(record.autopilotMode).toLowerCase() : 'assist';
+            return normalizedMode;
         }
+
+        observedModes.push(normalizedMode);
     }
 
-    return 'assist';
+    if (observedModes.some((mode) => mode === 'auto')) return 'auto';
+    if (observedModes.some((mode) => mode === 'manual')) return 'manual';
+    if (observedModes.some((mode) => mode === 'assist')) return 'assist';
+
+    return 'auto';
 }
 
 function isAIAutoSendEnabled(conversationId) {
