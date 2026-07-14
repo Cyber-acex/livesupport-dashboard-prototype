@@ -52,6 +52,7 @@ function InboxPage() {
   });
   const [escalatedConversationIds, setEscalatedConversationIds] = useState([]);
   const [escalatingConversationId, setEscalatingConversationId] = useState(null);
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false);
   const escalationAudio = useMemo(() => {
     const audio = new Audio(encodeURI('/uploads/Notification sounds/escalation sound.wav'));
     audio.preload = 'auto';
@@ -587,6 +588,46 @@ function InboxPage() {
     success(`Marked conversation #${conversationId} as resolved`);
   }
 
+  async function handleDeleteConversation() {
+    const conversationId = activeConversation?.id || selectedConversation?.id;
+    if (!conversationId || isDeletingConversation) return;
+
+    const confirmed = window.confirm('Delete this customer conversation and all associated data? This action cannot be undone.');
+    if (!confirmed) return;
+
+    setIsDeletingConversation(true);
+    try {
+      const response = await fetch('/api/conversations', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: conversationId })
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || 'Failed to delete conversation.');
+      }
+
+      setConversations((prev) => prev.filter((conversation) => String(conversation.id) !== String(conversationId)));
+      setEscalatedConversationIds((prev) => prev.filter((id) => String(id) !== String(conversationId)));
+
+      setSelectedConversation((prev) => {
+        if (prev && String(prev.id) !== String(conversationId)) {
+          return prev;
+        }
+        const nextConversation = conversations.find((conversation) => String(conversation.id) !== String(conversationId));
+        return nextConversation || null;
+      });
+
+      success('Customer conversation deleted successfully');
+    } catch (error) {
+      console.error('Delete conversation failed', error);
+      error(error.message || 'Unable to delete customer conversation');
+    } finally {
+      setIsDeletingConversation(false);
+    }
+  }
+
   async function handleCallCustomer() {
     if (!selectedConversation?.id) {
       warning('Select a conversation before placing a call');
@@ -1096,7 +1137,7 @@ function InboxPage() {
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
           <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-            <div className="mb-6 flex flex-col gap-4 rounded-[32px] border border-slate-200 bg-white/80 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 md:flex-row md:items-center md:justify-between">
+            <div className="mb-4 flex flex-col gap-4 rounded-[32px] border border-slate-200 bg-white/80 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 sm:p-5 md:flex-row md:items-center md:justify-between md:gap-6">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-[0.24em] text-brand-500">Customer inbox</p>
                 <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">TailAdmin-style conversations</h1>
@@ -1107,7 +1148,7 @@ function InboxPage() {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                   placeholder="Search conversations..."
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white sm:min-w-[260px]"
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white sm:min-w-[220px] md:min-w-[260px]"
                 />
                 <button
                   type="button"
@@ -1120,8 +1161,8 @@ function InboxPage() {
             </div>
 
             <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
-              <div className="grid h-[calc(100dvh-12rem)] min-h-[720px] max-h-[calc(100dvh-12rem)] grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
-                <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-b-0 xl:border-r">
+              <div className="grid gap-0 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+                <aside className="flex min-h-[320px] flex-col border-b border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:min-h-[460px] lg:border-b-0 lg:border-r">
                   <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -1132,7 +1173,7 @@ function InboxPage() {
                         {filteredConversations.length}
                       </div>
                     </div>
-                    <div className="mt-4 flex flex-wrap gap-2">
+                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
                       {queueFilters.map((filter) => (
                         <button
                           key={filter.id}
@@ -1168,7 +1209,7 @@ function InboxPage() {
                   </div>
                 </aside>
 
-                <section className="flex h-full min-h-0 flex-col bg-white dark:bg-slate-950">
+                <section className="flex min-h-[420px] flex-col bg-white dark:bg-slate-950 lg:min-h-[560px]">
                   {activeConversation ? (
                     <>
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/80">
@@ -1188,7 +1229,7 @@ function InboxPage() {
                             </p>
                           </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
                             onClick={handleEscalateConversation}
@@ -1211,6 +1252,23 @@ function InboxPage() {
                             className="rounded-full bg-brand-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-700"
                           >
                             Resolve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleDeleteConversation}
+                            disabled={!activeConversation?.id || isDeletingConversation}
+                            aria-label={isDeletingConversation ? 'Deleting customer' : 'Delete customer'}
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-rose-200 bg-rose-50 text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-900/40 dark:bg-rose-950/60 dark:text-rose-300 dark:hover:bg-rose-900/80"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                              <path d="M4.5 7.5h15" />
+                              <path d="M8 7.5V5.25a1.25 1.25 0 0 1 1.25-1.25h5.5A1.25 1.25 0 0 1 16 5.25V7.5" />
+                              <path d="M9.5 11.5v6" />
+                              <path d="M14.5 11.5v6" />
+                              <path d="M6.5 7.5l1-1.75" />
+                              <path d="M17.5 7.5l-1-1.75" />
+                              <path d="M7.5 18.5h9" />
+                            </svg>
                           </button>
                         </div>
                       </div>
@@ -1262,7 +1320,7 @@ function InboxPage() {
                       <div className="border-t border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
                         <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                           <textarea
-                            rows={3}
+                            rows={2}
                             placeholder="Write a reply..."
                             value={composer}
                             onChange={(event) => setComposer(event.target.value)}
@@ -1274,7 +1332,7 @@ function InboxPage() {
                             }}
                             className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-sm text-slate-500 dark:text-slate-400">
                               {canUseAiReply(autopilotMode)
                                 ? 'AI suggested response is ready.'
@@ -1282,7 +1340,7 @@ function InboxPage() {
                                   ? 'AI reply suggestions are disabled in Manual Mode.'
                                   : 'AI response mode is currently unavailable.'}
                             </p>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
                               <button
                                 type="button"
                                 disabled={isGeneratingReply || !canUseAiReply(autopilotMode)}
@@ -1314,7 +1372,7 @@ function InboxPage() {
                   )}
                 </section>
 
-                <aside className="border-t border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-l xl:border-t-0">
+                <aside className="border-t border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-l xl:border-t-0">
                   <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Customer info</h3>
