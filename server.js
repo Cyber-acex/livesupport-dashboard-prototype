@@ -4677,51 +4677,113 @@ app.get('/api/orders', (req, res) => {
     );
 });
 
+async function validateOrderItems(items = []) {
+    const normalizedItems = [];
+    const quantities = {};
+    const keys = [];
+
+    for (const item of Array.isArray(items) ? items : []) {
+        const key = String(item.menuItemId || item.key_name || item.key || '').trim();
+        const qty = Number(item.quantity || 1);
+        if (!key || qty <= 0) continue;
+        if (!quantities[key]) {
+            quantities[key] = 0;
+            keys.push(key);
+        }
+        quantities[key] += qty;
+    }
+
+    if (keys.length === 0) {
+        return { error: 'No valid menu items were provided', validatedItems: [], total: 0, productDisplay: '' };
+    }
+
+    const placeholderList = keys.map(() => '?').join(', ');
+    const query = `SELECT id, category, key_name, name, price, available FROM Menu WHERE key_name IN (${placeholderList})`;
+
+    return new Promise((resolve) => {
+        db.query(query, keys, (err, rows) => {
+            if (err) {
+                console.error('Error validating order items:', err);
+                return resolve({ error: 'Database error validating menu items', validatedItems: [], total: 0, productDisplay: '' });
+            }
+
+            if (!Array.isArray(rows) || rows.length === 0) {
+                return resolve({ error: 'No matching menu items found for the provided items', validatedItems: [], total: 0, productDisplay: '' });
+            }
+
+            const matchedKeys = rows.map((row) => String(row.key_name).trim());
+            const missingKeys = keys.filter((key) => !matchedKeys.includes(key));
+            if (missingKeys.length > 0) {
+                return resolve({ error: `Menu items not found: ${missingKeys.join(', ')}`, validatedItems: [], total: 0, productDisplay: '' });
+            }
+
+            const validated = rows.map((row) => {
+                const key = String(row.key_name).trim();
+                const quantity = quantities[key] || 0;
+                const unitPrice = Number(row.price || 0);
+                return {
+                    menuItemId: key,
+                    menuId: row.id,
+                    name: String(row.name || key),
+                    category: row.category || 'Menu',
+                    quantity,
+                    price: unitPrice,
+                    totalPrice: Number((quantity * unitPrice).toFixed(2))
+                };
+            });
+
+            const total = Number(validated.reduce((sum, item) => sum + item.totalPrice, 0).toFixed(2));
+            const productDisplay = validated.map((item) => {
+                return item.quantity > 1 ? `${item.quantity}x ${item.name}` : item.name;
+            }).join(', ');
+
+            resolve({ validatedItems: validated, total, productDisplay });
+        });
+    });
+}
+
 // Create new order
-app.post('/api/orders', (req, res) => {
-    // Accept both legacy single-item payloads and new multi-item payloads
-    const { customerName, product, menuItemId, quantity, amount, status, items } = req.body;
+app.post('/api/orders', async (req, res) => {
+    const { customerName, product, menuItemId, quantity, amount, status, items, phone } = req.body;
 
-    // Basic validation: require customerName and amount (amount can be 0)
-    if (!customerName || (amount === undefined || amount === null)) {
-        return res.status(400).json({ error: "Missing required fields: customerName, amount" });
+    if (!customerName) {
+        return res.status(400).json({ error: 'Missing required field: customerName' });
     }
 
-    // Generate order ID
+    const providedItems = Array.isArray(items) && items.length > 0
+        ? items
+        : menuItemId ? [{ menuItemId, quantity: Number(quantity || 1) }] : [];
+
+    if (providedItems.length === 0) {
+        return res.status(400).json({ error: 'No order items provided. Please submit a valid items array or menuItemId and quantity.' });
+    }
+
+    const validation = await validateOrderItems(providedItems);
+    if (validation.error) {
+        return res.status(400).json({ error: validation.error });
+    }
+
     const orderId = `ORD-${Date.now()}`;
-
-    // If `items` array provided, format a combined product display and compute total quantity
-    let productDisplay = '';
-    let totalQuantity = 0;
-    if (Array.isArray(items) && items.length > 0) {
-        productDisplay = items.map(it => {
-            const q = Number(it.quantity || 1);
-            totalQuantity += q;
-            // Format: "2x Small Pizza" for qty > 1, "Small Pizza" for qty === 1
-            return q > 1 ? `${q}x ${it.name}` : it.name;
-        }).join(', ');
-    } else {
-        totalQuantity = Number(quantity) || 0;
-        productDisplay = totalQuantity ? `${product} x${totalQuantity}` : (product || '');
-    }
-
     const now = new Date();
+    const orderAmount = validation.total;
+    const orderProduct = validation.productDisplay || String(product || '').trim();
+
     const insertSql = isPg
         ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id'
         : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
 
     db.query(
         insertSql,
-        [orderId, customerName, null, productDisplay, amount, amount, status || 'pending', now],
+        [orderId, customerName, phone || null, orderProduct, orderAmount, orderAmount, status || 'pending', now],
         (err, result) => {
             if (err) {
                 console.error('Error creating order:', err);
-                return res.status(500).json({ error: "Database error" });
+                return res.status(500).json({ error: 'Database error' });
             }
 
-            const responsePayload = { success: true, orderId, id: result.insertId || result.rows?.[0]?.id };
+            const responsePayload = { success: true, orderId, id: result.insertId || result.rows?.[0]?.id, amount: orderAmount, product: orderProduct };
 
-            reduceMenuStock(items, (stockErr) => {
+            reduceMenuStock(validation.validatedItems, (stockErr) => {
                 if (stockErr) {
                     console.error('Error reducing stock for order:', stockErr);
                 }
