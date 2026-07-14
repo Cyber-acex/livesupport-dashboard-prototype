@@ -8,22 +8,6 @@ import 'dotenv/config';
  */
 export async function fetchGmailEmails(maxEmails = 20) {
   let connection;
-  let closed = false;
-
-  const safeEnd = async () => {
-    if (!connection || closed) return;
-    closed = true;
-    try {
-      await connection.end();
-    } catch (e) {
-      try {
-        await connection.close();
-      } catch (closeErr) {
-        // ignore cleanup errors
-      }
-    }
-  };
-
   try {
     const config = {
       imap: {
@@ -66,7 +50,7 @@ export async function fetchGmailEmails(maxEmails = 20) {
       
       if (results.length === 0) {
         console.log('No emails found');
-        await safeEnd();
+        await connection.end();
         return { success: true, emails: [] };
       }
 
@@ -150,11 +134,11 @@ export async function fetchGmailEmails(maxEmails = 20) {
         }
       }
 
-      await safeEnd();
+      await connection.end();
       return { success: true, emails };
     } catch (err) {
       try {
-        await safeEnd();
+        await connection.end();
       } catch (e) {
         // Ignore errors closing the connection
       }
@@ -166,10 +150,12 @@ export async function fetchGmailEmails(maxEmails = 20) {
     return { success: false, error: err.message };
   } finally {
     // Ensure connection is properly closed
-    try {
-      await safeEnd();
-    } catch (e) {
-      // Ignore errors closing the connection
+    if (connection) {
+      try {
+        await connection.end();
+      } catch (e) {
+        // Ignore errors closing the connection
+      }
     }
   }
 }

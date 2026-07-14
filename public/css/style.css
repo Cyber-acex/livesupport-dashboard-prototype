@@ -1529,6 +1529,45 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     padding: 16px;
     overflow-y: auto;
     background: #f8fafc;
+    position: relative;
+}
+
+.scroll-down-fab {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    width: 52px;
+    height: 52px;
+    border: none;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #7c3aed 0%, #0ea5e9 100%);
+    color: #ffffff;
+    cursor: pointer;
+    box-shadow: 0 20px 40px rgba(14, 165, 233, 0.22), 0 12px 30px rgba(124, 58, 237, 0.2);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(10px) scale(0.96);
+    transition: opacity 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+    z-index: 3;
+}
+
+.scroll-down-fab.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+}
+
+.scroll-down-fab:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 24px 48px rgba(14, 165, 233, 0.28), 0 16px 36px rgba(124, 58, 237, 0.26);
+}
+
+.scroll-down-fab svg {
+    width: 20px;
+    height: 20px;
 }
 
 .message {
@@ -3003,42 +3042,6 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 .ai-btn.primary:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
-}
-
-#scroll-down-btn {
-  padding: 12px 22px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, #7c3aed 0%, #0ea5e9 100%);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  box-shadow: 0 20px 50px rgba(14, 165, 233, 0.2), 0 10px 30px rgba(124, 58, 237, 0.18);
-  backdrop-filter: blur(12px);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-size: 0.9rem;
-  font-weight: 700;
-  transition: transform 0.22s ease, box-shadow 0.22s ease, filter 0.22s ease;
-}
-
-#scroll-down-btn::before {
-  content: "⇣";
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 10px;
-  font-size: 1.1rem;
-  animation: pulse-down 1.4s ease-in-out infinite;
-}
-
-#scroll-down-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 24px 66px rgba(14, 165, 233, 0.28), 0 14px 36px rgba(124, 58, 237, 0.24);
-  filter: brightness(1.08);
-}
-
-@keyframes pulse-down {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(3px); }
 }
 
 .ai-btn.success {

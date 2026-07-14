@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useSidebar } from '../contexts/SidebarContext';
 import NotificationDropdown from './NotificationDropdown';
 
@@ -20,6 +20,11 @@ function TopBar({ onSidebarToggle }) {
     return now;
   });
   const [sessionTick, setSessionTick] = useState(0);
+  const signOutAudio = useMemo(() => {
+    const audio = new Audio(encodeURI('/uploads/Notification sounds/sign out.wav'));
+    audio.preload = 'auto';
+    return audio;
+  }, []);
   const notifRef = useRef();
   const userRef = useRef();
 
@@ -140,6 +145,14 @@ function TopBar({ onSidebarToggle }) {
         window.sessionStorage.removeItem('auth');
         window.currentUser = null;
       }
+
+      if (signOutAudio) {
+        signOutAudio.currentTime = 0;
+        signOutAudio.play().catch(() => {
+          // Ignore autoplay restrictions.
+        });
+      }
+
       await fetch('/logout', { method: 'GET', credentials: 'same-origin' });
     } catch (error) {
       console.warn('Sign out request failed', error);

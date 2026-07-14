@@ -20,6 +20,7 @@ import { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback
 import { sendEmail } from "./utils/email.js";
 import { fetchGmailEmails } from "./utils/gmail-imap.js";
 import createAuthRouter from "./routes/auth.js";
+import { canAutoSendReplies, normalizeAutopilotMode, canUseAiReply } from './src/services/autopilotMode.js';
 const app = express();
 
 const upload = multer({ dest: path.join(__dirname, "uploads") });
@@ -417,7 +418,7 @@ function getConversationAutopilotMode(conversationId) {
     for (const record of onlineAgents.values()) {
         if (!record) continue;
 
-        const normalizedMode = record.autopilotMode ? String(record.autopilotMode).toLowerCase() : 'auto';
+        const normalizedMode = normalizeAutopilotMode(record.autopilotMode || 'auto');
         if (Number(record.activeConversation) === convId) {
             return normalizedMode;
         }
@@ -433,7 +434,7 @@ function getConversationAutopilotMode(conversationId) {
 }
 
 function isAIAutoSendEnabled(conversationId) {
-    return getConversationAutopilotMode(conversationId) === 'auto';
+    return canAutoSendReplies(getConversationAutopilotMode(conversationId));
 }
 
 function emitNewMessageEvent(conversationId, messageData) {
@@ -3085,6 +3086,11 @@ app.get("/api/messages/:id", (req, res) => {
 app.get("/api/suggest-reply/:id", async (req, res) => {
     const conversationId = req.params.id;
     try {
+        // Respect autopilot mode for this conversation: if AI suggestions disabled, return a clear message
+        const mode = getConversationAutopilotMode(conversationId);
+        if (!canUseAiReply(mode)) {
+            return res.json({ suggestion: `AI suggestions are disabled for this conversation (mode: ${mode}).` });
+        }
         db.query(
             "SELECT c.phone FROM conversations c WHERE c.id = ? LIMIT 1",
             [conversationId],
@@ -4768,6 +4774,32 @@ app.post('/api/orders', async (req, res) => {
     const orderAmount = validation.total;
     const orderProduct = validation.productDisplay || String(product || '').trim();
 
+    // If a table number was provided, try to mark it occupied first (fail if not vacant)
+    const tableNumber = req.body.tableNumber || null;
+    let occupiedTableUpdated = false;
+    if (tableNumber) {
+        try {
+            if (isPg) {
+                const updateSql = `UPDATE restaurant_tables SET status = 'occupied', reserved_until = NULL, is_booking = FALSE, session_started_at = NOW(), updated_at = NOW() WHERE number = $1 AND status = 'vacant' RETURNING id`;
+                const updRes = await new Promise((resolve, reject) => db.query(updateSql, [tableNumber], (uErr, uRes) => uErr ? reject(uErr) : resolve(uRes)));
+                if (!updRes || (updRes.rowCount === 0)) {
+                    return res.status(400).json({ error: 'Table unavailable' });
+                }
+            } else {
+                const updateSql = `UPDATE restaurant_tables SET status = 'occupied', reserved_until = NULL, is_booking = FALSE, session_started_at = ?, updated_at = NOW() WHERE number = ? AND status = 'vacant'`;
+                const nowIso = new Date().toISOString();
+                const updRes = await new Promise((resolve, reject) => db.query(updateSql, [nowIso, tableNumber], (uErr, uRes) => uErr ? reject(uErr) : resolve(uRes)));
+                if (!updRes || (typeof updRes.affectedRows !== 'undefined' && updRes.affectedRows === 0)) {
+                    return res.status(400).json({ error: 'Table unavailable' });
+                }
+            }
+            occupiedTableUpdated = true;
+        } catch (uErr) {
+            console.error('Failed to update table to occupied:', uErr);
+            return res.status(500).json({ error: 'Failed to reserve table' });
+        }
+    }
+
     const insertSql = isPg
         ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id'
         : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
@@ -4775,9 +4807,21 @@ app.post('/api/orders', async (req, res) => {
     db.query(
         insertSql,
         [orderId, customerName, phone || null, orderProduct, orderAmount, orderAmount, status || 'pending', now],
-        (err, result) => {
+        async (err, result) => {
             if (err) {
                 console.error('Error creating order:', err);
+                // attempt to rollback table occupation if we updated it
+                if (occupiedTableUpdated && tableNumber) {
+                    try {
+                        if (isPg) {
+                            await new Promise((resolve, reject) => db.query(`UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, session_started_at = NULL, updated_at = NOW() WHERE number = $1`, [tableNumber], (rErr) => rErr ? reject(rErr) : resolve()));
+                        } else {
+                            await new Promise((resolve, reject) => db.query(`UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, session_started_at = NULL, updated_at = NOW() WHERE number = ?`, [tableNumber], (rErr) => rErr ? reject(rErr) : resolve()));
+                        }
+                    } catch (rollbackErr) {
+                        console.error('Failed to rollback table state after order insert error', rollbackErr);
+                    }
+                }
                 return res.status(500).json({ error: 'Database error' });
             }
 

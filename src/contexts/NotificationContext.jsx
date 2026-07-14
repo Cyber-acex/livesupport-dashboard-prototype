@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 
 const NotificationContext = createContext();
 
@@ -35,6 +35,20 @@ export function NotificationProvider({ children }) {
 
   const info = useCallback((message, duration) => 
     addNotification(message, 'info', duration), [addNotification]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.__showAppNotification = (message, type = 'success', duration = 4000) => {
+        addNotification(message, type, duration);
+      };
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        delete window.__showAppNotification;
+      }
+    };
+  }, [addNotification]);
 
   return (
     <NotificationContext.Provider value={{ 

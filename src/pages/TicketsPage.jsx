@@ -95,6 +95,11 @@ function TicketsPage() {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const ticketCreationAudio = useMemo(() => {
+    const audio = new Audio(encodeURI('/uploads/Notification sounds/Ticket creation.wav'));
+    audio.preload = 'auto';
+    return audio;
+  }, []);
   const [createForm, setCreateForm] = useState({
     subject: '',
     customSubject: '',
@@ -234,6 +239,10 @@ function TicketsPage() {
       };
       setTickets((prev) => [newTicket, ...prev]);
       success(`Created ticket #${data.id}`);
+      ticketCreationAudio.currentTime = 0;
+      ticketCreationAudio.play().catch(() => {
+        // Ignore autoplay restrictions; notification still shows.
+      });
       setShowCreateModal(false);
       setCreateForm({
         subject: '',

@@ -78,6 +78,11 @@ function OrdersPage() {
   const [tableForm, setTableForm] = useState({ customerName: '', phoneNumber: '', guestCount: '2', reservationDateTime: '', notes: '', assignedStaff: '', status: 'vacant' });
   const [tableActionPending, setTableActionPending] = useState(false);
   const [sessionTick, setSessionTick] = useState(0);
+  const occupiedTableAudio = useMemo(() => {
+    const audio = new Audio(encodeURI('/uploads/Notification sounds/Table status occupied.wav'));
+    audio.preload = 'auto';
+    return audio;
+  }, []);
 
   const resolveActiveTab = (pathname) => {
     if (pathname === '/orders/menu' || pathname.startsWith('/orders/menu/')) return 'menu';
@@ -410,7 +415,17 @@ function OrdersPage() {
   };
 
   const updateTableLocally = (tableNumber, changes) => {
+    const previousTable = tables.find((table) => table.number === tableNumber);
     setTables((prev) => prev.map((table) => table.number === tableNumber ? { ...table, ...changes } : table));
+
+    const nextStatus = String(changes?.status || '').toLowerCase();
+    const prevStatus = String(previousTable?.status || '').toLowerCase();
+    if (nextStatus === 'occupied' && prevStatus !== 'occupied') {
+      occupiedTableAudio.currentTime = 0;
+      occupiedTableAudio.play().catch(() => {
+        // Ignore autoplay restrictions.
+      });
+    }
   };
 
   const openTableDialog = (table, mode) => {
@@ -490,7 +505,27 @@ function OrdersPage() {
       return sum + (menu ? menu.price * item.quantity : 0);
     }, 0);
 
+    // If a table is selected, ensure it's vacant then mark occupied before creating order
+    const tableNumber = draft.tableNumber || null;
+    let occupiedTableNumber = null;
     try {
+      if (tableNumber) {
+        const tnum = Number(tableNumber);
+        const table = tables.find((t) => Number(t.number) === tnum);
+        if (table) {
+          const status = normalizeTableStatus(table.status);
+          if (status !== 'vacant') {
+            throw new Error('Table unavailable');
+          }
+
+          // mark locally and persist as occupied
+          const now = new Date().toISOString();
+          updateTableLocally(tnum, { status: 'occupied', reservedUntil: null, isBooking: false, sessionStartedAt: now });
+          await updateTableState(tnum, { status: 'occupied', reservedUntil: null, isBooking: false, sessionStartedAt: now });
+          occupiedTableNumber = tnum;
+        }
+      }
+
       await createOrder({
         customerName: draft.customerName,
         tableNumber: draft.tableNumber || null,
@@ -506,13 +541,24 @@ function OrdersPage() {
           price: menuItems.find((m) => m.id === item.menuItemId)?.price || 0
         }))
       });
+
       setOrderDraft({ customerName: '', tableNumber: '', status: 'pending', items: [{ menuItemId: '', quantity: 1 }] });
       setOrderModalOpen(false);
       success('Order created successfully!');
-      loadOrders();
-    } catch (error) {
-      console.error(error);
-      error(error.message);
+      await loadOrders();
+      if (occupiedTableNumber) await loadTables();
+    } catch (err) {
+      console.error(err);
+      // If we marked a table occupied but order failed, try to roll it back
+      if (occupiedTableNumber) {
+        try {
+          updateTableLocally(occupiedTableNumber, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, sessionStartedAt: null });
+          await updateTableState(occupiedTableNumber, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, sessionStartedAt: null });
+        } catch (rollbackErr) {
+          console.error('Failed to rollback table state after order error', rollbackErr);
+        }
+      }
+      error(err.message || 'Unable to create order.');
     }
   };
 

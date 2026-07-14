@@ -9,12 +9,14 @@ import { useCallSocket } from '../hooks/useCallSocket';
 import { useCallWebRTC } from '../hooks/useCallWebRTC';
 import { formatInboxTimestamp } from '../utils/inboxTime';
 import { useNotification } from '../contexts/NotificationContext';
+import { canUseAiReply, normalizeAutopilotMode } from '../services/autopilotMode';
 
 const queueFilters = [
   { id: 'all', label: 'All', icon: '✦' },
   { id: 'priority', label: 'Priority', icon: '⚡' },
   { id: 'unread', label: 'Unread', icon: '✉' },
-  { id: 'resolved', label: 'Resolved', icon: '✓' }
+  { id: 'resolved', label: 'Resolved', icon: '✓' },
+  { id: 'escalated', label: 'Escalated', icon: '🚨' }
 ];
 
 function formatDate(value) {
@@ -50,7 +52,18 @@ function InboxPage() {
   });
   const [escalatedConversationIds, setEscalatedConversationIds] = useState([]);
   const [escalatingConversationId, setEscalatingConversationId] = useState(null);
+  const escalationAudio = useMemo(() => {
+    const audio = new Audio(encodeURI('/uploads/Notification sounds/escalation sound.wav'));
+    audio.preload = 'auto';
+    return audio;
+  }, []);
+  const inboxMessageAudio = useMemo(() => {
+    const audio = new Audio(encodeURI('/uploads/Notification sounds/inbox message.wav'));
+    audio.preload = 'auto';
+    return audio;
+  }, []);
   const [currentUser, setCurrentUser] = useState(null);
+  const [autopilotMode, setAutopilotMode] = useState('assist');
   const [callToken, setCallToken] = useState('');
   const [callLink, setCallLink] = useState('');
   const [callStatus, setCallStatus] = useState('waiting');
@@ -58,11 +71,18 @@ function InboxPage() {
   const [callStarted, setCallStarted] = useState(false);
   const [offerSent, setOfferSent] = useState(false);
   const [localStream, setLocalStream] = useState(null);
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [recentOrdersLoading, setRecentOrdersLoading] = useState(false);
   const [remoteStream, setRemoteStream] = useState(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [editingConversationId, setEditingConversationId] = useState(null);
+  const [editingConversationName, setEditingConversationName] = useState('');
+  const [isSavingConversationName, setIsSavingConversationName] = useState(false);
   const socketRef = useRef(null);
   const selectedConversationIdRef = useRef(null);
   const activeConversationRoomRef = useRef(null);
   const remoteAudioRef = useRef(null);
+  const messagesViewportRef = useRef(null);
 
   const callSocket = useCallSocket(
     { token: callToken, role: callToken ? 'staff' : null, userId: currentUser?.id, name: currentUser?.name },
@@ -193,6 +213,32 @@ function InboxPage() {
   }, [conversations, selectedConversation]);
 
   useEffect(() => {
+    const savedMode = normalizeAutopilotMode(window.localStorage.getItem('autopilotMode') || 'assist');
+    setAutopilotMode(savedMode);
+
+    const handleStorage = (event) => {
+      if (event.key === 'autopilotMode') {
+        setAutopilotMode(normalizeAutopilotMode(event.newValue || 'assist'));
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, []);
+
+  // Emit autopilot mode changes to the socket so server presence reflects current mode
+  useEffect(() => {
+    try {
+      const socket = socketRef.current;
+      if (socket && socket.connected) {
+        socket.emit('agent:updateAutopilotMode', { autopilotMode: autopilotMode });
+      }
+    } catch (e) {
+      console.warn('Failed to emit autopilot mode update', e);
+    }
+  }, [autopilotMode]);
+
+  useEffect(() => {
     if (!selectedConversation?.id) {
       setMessages([]);
       return;
@@ -236,19 +282,28 @@ function InboxPage() {
       if (!message || !message.conversation_id) return;
       const conversationId = String(message.conversation_id);
       const activeConversationId = String(selectedConversationIdRef.current);
+      const isActiveConversation = activeConversationId === conversationId;
+      const sender = String(message.sender || '').toLowerCase();
+      const isCustomerMessage = !['agent', 'staff', 'ai', 'assistant', 'system'].includes(sender);
 
       setConversations((prev) => prev.map((conv) => {
         if (String(conv.id) !== conversationId) return conv;
-        const isActive = activeConversationId === conversationId;
         return {
           ...conv,
           last_message: message.message || conv.last_message,
           last_message_at: message.created_at || new Date().toISOString(),
-          unread_count: isActive ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
+          unread_count: isActiveConversation ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
         };
       }));
 
-      if (activeConversationId === conversationId) {
+      if (isCustomerMessage && !isActiveConversation) {
+        inboxMessageAudio.currentTime = 0;
+        inboxMessageAudio.play().catch(() => {
+          // Ignore autoplay restrictions.
+        });
+      }
+
+      if (isActiveConversation) {
         setMessages((prev) => {
           const alreadyExists = prev.some((msg) =>
             String(msg.sender) === String(message.sender) &&
@@ -371,7 +426,10 @@ function InboxPage() {
 
   async function handleUseAiReply() {
     const conversationId = activeConversation?.id || selectedConversation?.id;
-    if (!conversationId) return;
+    if (!conversationId || !canUseAiReply(autopilotMode)) {
+      warning('AI reply suggestions are disabled in the current mode.');
+      return;
+    }
 
     setIsGeneratingReply(true);
     try {
@@ -398,6 +456,10 @@ function InboxPage() {
 
   async function sendMessage() {
     if (!selectedConversation?.id || !composer.trim()) return;
+    if (!canUseAiReply(autopilotMode) && composer.trim().startsWith('AI')) {
+      warning('AI replies are disabled in Manual Mode.');
+      return;
+    }
     setIsSending(true);
 
     try {
@@ -491,6 +553,11 @@ function InboxPage() {
           : prev
       ));
 
+      escalationAudio.currentTime = 0;
+      escalationAudio.play().catch(() => {
+        // Ignore autoplay restrictions; notification still shows.
+      });
+
       success(`Escalated conversation #${conversationId}`);
     } catch (error) {
       console.error('Conversation escalation failed', error);
@@ -498,6 +565,26 @@ function InboxPage() {
     } finally {
       setEscalatingConversationId(null);
     }
+  }
+
+  async function handleResolveConversation() {
+    const conversationId = activeConversation?.id || selectedConversation?.id;
+    if (!conversationId) return;
+
+    setConversations((prev) => prev.map((conversation) => (
+      String(conversation.id) === String(conversationId)
+        ? { ...conversation, escalated: false, unread_count: 0 }
+        : conversation
+    )));
+
+    setSelectedConversation((prev) => (
+      prev && String(prev.id) === String(conversationId)
+        ? { ...prev, escalated: false, unread_count: 0 }
+        : prev
+    ));
+
+    setEscalatedConversationIds((prev) => prev.filter((id) => String(id) !== String(conversationId)));
+    success(`Marked conversation #${conversationId} as resolved`);
   }
 
   async function handleCallCustomer() {
@@ -561,6 +648,7 @@ function InboxPage() {
         .toLowerCase();
 
       const matchesQuery = !term || searchable.includes(term);
+      const isEscalated = Boolean(conversation.escalated || escalatedConversationIds.includes(String(conversation.id)));
       const matchesFilter = (() => {
         switch (activeFilter) {
           case 'priority':
@@ -568,7 +656,9 @@ function InboxPage() {
           case 'unread':
             return (conversation.unread_count || 0) > 0;
           case 'resolved':
-            return (conversation.unread_count || 0) === 0 && conversation.platform !== 'WhatsApp';
+            return (conversation.unread_count || 0) === 0 && conversation.platform !== 'WhatsApp' && !isEscalated;
+          case 'escalated':
+            return isEscalated;
           default:
             return true;
         }
@@ -576,9 +666,53 @@ function InboxPage() {
 
       return matchesQuery && matchesFilter;
     });
-  }, [activeFilter, conversations, query]);
+  }, [activeFilter, conversations, escalatedConversationIds, query]);
 
   const activeConversation = filteredConversations.find((conversation) => conversation.id === selectedConversation?.id) || filteredConversations[0] || null;
+  const activeConversationStatus = activeConversation?.escalated || escalatedConversationIds.includes(String(activeConversation?.id))
+    ? { label: 'Escalated', type: 'warning' }
+    : activeConversation?.unread_count > 0
+      ? { label: 'Needs reply', type: 'pending' }
+      : { label: 'Resolved', type: 'success' };
+
+  useEffect(() => {
+    if (!activeConversation?.phone) {
+      setRecentOrders([]);
+      setRecentOrdersLoading(false);
+      return;
+    }
+
+    let active = true;
+    const phone = activeConversation.phone;
+
+    setRecentOrdersLoading(true);
+    fetch(`/api/orders/${encodeURIComponent(phone)}`)
+      .then((response) => {
+        if (!response.ok) throw new Error('Failed to load recent orders');
+        return response.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        setRecentOrders(Array.isArray(data) ? data : []);
+      })
+      .catch((error) => {
+        console.error('Recent orders load failed', error);
+        if (active) {
+          setRecentOrders([]);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setRecentOrdersLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activeConversation?.phone]);
+
+  const latestRecentOrder = recentOrders[0] || null;
 
   function createReceiptNumber() {
     return `RCP-${Date.now().toString().slice(-6)}`;
@@ -729,9 +863,9 @@ function InboxPage() {
 
       success('Receipt created and stored successfully');
       setIsReceiptModalOpen(false);
-    } catch (error) {
-      console.error('Receipt save failed', error);
-      error(err.message || 'Failed to save receipt');
+    } catch (err) {
+      console.error('Receipt save failed', err);
+      error(err?.message || 'Failed to save receipt');
     } finally {
       setReceiptSaving(false);
     }
@@ -750,6 +884,20 @@ function InboxPage() {
     previewWindow.focus();
   }
 
+  function updateScrollToBottomVisibility() {
+    const container = messagesViewportRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setShowScrollToBottom(distanceFromBottom > 140);
+  }
+
+  function scrollToBottom(behavior = 'smooth') {
+    const container = messagesViewportRef.current;
+    if (!container) return;
+    container.scrollTo({ top: container.scrollHeight, behavior });
+    setShowScrollToBottom(false);
+  }
+
   const conversationMessages = useMemo(() => {
     if (!activeConversation) return [];
     return (messages.length > 0 ? messages : []).map((message, index) => {
@@ -764,48 +912,180 @@ function InboxPage() {
     }).filter((message) => message.content);
   }, [activeConversation, messages]);
 
+  useEffect(() => {
+    const container = messagesViewportRef.current;
+    if (!container) return;
+
+    const handleScroll = () => updateScrollToBottomVisibility();
+    const handleResize = () => updateScrollToBottomVisibility();
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('resize', handleResize);
+    updateScrollToBottomVisibility();
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [activeConversation?.id, messagesLoading, conversationMessages.length]);
+
+  useEffect(() => {
+    if (!activeConversation || messagesLoading) return;
+    const container = messagesViewportRef.current;
+    if (!container) return;
+
+    const timeoutId = window.setTimeout(() => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom <= 140) {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
+        setShowScrollToBottom(false);
+      } else {
+        setShowScrollToBottom(true);
+      }
+    }, 60);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeConversation?.id, messagesLoading, conversationMessages.length]);
+
+  async function saveConversationName(conversation) {
+    const trimmedName = editingConversationName.trim();
+    if (!conversation?.id) return;
+
+    setIsSavingConversationName(true);
+    try {
+      const response = await fetch('/api/conversations', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: conversation.id, name: trimmedName || null })
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || 'Failed to update customer name');
+      }
+
+      const nextName = trimmedName || null;
+      setConversations((prev) => prev.map((item) => (
+        String(item.id) === String(conversation.id)
+          ? { ...item, name: nextName }
+          : item
+      )));
+
+      setSelectedConversation((prev) => (
+        prev && String(prev.id) === String(conversation.id)
+          ? { ...prev, name: nextName }
+          : prev
+      ));
+
+      setEditingConversationId(null);
+      setEditingConversationName('');
+      success('Customer name updated');
+    } catch (err) {
+      console.error('Failed to update conversation name', err);
+      error(err.message || 'Failed to update customer name');
+    } finally {
+      setIsSavingConversationName(false);
+    }
+  }
+
   const conversationRows = filteredConversations.map((conversation) => {
     const isActive = activeConversation?.id === conversation.id;
     const initials = (conversation.name || conversation.phone || 'C').charAt(0).toUpperCase();
 
     return (
-      <button
+      <div
         key={conversation.id}
-        type="button"
-        onClick={() => setSelectedConversation(conversation)}
-        className={`w-full rounded-2xl border p-4 text-left transition ${
+        className={`relative rounded-2xl border p-4 transition ${
           isActive
             ? 'border-brand-500/30 bg-brand-500/10 shadow-sm shadow-brand-500/10'
             : 'border-slate-200 bg-white hover:border-brand-500/20 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/70 dark:hover:bg-slate-900'
         }`}
       >
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-400 text-sm font-semibold text-white">
-            {initials}
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <p className="truncate font-semibold text-slate-900 dark:text-white">
-                {conversation.name || conversation.phone || 'Customer'}
-              </p>
-              {conversation.unread_count > 0 ? (
-                <span className="rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-semibold text-white">
-                  {conversation.unread_count}
+        <button
+          type="button"
+          onClick={() => setSelectedConversation(conversation)}
+          className="w-full text-left"
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-400 text-sm font-semibold text-white">
+              {initials}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="truncate font-semibold text-slate-900 dark:text-white">
+                  {conversation.name || conversation.phone || 'Customer'}
+                </p>
+                {conversation.unread_count > 0 ? (
+                  <span className="rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-semibold text-white">
+                    {conversation.unread_count}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  {conversation.platform || 'Chat'}
                 </span>
-              ) : null}
+                <span>{formatDate(conversation.last_message_at || conversation.updated_at || conversation.created_at)}</span>
+              </div>
+              <p className="mt-2 line-clamp-2 text-sm text-slate-600 dark:text-slate-400">
+                {conversation.last_message || conversation.message || 'No preview available.'}
+              </p>
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                {conversation.platform || 'Chat'}
-              </span>
-              <span>{formatDate(conversation.last_message_at || conversation.updated_at || conversation.created_at)}</span>
-            </div>
-            <p className="mt-2 line-clamp-2 text-sm text-slate-600 dark:text-slate-400">
-              {conversation.last_message || conversation.message || 'No preview available.'}
-            </p>
           </div>
-        </div>
-      </button>
+        </button>
+
+        <button
+          type="button"
+          aria-label="Edit customer name"
+          onClick={(event) => {
+            event.stopPropagation();
+            setEditingConversationId(String(conversation.id));
+            setEditingConversationName(conversation.name || conversation.phone || '');
+          }}
+          className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-brand-500/30 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+          </svg>
+        </button>
+
+        {String(editingConversationId) === String(conversation.id) ? (
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900" onClick={(event) => event.stopPropagation()}>
+            <input
+              autoFocus
+              value={editingConversationName}
+              onChange={(event) => setEditingConversationName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  saveConversationName(conversation);
+                }
+              }}
+              placeholder="Customer name"
+              className="min-w-[140px] flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+            <button
+              type="button"
+              onClick={() => saveConversationName(conversation)}
+              disabled={isSavingConversationName}
+              className="rounded-xl bg-brand-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isSavingConversationName ? 'Saving...' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingConversationId(null);
+                setEditingConversationName('');
+              }}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
+      </div>
     );
   });
 
@@ -841,7 +1121,7 @@ function InboxPage() {
 
             <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
               <div className="grid h-[calc(100dvh-12rem)] min-h-[720px] max-h-[calc(100dvh-12rem)] grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
-                <aside className="border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-b-0 xl:border-r">
+                <aside className="flex min-h-0 flex-col border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-b-0 xl:border-r">
                   <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -871,18 +1151,20 @@ function InboxPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 space-y-3">
-                    {loading ? (
-                      <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
-                        Loading chats...
-                      </div>
-                    ) : conversationRows.length > 0 ? (
-                      conversationRows
-                    ) : (
-                      <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
-                        No conversations found.
-                      </div>
-                    )}
+                  <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1">
+                    <div className="space-y-3">
+                      {loading ? (
+                        <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
+                          Loading chats...
+                        </div>
+                      ) : conversationRows.length > 0 ? (
+                        conversationRows
+                      ) : (
+                        <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
+                          No conversations found.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </aside>
 
@@ -899,7 +1181,7 @@ function InboxPage() {
                               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                                 {activeConversation.name || activeConversation.phone || 'Conversation'}
                               </h2>
-                              <StatusBadge status={activeConversation.unread_count > 0 ? 'Needs reply' : 'Resolved'} type={activeConversation.unread_count > 0 ? 'pending' : 'success'} />
+                              <StatusBadge status={activeConversationStatus.label} type={activeConversationStatus.type} />
                             </div>
                             <p className="text-sm text-slate-500 dark:text-slate-400">
                               {activeConversation.platform || 'Chat'} • {formatDate(activeConversation.last_message_at || activeConversation.updated_at || activeConversation.created_at)}
@@ -923,15 +1205,20 @@ function InboxPage() {
                                 ? 'Escalating...'
                                 : 'Escalate'}
                           </button>
-                          <button type="button" className="rounded-full bg-brand-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
+                          <button
+                            type="button"
+                            onClick={handleResolveConversation}
+                            className="rounded-full bg-brand-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-700"
+                          >
                             Resolve
                           </button>
                         </div>
                       </div>
 
-                      <div className="scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent dark:scrollbar-thumb-slate-700 flex-1 min-h-0 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.08),_transparent_30%)] p-5 dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
-                        <div className="space-y-4">
-                        {messagesLoading ? (
+                      <div className="relative flex-1 min-h-0">
+                        <div ref={messagesViewportRef} className="h-full scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent dark:scrollbar-thumb-slate-700 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.08),_transparent_30%)] p-5 dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                          <div className="space-y-4">
+                          {messagesLoading ? (
                           <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
                             Loading message thread...
                           </div>
@@ -956,7 +1243,20 @@ function InboxPage() {
                             No message history found for this conversation yet.
                           </div>
                         )}
+                          </div>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => scrollToBottom('smooth')}
+                          aria-label="Scroll to bottom"
+                          className={`pointer-events-none absolute bottom-5 left-1/2 z-20 inline-flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-white/30 bg-gradient-to-br from-brand-500 via-sky-500 to-cyan-400 text-white shadow-[0_16px_40px_rgba(14,165,233,0.35),0_8px_18px_rgba(15,23,42,0.2)] backdrop-blur-sm transition-all duration-200 ${showScrollToBottom ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'}`}
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 5v14" />
+                            <path d="m6 13 6 6 6-6" />
+                          </svg>
+                        </button>
                       </div>
 
                       <div className="border-t border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
@@ -975,13 +1275,19 @@ function InboxPage() {
                             className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                            <p className="text-sm text-slate-500 dark:text-slate-400">AI suggested response is ready.</p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                              {canUseAiReply(autopilotMode)
+                                ? 'AI suggested response is ready.'
+                                : autopilotMode === 'manual'
+                                  ? 'AI reply suggestions are disabled in Manual Mode.'
+                                  : 'AI response mode is currently unavailable.'}
+                            </p>
                             <div className="flex gap-2">
                               <button
                                 type="button"
-                                disabled={isGeneratingReply}
+                                disabled={isGeneratingReply || !canUseAiReply(autopilotMode)}
                                 onClick={handleUseAiReply}
-                                className={`rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 ${isGeneratingReply ? 'cursor-not-allowed opacity-70' : ''}`}
+                                className={`rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 ${isGeneratingReply || !canUseAiReply(autopilotMode) ? 'cursor-not-allowed opacity-70' : ''}`}
                               >
                                 {isGeneratingReply ? 'Generating...' : 'Use AI reply'}
                               </button>
@@ -1032,20 +1338,32 @@ function InboxPage() {
 
                   <div className="mt-4 rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Order snapshot</h3>
-                    <div className="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
-                      <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
-                        <span>Order ID</span>
-                        <span className="font-semibold text-slate-900 dark:text-white">#48291</span>
+                    {recentOrdersLoading ? (
+                      <div className="mt-4 text-sm text-slate-500 dark:text-slate-400">Loading recent order…</div>
+                    ) : latestRecentOrder ? (
+                      <div className="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
+                        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                          <span>Order ID</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">#{latestRecentOrder.order_id || latestRecentOrder.id || '—'}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                          <span>Status</span>
+                          <span className="font-semibold text-emerald-500">{latestRecentOrder.status || 'Unknown'}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                          <span>Total</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">${Number(latestRecentOrder.total_amount ?? latestRecentOrder.amount ?? 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
+                          <span>Placed</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">{latestRecentOrder.order_date ? new Date(latestRecentOrder.order_date).toLocaleDateString() : 'Unknown date'}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
-                        <span>Status</span>
-                        <span className="font-semibold text-emerald-500">On route</span>
+                    ) : (
+                      <div className="mt-4 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+                        No recent order
                       </div>
-                      <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-3 py-2 dark:bg-slate-900">
-                        <span>ETA</span>
-                        <span className="font-semibold text-slate-900 dark:text-white">15 mins</span>
-                      </div>
-                    </div>
+                    )}
                   </div>
 
                   <div className="mt-4 space-y-2">

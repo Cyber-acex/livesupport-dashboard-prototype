@@ -316,338 +316,6 @@ function formatMenuItemsForPrompt(menuItems) {
     return lines.join('\n').trim();
 }
 
-const NUMBER_WORDS = {
-    zero: 0,
-    one: 1,
-    two: 2,
-    three: 3,
-    four: 4,
-    five: 5,
-    six: 6,
-    seven: 7,
-    eight: 8,
-    nine: 9,
-    ten: 10,
-    a: 1,
-    an: 1,
-    single: 1,
-    couple: 2
-};
-
-function normalizeText(text) {
-    return String(text || '')
-        .toLowerCase()
-        .replace(/[\u2018\u2019\u201c\u201d]/g, "'")
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
-
-function escapeRegExp(text) {
-    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function parseQuantity(quantityToken) {
-    if (!quantityToken) return 1;
-    const normalized = String(quantityToken).trim().toLowerCase();
-    if (!normalized) return 1;
-    const numeric = parseInt(normalized, 10);
-    if (!Number.isNaN(numeric)) return numeric;
-    return NUMBER_WORDS[normalized] || 1;
-}
-
-async function getOrderMenuItems() {
-    let menuItems = await getMenuItemsFromDb();
-    if (!Array.isArray(menuItems) || menuItems.length === 0) {
-        menuItems = getFallbackMenuItems();
-    }
-    return menuItems.map((item) => ({
-        category: item.category || 'Menu',
-        keyName: item.key || item.key_name || normalizeText(item.name),
-        name: String(item.name || '').trim(),
-        normalizedName: normalizeText(item.name || ''),
-        normalizedKey: normalizeText(item.key || item.key_name || item.name || ''),
-        price: Number(item.price || 0),
-        available: Number(item.available || 0)
-    }));
-}
-
-function aggregateOrderItems(items) {
-    const map = new Map();
-    for (const item of items) {
-        const key = `${item.category || ''}||${item.keyName || item.name}||${item.price}`;
-        const existing = map.get(key);
-        if (existing) {
-            existing.quantity += item.quantity;
-            existing.totalPrice = Number((existing.quantity * existing.unitPrice).toFixed(2));
-        } else {
-            map.set(key, {
-                menuId: item.menuId || null,
-                category: item.category,
-                keyName: item.keyName,
-                name: item.name,
-                quantity: item.quantity,
-                unitPrice: Number(item.price || 0),
-                totalPrice: Number((item.quantity * Number(item.price || 0)).toFixed(2))
-            });
-        }
-    }
-    return Array.from(map.values());
-}
-
-function buildOrderSummary(items) {
-    if (!Array.isArray(items) || items.length === 0) return '';
-    return items.map((item) => {
-        return item.quantity === 1 ? `${item.name}` : `${item.quantity}x ${item.name}`;
-    }).join(', ');
-}
-
-function extractFirstJsonObject(text) {
-    if (!text || typeof text !== 'string') return null;
-    const startIndex = text.indexOf('{');
-    if (startIndex === -1) return null;
-
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let i = startIndex; i < text.length; i += 1) {
-        const char = text[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (char === '\\') {
-            escaped = true;
-            continue;
-        }
-        if (char === '"') {
-            inString = !inString;
-            continue;
-        }
-        if (inString) continue;
-        if (char === '{') {
-            depth += 1;
-        } else if (char === '}') {
-            depth -= 1;
-            if (depth === 0) {
-                return text.slice(startIndex, i + 1);
-            }
-        }
-    }
-    return null;
-}
-
-function formatMenuItemNamesForPrompt(menuItems) {
-    if (!Array.isArray(menuItems) || menuItems.length === 0) return '';
-    const grouped = menuItems.reduce((acc, item) => {
-        const category = item.category || 'Menu';
-        if (!acc[category]) acc[category] = [];
-        acc[category].push(item);
-        return acc;
-    }, {});
-
-    const lines = [];
-    for (const category of Object.keys(grouped)) {
-        lines.push(`${category}:`);
-        grouped[category].forEach((item) => {
-            lines.push(`- ${item.name}`);
-        });
-        lines.push('');
-    }
-    return lines.join('\n').trim();
-}
-
-function normalizeMenuLookupKey(name) {
-    return normalizeText(name || '').replace(/\s+/g, ' ').trim();
-}
-
-function buildMenuLookup(menuItems) {
-    const map = new Map();
-    for (const item of menuItems) {
-        const keyName = normalizeMenuLookupKey(item.name);
-        if (keyName) map.set(keyName, item);
-        const altName = normalizeMenuLookupKey(item.keyName || item.key || item.name);
-        if (altName && !map.has(altName)) map.set(altName, item);
-    }
-    return map;
-}
-
-function validateParsedOrderItems(parsedItems, menuItems) {
-    if (!Array.isArray(parsedItems)) return [];
-    const menuLookup = buildMenuLookup(menuItems);
-    const validated = [];
-
-    for (const rawItem of parsedItems) {
-        if (!rawItem || typeof rawItem.name !== 'string') continue;
-        const quantity = Number(rawItem.quantity || 1);
-        if (!Number.isFinite(quantity) || quantity <= 0) continue;
-        const normalizedName = normalizeMenuLookupKey(rawItem.name);
-        const menuItem = menuLookup.get(normalizedName);
-        if (!menuItem) continue;
-
-        validated.push({
-            menuId: menuItem.id || null,
-            category: menuItem.category,
-            keyName: menuItem.keyName,
-            name: menuItem.name,
-            quantity,
-            price: menuItem.price
-        });
-    }
-
-    return validated;
-}
-
-async function extractOrderItemsFromMessageAi(message, menuItems) {
-    const menuInfo = formatMenuItemNamesForPrompt(menuItems);
-    const systemPrompt = `You are a strict order extraction assistant for a restaurant ordering system. You must ONLY return valid JSON. Do NOT include any explanations, markdown, summaries, prices, totals, or any extra text.
-
-Return a single JSON object with exactly one key: \"items\". The value must be an array of ordered items. Each item must have exactly two keys: \"name\" and \"quantity\". Example:
-{
-  \"items\": [
-    { \"name\": \"BBQ Chicken Wrap\", \"quantity\": 2 },
-    { \"name\": \"Coke\", \"quantity\": 1 }
-  ]
-}
-
-If no order is detected, return:
-{ \"items\": [] }
-
-Use the exact menu item names below if the customer is ordering from the menu. Never invent extra fields. Never wrap the JSON in markdown or code fences.
-
-Menu items:
-${menuInfo}`;
-    const userPrompt = `Customer message: "${message}"\n\nExtract the ordered items from the customer's message.`;
-
-    try {
-        const response = await fetch(MISTRAL_API_URL, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: 'mistral-large-latest',
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt }
-                ],
-                max_tokens: 200,
-                temperature: 0.0
-            })
-        });
-
-        if (!response.ok) {
-            console.log('Order extraction Mistral API error:', response.status, await response.text());
-            return null;
-        }
-
-        const data = await response.json();
-        const reply = data.choices?.[0]?.message?.content?.trim();
-        if (!reply) return null;
-
-        const jsonText = extractFirstJsonObject(reply);
-        if (!jsonText) return null;
-
-        let parsed;
-        try {
-            parsed = JSON.parse(jsonText);
-        } catch (err) {
-            console.log('Failed to parse JSON from order extraction reply:', err.message);
-            return null;
-        }
-
-        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) return null;
-        const validatedItems = validateParsedOrderItems(parsed.items, menuItems);
-        return validatedItems.length > 0 ? { items: validatedItems } : null;
-    } catch (err) {
-        console.log('extractOrderItemsFromMessageAi error:', err?.message || err);
-        return null;
-    }
-}
-
-function extractOrderItemsFromMessageFallback(message, menuItems) {
-    const cleanedMessage = normalizeText(message);
-    let workingText = ` ${cleanedMessage} `;
-    const extracted = [];
-    const menuMatchers = menuItems
-        .map((item) => ({
-            ...item,
-            aliases: [normalizeMenuLookupKey(item.name), normalizeMenuLookupKey(item.keyName || item.key || item.name)].filter(Boolean)
-        }))
-        .sort((a, b) => {
-            const aLength = a.aliases[0]?.length || 0;
-            const bLength = b.aliases[0]?.length || 0;
-            return bLength - aLength;
-        });
-
-    const quantityPrefix = `(?:\\b(${Object.keys(NUMBER_WORDS).join('|')}|\\d+)(?:x)?\\b\\s*)?`;
-
-    for (const item of menuMatchers) {
-        for (const alias of item.aliases) {
-            if (!alias) continue;
-            const regex = new RegExp(`${quantityPrefix}\\b${escapeRegExp(alias)}s?\\b`, 'gi');
-            let match;
-            while ((match = regex.exec(workingText)) !== null) {
-                const quantity = parseQuantity(match[1]);
-                if (quantity <= 0) {
-                    regex.lastIndex = match.index + 1;
-                    continue;
-                }
-                extracted.push({
-                    menuId: item.id,
-                    category: item.category,
-                    keyName: item.keyName,
-                    name: item.name,
-                    quantity,
-                    price: item.price
-                });
-
-                const start = match.index;
-                const end = regex.lastIndex;
-                workingText = `${workingText.slice(0, start)}${' '.repeat(end - start)}${workingText.slice(end)}`;
-                regex.lastIndex = start;
-            }
-        }
-    }
-
-    return extracted.length > 0 ? { items: extracted } : null;
-}
-
-async function extractOrderItemsFromMessage(message) {
-    if (!message || !String(message).trim()) {
-        return { items: null, itemsList: [], total: 0 };
-    }
-
-    const menuItems = await getOrderMenuItems();
-    if (!menuItems.length) {
-        return { items: null, itemsList: [], total: 0 };
-    }
-
-    let extraction = await extractOrderItemsFromMessageAi(message, menuItems);
-    if (!extraction) {
-        extraction = extractOrderItemsFromMessageFallback(message, menuItems);
-    }
-
-    if (!extraction || !Array.isArray(extraction.items) || extraction.items.length === 0) {
-        return { items: null, itemsList: [], total: 0 };
-    }
-
-    const aggregatedItems = aggregateOrderItems(extraction.items);
-    const total = Number(aggregatedItems.reduce((sum, item) => sum + item.totalPrice, 0).toFixed(2));
-    const itemSummary = buildOrderSummary(aggregatedItems);
-
-    if (!itemSummary || total <= 0) {
-        return { items: null, itemsList: [], total: 0 };
-    }
-
-    return {
-        items: itemSummary,
-        itemsList: aggregatedItems,
-        total
-    };
-}
-
 function isMenuInquiry(message) {
     if (!message) return false;
     const lowerMessage = message.toLowerCase();
@@ -885,6 +553,272 @@ async function getOrderById(orderId) {
         console.log('getOrderById error:', err);
         return null;
     }
+}
+
+function formatOrderStatusResponse(order) {
+    const orderId = order.order_id;
+    const customerName = order.customer_name || 'Customer';
+    const status = order.delivery_status || order.order_status || 'pending';
+    const total = parseFloat(order.total_amount || 0).toFixed(2);
+    const orderDate = order.order_date ? new Date(order.order_date).toLocaleDateString() : 'unknown date';
+    const riderName = order.rider_name || 'Not assigned';
+    const vehicle = order.vehicle || 'Unknown';
+
+    let response = `I found order ${orderId} for ${customerName}. It was placed on ${orderDate}. `;
+    response += `Current status: ${status}. `;
+    response += `Rider: ${riderName}. `;
+    response += `Vehicle: ${vehicle}. `;
+    response += `Total amount: $${total}.`;
+
+    return response;
+}
+
+function extractOrderItemsFromMessage(message) {
+    const lowerMessage = message.toLowerCase();
+    const normalizedMessage = lowerMessage.replace(/\s+and\s+/gi, ', ').replace(/\s*&\s*/g, ', ');
+    const orderItems = [];
+    let total = 0;
+
+    const numberWords = {
+        'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
+    };
+
+    function parseQuantity(str) {
+        if (!str) return 1;
+        const num = parseInt(str, 10);
+        if (!isNaN(num)) return num;
+        return numberWords[str.toLowerCase()] || 1;
+    }
+
+    function addItems(count, itemKey) {
+        for (let i = 0; i < count; i++) {
+            orderItems.push(itemKey);
+        }
+    }
+
+    const pizzaSizes = {
+        'small': 'small pizza',
+        'medium': 'medium pizza',
+        'large': 'large pizza'
+    };
+
+    const burgerTypes = {
+        'classic': 'classic burger',
+        'cheese': 'cheese burger',
+        'double': 'double burger'
+    };
+
+    const friesPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*fries/gi;
+    let friesMatch;
+    let friesCount = 0;
+    while ((friesMatch = friesPattern.exec(normalizedMessage)) !== null) {
+        friesCount += parseQuantity(friesMatch[1]);
+    }
+
+    const waterPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:bottles?|bottle)\s+of\s+sparkling\s+water/gi;
+    let waterMatch;
+    while ((waterMatch = waterPattern.exec(normalizedMessage)) !== null) {
+        const quantity = parseQuantity(waterMatch[1]);
+        addItems(quantity, 'sparkling water');
+        total += quantity * MENU_ITEMS.ordersPageMenu.Drinks.sparkling_water.price;
+    }
+
+    const pizzaPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(small|medium|large)\s*pizza/gi;
+    let pizzaMatch;
+    while ((pizzaMatch = pizzaPattern.exec(normalizedMessage)) !== null) {
+        const quantity = parseQuantity(pizzaMatch[1]);
+        const size = pizzaMatch[2];
+        if (pizzaSizes[size]) {
+            addItems(quantity, pizzaSizes[size]);
+            total += quantity * MENU_ITEMS.pizza[size].price;
+        }
+    }
+
+    const burgerPattern = /(?:\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(classic|cheese|double|bacon|spicy|grilled|crispy)?\s*burger\b/gi;
+    let burgerMatch;
+    while ((burgerMatch = burgerPattern.exec(normalizedMessage)) !== null) {
+        const quantity = parseQuantity(burgerMatch[1]);
+        const type = burgerMatch[2] ? burgerMatch[2].trim() : '';
+        const itemKey = type ? `${type} burger` : 'burger';
+        addItems(quantity, itemKey);
+        total += quantity * (MENU_ITEMS.burger[type] ? MENU_ITEMS.burger[type].price : MENU_ITEMS.burger.cheese.price);
+    }
+
+    const wrapPattern = /(?:\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?([a-zA-Z][a-zA-Z\s]*?)\s*wraps?\b/gi;
+    let wrapMatch;
+    while ((wrapMatch = wrapPattern.exec(normalizedMessage)) !== null) {
+        const quantity = parseQuantity(wrapMatch[1]);
+        const wrapType = wrapMatch[2] ? wrapMatch[2].trim() : '';
+        const itemKey = wrapType ? `${wrapType} wrap` : 'wrap';
+        addItems(quantity, itemKey);
+        total += quantity * 10.25;
+    }
+
+    if (orderItems.length === 0) {
+        const genericPizzaPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:small|medium|large)?\s*pizzas?\b/gi;
+        let genericPizzaMatch;
+        while ((genericPizzaMatch = genericPizzaPattern.exec(lowerMessage)) !== null) {
+            const quantity = parseQuantity(genericPizzaMatch[1]);
+            addItems(quantity, 'pizza');
+            total += quantity * MENU_ITEMS.pizza.medium.price;
+        }
+
+        const genericBurgerPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:classic|cheese|double)?\s*burgers?\b/gi;
+        let genericBurgerMatch;
+        while ((genericBurgerMatch = genericBurgerPattern.exec(lowerMessage)) !== null) {
+            const quantity = parseQuantity(genericBurgerMatch[1]);
+            addItems(quantity, 'burger');
+            total += quantity * MENU_ITEMS.burger.cheese.price;
+        }
+
+        const genericWrapPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*wraps?\b/gi;
+        let genericWrapMatch;
+        while ((genericWrapMatch = genericWrapPattern.exec(lowerMessage)) !== null) {
+            const quantity = parseQuantity(genericWrapMatch[1]);
+            addItems(quantity, 'wrap');
+            total += quantity * 10.25;
+        }
+
+        const genericWaterPattern = /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)?\s*(?:bottles?|bottle)\s+of\s+water\b/gi;
+        let genericWaterMatch;
+        while ((genericWaterMatch = genericWaterPattern.exec(lowerMessage)) !== null) {
+            const quantity = parseQuantity(genericWaterMatch[1]);
+            addItems(quantity, 'sparkling water');
+            total += quantity * MENU_ITEMS.ordersPageMenu.Drinks.sparkling_water.price;
+        }
+    }
+
+    // If the message only contains fries and no priced items, ignore it for order total extraction.
+    if (orderItems.length === 0 && friesCount > 0) {
+        return { items: null, total: 0 };
+    }
+
+    const counts = orderItems.reduce((acc, item) => {
+        acc[item] = (acc[item] || 0) + 1;
+        return acc;
+    }, {});
+
+    const itemSummary = Object.entries(counts)
+        .map(([item, count]) => {
+            if (count === 1) return item;
+            if (item === 'pizza') return `${count} pizzas`;
+            if (item === 'burger') return `${count} burgers`;
+            if (item.endsWith('pizza')) return `${count} ${item.replace(/pizza$/, 'pizzas')}`;
+            if (item.endsWith('burger')) return `${count} ${item.replace(/burger$/, 'burgers')}`;
+            return `${count} ${item}s`;
+        })
+        .join(' and ');
+
+    return { items: itemSummary, total };
+}
+
+function formatOrderItemsForConfirmation(items) {
+    if (!Array.isArray(items) || items.length === 0) return '';
+    return items
+        .filter(item => item && typeof item.name === 'string' && item.name.trim() !== '' && Number(item.quantity) > 0)
+        .map(item => {
+            const name = item.name.trim();
+            const quantity = Number(item.quantity);
+            return quantity > 1 ? `${name} x${quantity}` : name;
+        })
+        .join(', ');
+}
+
+function cleanJsonOnlyResponse(text) {
+    if (!text || typeof text !== 'string') return '';
+    let cleaned = text.trim();
+    cleaned = cleaned.replace(/^```(?:json)?\s*/, '').replace(/```$/, '').trim();
+    return cleaned;
+}
+
+async function parseOrderJsonFromAI(message, menuContext = '') {
+    if (!message) return { items: [] };
+    try {
+        const systemPrompt = `You are an order extraction assistant. Extract the ordered items and quantities from the customer's message and return ONLY valid JSON. Do not include markdown, explanations, summaries, prices, totals, or any extra text. If no order is detected, return {"items":[]}.`;
+        let userPrompt = `Customer message: "${message}"
+
+Return only valid JSON using this exact structure:
+{"items":[{"name":"Item Name","quantity":2}]}
+
+If there are no order items, return {"items":[]}.`;
+        if (menuContext) {
+            userPrompt += `
+
+Menu reference:
+${menuContext}`;
+        }
+
+        const response = await fetch(MISTRAL_API_URL, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model: "mistral-large-latest",
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt }
+                ],
+                max_tokens: 200,
+                temperature: 0.0
+            })
+        });
+
+        if (!response.ok) {
+            console.log("parseOrderJsonFromAI error:", response.status, await response.text());
+            return { items: [] };
+        }
+
+        const data = await response.json();
+        const rawContent = data.choices?.[0]?.message?.content || '';
+        const cleaned = cleanJsonOnlyResponse(rawContent);
+        const parsed = JSON.parse(cleaned);
+
+        if (!parsed || !Array.isArray(parsed.items)) {
+            return { items: [] };
+        }
+
+        return {
+            items: parsed.items
+                .filter(item => item && typeof item.name === 'string' && item.name.trim() !== '' && Number(item.quantity) > 0)
+                .map(item => ({ name: item.name.trim(), quantity: Number(item.quantity) }))
+        };
+    } catch (err) {
+        console.log("parseOrderJsonFromAI failed:", err?.message || err);
+        return { items: [] };
+    }
+}
+
+async function calculateOrderTotalFromItems(items) {
+    if (!Array.isArray(items) || items.length === 0) return 0;
+
+    let menuItems = await getMenuItemsFromDb();
+    if (!Array.isArray(menuItems) || menuItems.length === 0) {
+        menuItems = getFallbackMenuItems();
+    }
+
+    function normalizeName(name) {
+        return name.toString().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    const normalizedMenu = menuItems.map(item => ({
+        name: item.name || '',
+        normalized: normalizeName(item.name || ''),
+        price: Number(item.price || 0)
+    }));
+
+    let total = 0;
+    for (const item of items) {
+        const normalizedItemName = normalizeName(item.name);
+        const exactMatch = normalizedMenu.find(menuItem => menuItem.normalized === normalizedItemName);
+        const containsMatch = normalizedMenu.find(menuItem => normalizedItemName.includes(menuItem.normalized) || menuItem.normalized.includes(normalizedItemName));
+        const match = exactMatch || containsMatch;
+        total += item.quantity * (match ? match.price : 0);
+    }
+
+    return total;
 }
 
 function isTicketCreationRequest(message) {
@@ -1201,7 +1135,15 @@ async function createOrderFromConversation(conversationId, phone) {
     for (let i = recentMessages.length - 1; i >= 0; i--) {
         const msg = recentMessages[i];
         if (msg.sender === 'received' || msg.sender === 'customer') { // Customer message
-            const extracted = await extractOrderItemsFromMessage(msg.message);
+            const aiExtracted = await parseOrderJsonFromAI(msg.message);
+            if (aiExtracted.items && aiExtracted.items.length > 0) {
+                const total = await calculateOrderTotalFromItems(aiExtracted.items);
+                const itemsText = formatOrderItemsForConfirmation(aiExtracted.items);
+                orderDetails = { items: itemsText, total };
+                break;
+            }
+
+            const extracted = extractOrderItemsFromMessage(msg.message);
             if (extracted.items && extracted.total > 0) {
                 orderDetails = extracted;
                 break;
@@ -1439,17 +1381,27 @@ ${CLARIFICATION_OPTIONS}`;
             userPrompt += historyText;
         }
         if (shouldAskOrderConfirmation(message)) {
-            const { items, total } = await extractOrderItemsFromMessage(message);
-            if (items && total > 0) {
+            const orderExtraction = await parseOrderJsonFromAI(message, menuContext);
+            if (orderExtraction.items && orderExtraction.items.length > 0) {
+                const itemsText = formatOrderItemsForConfirmation(orderExtraction.items);
                 userPrompt += `
 
-The customer appears to be placing an order for: ${items}, which comes to $${total}. Ask them exactly: ARE YOU SURE YOU WANT TO PLACE THIS ORDER?
+The customer appears to be placing an order for: ${itemsText}. Ask them exactly: ARE YOU SURE YOU WANT TO PLACE THIS ORDER?
 
 IMPORTANT: Confirm the order details exactly as specified above. Do not add or change items. Do not confirm or save the order until the customer explicitly replies with a positive confirmation.`;
             } else {
-                userPrompt += `
+                const { items, total } = extractOrderItemsFromMessage(message);
+                if (items && total > 0) {
+                    userPrompt += `
+
+The customer appears to be placing an order for: ${items}. Ask them exactly: ARE YOU SURE YOU WANT TO PLACE THIS ORDER?
+
+IMPORTANT: Confirm the order details exactly as specified above. Do not add or change items. Do not confirm or save the order until the customer explicitly replies with a positive confirmation.`;
+                } else {
+                    userPrompt += `
 
 The customer appears to be placing an order but I couldn't identify the specific items. Ask them to clarify what they want to order from our menu above, or to provide the exact menu item names from the Orders page.`;
+                }
             }
         }
 

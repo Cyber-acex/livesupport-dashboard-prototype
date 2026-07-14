@@ -7,39 +7,39 @@ export default function NotificationBanner() {
   const getTypeStyles = (type) => {
     const styles = {
       success: {
-        bg: 'bg-emerald-500/20',
-        border: 'border-emerald-400/40',
-        text: 'text-emerald-200',
+        bg: 'bg-emerald-600',
+        border: 'border-emerald-400',
+        text: 'text-emerald-950',
         icon: '✓',
-        iconBg: 'bg-emerald-500/30'
+        iconBg: 'bg-emerald-500'
       },
       error: {
-        bg: 'bg-red-500/20',
-        border: 'border-red-400/40',
-        text: 'text-red-200',
+        bg: 'bg-red-600',
+        border: 'border-red-400',
+        text: 'text-red-950',
         icon: '✕',
-        iconBg: 'bg-red-500/30'
+        iconBg: 'bg-red-500'
       },
       warning: {
-        bg: 'bg-amber-500/20',
-        border: 'border-amber-400/40',
-        text: 'text-amber-200',
+        bg: 'bg-amber-600',
+        border: 'border-amber-400',
+        text: 'text-amber-950',
         icon: '⚠',
-        iconBg: 'bg-amber-500/30'
+        iconBg: 'bg-amber-500'
       },
       info: {
-        bg: 'bg-blue-500/20',
-        border: 'border-blue-400/40',
-        text: 'text-blue-200',
+        bg: 'bg-blue-600',
+        border: 'border-blue-400',
+        text: 'text-blue-950',
         icon: 'ℹ',
-        iconBg: 'bg-blue-500/30'
+        iconBg: 'bg-blue-500'
       }
     };
     return styles[type] || styles.info;
   };
 
   return (
-    <div className="fixed inset-x-0 top-20 z-50 flex items-start justify-center px-4 pointer-events-none">
+    <div className="fixed inset-x-0 top-4 z-[9999] flex items-start justify-center px-4 pointer-events-none">
       {notifications.map((notification) => {
         const styles = getTypeStyles(notification.type);
         return (
@@ -52,7 +52,8 @@ export default function NotificationBanner() {
               rounded-xl border
               ${styles.bg} ${styles.border}
               px-4 py-3
-              shadow-lg shadow-black/20
+              shadow-[0_20px_60px_rgba(0,0,0,0.35)]
+              backdrop-blur-none
               animate-in fade-in slide-in-from-top-2 duration-300
             `}
           >

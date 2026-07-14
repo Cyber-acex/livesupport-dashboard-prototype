@@ -12,6 +12,7 @@ import {
   AUTOPILOT_MODES,
   getFontSizeLabel
 } from '../services/settingsService';
+import { normalizeAutopilotMode } from '../services/autopilotMode';
 
 function SettingsPage() {
   const location = useLocation();
@@ -74,6 +75,11 @@ function SettingsPage() {
   }, []);
 
   const handleSaveSettings = () => {
+    const normalizedSettings = {
+      ...settings,
+      autopilotMode: normalizeAutopilotMode(settings.autopilotMode)
+    };
+    setSettings(normalizedSettings);
     // If there's a selected file, upload it first
     const doSave = async () => {
       try {
@@ -95,7 +101,7 @@ function SettingsPage() {
         }
 
         // Save other settings
-        await saveSettings(settings);
+        await saveSettings(normalizedSettings);
         success('Settings saved successfully');
       } catch (e) {
         console.error('Error saving settings/avatar', e);

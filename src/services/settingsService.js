@@ -1,4 +1,5 @@
 // Settings Service - localStorage and appearance helpers
+import { normalizeAutopilotMode } from './autopilotMode';
 
 export function getSettings() {
   const savedTarget = Number(localStorage.getItem('monthlyTargetAmount'));
@@ -17,7 +18,7 @@ export function getSettings() {
     soundAlert: localStorage.getItem('soundAlert') === 'true',
     autoReply: localStorage.getItem('autoReply') || '',
     chatEnabled: localStorage.getItem('chatEnabled') || 'on',
-    autopilotMode: localStorage.getItem('autopilotMode') || 'assist',
+    autopilotMode: normalizeAutopilotMode(localStorage.getItem('autopilotMode') || 'assist'),
     autoAssign: localStorage.getItem('autoAssign') || 'on',
     monthlyTargetAmount
   };
