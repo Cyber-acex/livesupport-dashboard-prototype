@@ -1664,6 +1664,7 @@ app.use((req, res, next) => {
         pathname.startsWith('/image') ||
         pathname === '/login' ||
         pathname === '/login.html' ||
+        pathname.startsWith('/webhook') ||
         pathname.includes('.')
     ) {
         return next();
