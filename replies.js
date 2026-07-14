@@ -11,7 +11,6 @@ const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 
 // Friendly fallback and quick-clarification options used when the model/API fails
-const CLARIFICATION_OPTIONS = `0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff`;
 const FALLBACK_REPLY = "Sorry, I'm having trouble processing that right now. Please try again in a moment or type 'help' for assistance.";
 
 let knowledgeBase = [];
@@ -403,23 +402,178 @@ function buildOrderSummary(items) {
     }).join(', ');
 }
 
-async function extractOrderItemsFromMessage(message) {
-    if (!message || !String(message).trim()) {
-        return { items: null, itemsList: [], total: 0 };
+function extractFirstJsonObject(text) {
+    if (!text || typeof text !== 'string') return null;
+    const startIndex = text.indexOf('{');
+    if (startIndex === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = startIndex; i < text.length; i += 1) {
+        const char = text[i];
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+        if (char === '"') {
+            inString = !inString;
+            continue;
+        }
+        if (inString) continue;
+        if (char === '{') {
+            depth += 1;
+        } else if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return text.slice(startIndex, i + 1);
+            }
+        }
+    }
+    return null;
+}
+
+function formatMenuItemNamesForPrompt(menuItems) {
+    if (!Array.isArray(menuItems) || menuItems.length === 0) return '';
+    const grouped = menuItems.reduce((acc, item) => {
+        const category = item.category || 'Menu';
+        if (!acc[category]) acc[category] = [];
+        acc[category].push(item);
+        return acc;
+    }, {});
+
+    const lines = [];
+    for (const category of Object.keys(grouped)) {
+        lines.push(`${category}:`);
+        grouped[category].forEach((item) => {
+            lines.push(`- ${item.name}`);
+        });
+        lines.push('');
+    }
+    return lines.join('\n').trim();
+}
+
+function normalizeMenuLookupKey(name) {
+    return normalizeText(name || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildMenuLookup(menuItems) {
+    const map = new Map();
+    for (const item of menuItems) {
+        const keyName = normalizeMenuLookupKey(item.name);
+        if (keyName) map.set(keyName, item);
+        const altName = normalizeMenuLookupKey(item.keyName || item.key || item.name);
+        if (altName && !map.has(altName)) map.set(altName, item);
+    }
+    return map;
+}
+
+function validateParsedOrderItems(parsedItems, menuItems) {
+    if (!Array.isArray(parsedItems)) return [];
+    const menuLookup = buildMenuLookup(menuItems);
+    const validated = [];
+
+    for (const rawItem of parsedItems) {
+        if (!rawItem || typeof rawItem.name !== 'string') continue;
+        const quantity = Number(rawItem.quantity || 1);
+        if (!Number.isFinite(quantity) || quantity <= 0) continue;
+        const normalizedName = normalizeMenuLookupKey(rawItem.name);
+        const menuItem = menuLookup.get(normalizedName);
+        if (!menuItem) continue;
+
+        validated.push({
+            menuId: menuItem.id || null,
+            category: menuItem.category,
+            keyName: menuItem.keyName,
+            name: menuItem.name,
+            quantity,
+            price: menuItem.price
+        });
     }
 
+    return validated;
+}
+
+async function extractOrderItemsFromMessageAi(message, menuItems) {
+    const menuInfo = formatMenuItemNamesForPrompt(menuItems);
+    const systemPrompt = `You are a strict order extraction assistant for a restaurant ordering system. You must ONLY return valid JSON. Do NOT include any explanations, markdown, summaries, prices, totals, or any extra text.
+
+Return a single JSON object with exactly one key: \"items\". The value must be an array of ordered items. Each item must have exactly two keys: \"name\" and \"quantity\". Example:
+{
+  \"items\": [
+    { \"name\": \"BBQ Chicken Wrap\", \"quantity\": 2 },
+    { \"name\": \"Coke\", \"quantity\": 1 }
+  ]
+}
+
+If no order is detected, return:
+{ \"items\": [] }
+
+Use the exact menu item names below if the customer is ordering from the menu. Never invent extra fields. Never wrap the JSON in markdown or code fences.
+
+Menu items:
+${menuInfo}`;
+    const userPrompt = `Customer message: "${message}"\n\nExtract the ordered items from the customer's message.`;
+
+    try {
+        const response = await fetch(MISTRAL_API_URL, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'mistral-large-latest',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                max_tokens: 200,
+                temperature: 0.0
+            })
+        });
+
+        if (!response.ok) {
+            console.log('Order extraction Mistral API error:', response.status, await response.text());
+            return null;
+        }
+
+        const data = await response.json();
+        const reply = data.choices?.[0]?.message?.content?.trim();
+        if (!reply) return null;
+
+        const jsonText = extractFirstJsonObject(reply);
+        if (!jsonText) return null;
+
+        let parsed;
+        try {
+            parsed = JSON.parse(jsonText);
+        } catch (err) {
+            console.log('Failed to parse JSON from order extraction reply:', err.message);
+            return null;
+        }
+
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.items)) return null;
+        const validatedItems = validateParsedOrderItems(parsed.items, menuItems);
+        return validatedItems.length > 0 ? { items: validatedItems } : null;
+    } catch (err) {
+        console.log('extractOrderItemsFromMessageAi error:', err?.message || err);
+        return null;
+    }
+}
+
+function extractOrderItemsFromMessageFallback(message, menuItems) {
     const cleanedMessage = normalizeText(message);
-    const menuItems = await getOrderMenuItems();
-    if (!menuItems.length) {
-        return { items: null, itemsList: [], total: 0 };
-    }
-
     let workingText = ` ${cleanedMessage} `;
     const extracted = [];
     const menuMatchers = menuItems
         .map((item) => ({
             ...item,
-            aliases: [item.normalizedName, item.normalizedKey].filter(Boolean)
+            aliases: [normalizeMenuLookupKey(item.name), normalizeMenuLookupKey(item.keyName || item.key || item.name)].filter(Boolean)
         }))
         .sort((a, b) => {
             const aLength = a.aliases[0]?.length || 0;
@@ -457,11 +611,29 @@ async function extractOrderItemsFromMessage(message) {
         }
     }
 
-    if (extracted.length === 0) {
+    return extracted.length > 0 ? { items: extracted } : null;
+}
+
+async function extractOrderItemsFromMessage(message) {
+    if (!message || !String(message).trim()) {
         return { items: null, itemsList: [], total: 0 };
     }
 
-    const aggregatedItems = aggregateOrderItems(extracted);
+    const menuItems = await getOrderMenuItems();
+    if (!menuItems.length) {
+        return { items: null, itemsList: [], total: 0 };
+    }
+
+    let extraction = await extractOrderItemsFromMessageAi(message, menuItems);
+    if (!extraction) {
+        extraction = extractOrderItemsFromMessageFallback(message, menuItems);
+    }
+
+    if (!extraction || !Array.isArray(extraction.items) || extraction.items.length === 0) {
+        return { items: null, itemsList: [], total: 0 };
+    }
+
+    const aggregatedItems = aggregateOrderItems(extraction.items);
     const total = Number(aggregatedItems.reduce((sum, item) => sum + item.totalPrice, 0).toFixed(2));
     const itemSummary = buildOrderSummary(aggregatedItems);
 
