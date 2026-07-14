@@ -10,6 +10,7 @@ import InboxPage from './pages/InboxPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import VoicePanel from './components/VoicePanel';
 import LoginPage from './pages/LoginPage';
+import NotificationBanner from './components/NotificationBanner';
 
 function App() {
   const location = useLocation();
@@ -18,6 +19,7 @@ function App() {
   return (
     <>
       {!isLoginPage && <VoicePanel />}
+      <NotificationBanner />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

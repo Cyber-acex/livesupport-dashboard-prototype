@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
+import { useNotification } from '../contexts/NotificationContext';
 import {
   fetchArticles,
   searchArticles,
@@ -12,6 +13,7 @@ import {
 } from '../services/knowledgeService';
 
 function KnowledgePage() {
+  const { success, error, info } = useNotification();
   const [articles, setArticles] = useState([]);
   const [customArticles, setCustomArticles] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -19,7 +21,6 @@ function KnowledgePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState(null);
-  const [notification, setNotification] = useState('');
   const [formData, setFormData] = useState({ title: '', category: '', content: '' });
 
   useEffect(() => {
@@ -33,7 +34,7 @@ function KnowledgePage() {
       setCustomArticles(getCustomArticles());
     } catch (error) {
       console.error('Failed to load articles', error);
-      showNotification('Unable to load articles');
+      error('Unable to load articles');
     }
   };
 
@@ -53,11 +54,6 @@ function KnowledgePage() {
 
   const featured = useMemo(() => filtered.slice(0, 3), [filtered]);
 
-  const showNotification = (message) => {
-    setNotification(message);
-    window.setTimeout(() => setNotification(''), 3000);
-  };
-
   const openArticle = (article) => {
     setSelectedArticle(article);
     setModalOpen(true);
@@ -71,7 +67,7 @@ function KnowledgePage() {
   const handleAddArticle = async (e) => {
     e.preventDefault();
     if (!formData.title.trim() || !formData.category || !formData.content.trim()) {
-      showNotification('Please fill all fields');
+      error('Please fill all fields');
       return;
     }
 
@@ -92,10 +88,10 @@ function KnowledgePage() {
       setCustomArticles((prev) => [...prev, newArticle]);
       setFormData({ title: '', category: '', content: '' });
       setAddModalOpen(false);
-      showNotification('Article added successfully!');
-    } catch (error) {
-      console.error(error);
-      showNotification('Failed to add article');
+      success('Article added successfully');
+    } catch (err) {
+      console.error(err);
+      error('Failed to add article');
     }
   };
 
@@ -104,14 +100,14 @@ function KnowledgePage() {
       deleteCustomArticle(articleId);
       setCustomArticles((prev) => prev.filter((a) => a.id !== articleId));
       closeArticle();
-      showNotification('Article deleted');
+      success('Article deleted');
     }
   };
 
   const handleCopyArticleLink = (article) => {
     const link = `${window.location.origin}${window.location.pathname}?article=${article.id}`;
     navigator.clipboard.writeText(link).then(() => {
-      showNotification('Link copied to clipboard');
+      success('Link copied to clipboard');
     });
   };
 
@@ -149,21 +145,21 @@ function KnowledgePage() {
         <TopBar />
 
         {/* Header */}
-        <div className="bg-white border-b border-gray-200 shadow-sm dark:bg-slate-900 dark:border-slate-800">
-          <div className="max-w-7xl mx-auto px-6 py-8">
-            <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-2">Knowledge Base</h1>
-            <p className="text-slate-600 dark:text-slate-400 mb-6">
+        <div className="border-b border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+            <h1 className="mb-2 text-2xl font-bold text-slate-900 sm:text-3xl dark:text-white">Knowledge Base</h1>
+            <p className="mb-6 text-sm text-slate-600 sm:text-base dark:text-slate-400">
               Comprehensive guides and documentation for LiveSupport
             </p>
-            <div className="flex gap-8">
+            <div className="flex flex-wrap gap-4 sm:gap-8">
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">
+                <span className="text-xl font-bold text-slate-900 sm:text-2xl dark:text-white">
                   {allArticles.length}
                 </span>
                 <span className="text-sm text-slate-600 dark:text-slate-400">Total Articles</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-2xl font-bold text-slate-900 dark:text-white">
+                <span className="text-xl font-bold text-slate-900 sm:text-2xl dark:text-white">
                   {categories.length - 1}
                 </span>
                 <span className="text-sm text-slate-600 dark:text-slate-400">Categories</span>
@@ -172,26 +168,19 @@ function KnowledgePage() {
           </div>
         </div>
 
-        {/* Notification */}
-        {notification && (
-          <div className="mx-6 mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm dark:bg-emerald-600/10 dark:border-emerald-500/20 dark:text-emerald-200">
-            {notification}
-          </div>
-        )}
-
         {/* Content */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="max-w-7xl mx-auto px-6 py-8">
-            <div className="grid gap-8 lg:grid-cols-[240px_1fr]">
-              <aside className="self-start lg:sticky lg:top-24">
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
-                  <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Categories</h2>
-                  <div className="space-y-2">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="mx-auto min-w-0 max-w-7xl px-4 py-4 sm:px-6 sm:py-8">
+            <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-8">
+              <aside className="w-full min-w-0 self-start lg:sticky lg:top-24">
+                <div className="w-full overflow-hidden rounded-3xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 sm:p-4 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+                  <h2 className="mb-3 text-lg font-semibold text-slate-900 dark:text-white sm:mb-4">Categories</h2>
+                  <nav className="-mx-1 flex w-full min-w-0 max-w-full gap-2 overflow-x-auto px-1 pb-2 snap-x snap-mandatory scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent lg:mx-0 lg:flex-col lg:overflow-y-auto lg:overflow-x-visible lg:pb-0 lg:pr-1">
                     {categories.map((cat) => (
                       <button
                         key={cat}
                         onClick={() => setSelectedCategory(cat)}
-                        className={`w-full text-left px-4 py-3 rounded-2xl text-sm font-medium transition-colors ${
+                        className={`flex-shrink-0 snap-start whitespace-nowrap rounded-2xl px-3 py-2.5 text-sm font-medium transition-colors sm:px-4 sm:py-3 lg:w-full lg:text-left ${
                           selectedCategory === cat
                             ? 'bg-indigo-600 text-white shadow-md'
                             : 'bg-slate-50 text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700'
@@ -200,11 +189,11 @@ function KnowledgePage() {
                         {cat}
                       </button>
                     ))}
-                  </div>
+                  </nav>
                 </div>
               </aside>
 
-              <div className="space-y-8">
+              <div className="min-w-0 space-y-8">
                 <div className="space-y-6">
                   <div>
                     <input
@@ -216,13 +205,13 @@ function KnowledgePage() {
                     />
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm text-slate-600 dark:text-slate-400">
                       Showing {filtered.length} articles in “{selectedCategory}”
                     </div>
                     <button
                       onClick={() => setAddModalOpen(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors dark:bg-indigo-600 dark:hover:bg-indigo-700"
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white transition-colors hover:bg-indigo-700 dark:bg-indigo-600 dark:hover:bg-indigo-700"
                     >
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" />
@@ -237,12 +226,12 @@ function KnowledgePage() {
                     <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-3">
                       <span className="text-2xl">⭐</span> Featured Articles
                     </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                       {featured.map((article) => (
                         <div
                           key={article.id}
                           onClick={() => openArticle(article)}
-                          className="bg-white rounded-lg border border-slate-200 p-6 hover:shadow-lg hover:border-indigo-300 transition-all cursor-pointer dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-indigo-400"
+                          className="cursor-pointer rounded-lg border border-slate-200 bg-white p-4 transition-all hover:border-indigo-300 hover:shadow-lg sm:p-6 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-indigo-400"
                         >
                           <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center mb-4 text-indigo-600 text-xl dark:bg-indigo-200/15">
                             📚
@@ -275,7 +264,7 @@ function KnowledgePage() {
                         <div
                           key={article.id}
                           onClick={() => openArticle(article)}
-                          className="bg-white rounded-lg border border-slate-200 p-4 hover:shadow-md hover:border-indigo-300 transition-all cursor-pointer dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-indigo-400"
+                          className="cursor-pointer rounded-lg border border-slate-200 bg-white p-4 transition-all hover:border-indigo-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-indigo-400"
                         >
                           <div className="flex items-start justify-between">
                             <div className="flex-1">
@@ -296,7 +285,7 @@ function KnowledgePage() {
                         </div>
                       ))
                     ) : (
-                      <div className="text-center py-12 bg-white rounded-lg border border-slate-200 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200">
+                      <div className="rounded-lg border border-slate-200 bg-white py-10 text-center dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200">
                         <p className="text-slate-600 dark:text-slate-400">No articles found. Try a different search or category.</p>
                       </div>
                     )}

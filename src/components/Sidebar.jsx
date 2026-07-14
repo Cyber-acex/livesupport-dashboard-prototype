@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
-import SidebarRobot from './SidebarRobot';
 
 const menuItems = [
   { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -43,19 +42,18 @@ function Sidebar() {
       <aside
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`${sidebarToggle ? 'translate-x-0' : '-translate-x-full'} ${isCollapsed ? 'lg:w-[90px]' : 'lg:w-[290px]'} fixed left-0 top-0 z-50 flex h-screen w-[290px] flex-col overflow-y-hidden border-r border-gray-200 bg-white px-5 transition-[width,transform] duration-300 ease-linear dark:border-gray-800 dark:bg-black lg:static lg:translate-x-0`}
+        className={`${sidebarToggle ? 'translate-x-0' : '-translate-x-full'} ${isCollapsed ? 'lg:w-[90px]' : 'lg:w-[290px]'} fixed left-0 top-0 z-[60] flex h-dvh w-[85vw] max-w-[290px] flex-col overflow-y-hidden border-r border-gray-200 bg-white px-3 shadow-xl transition-[width,transform] duration-300 ease-linear dark:border-gray-800 dark:bg-black sm:px-4 lg:static lg:h-screen lg:w-[290px] lg:translate-x-0 lg:shadow-none`}
       >
-        <div className={`flex items-center pt-8 pb-7 ${showExpandedContent ? 'justify-between' : 'justify-center'}`}>
+        <div className={`flex items-center pb-5 pt-6 sm:pb-7 sm:pt-8 ${showExpandedContent ? 'justify-start' : 'justify-center'}`}>
           <NavLink to="/dashboard" onClick={closeSidebar} className="flex w-full items-center gap-3">
-            <div className={`${showExpandedContent ? '' : 'mx-auto'}`}>
-              <SidebarRobot compact={isCollapsed} />
-            </div>
             {showExpandedContent ? (
               <div className="min-w-0">
                 <div className="text-base font-semibold text-gray-900 dark:text-white">LiveSupport</div>
                 <div className="text-[12px] uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Support Console</div>
               </div>
-            ) : null}
+            ) : (
+              <div className="text-xs font-bold text-gray-700 dark:text-gray-300">LS</div>
+            )}
           </NavLink>
         </div>
 

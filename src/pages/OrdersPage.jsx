@@ -4,6 +4,7 @@ import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import DataTable from '../components/DataTable';
+import { useNotification } from '../contexts/NotificationContext';
 import {
   fetchOrders,
   createOrder,
@@ -56,7 +57,7 @@ function OrdersPage() {
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(10);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [notification, setNotification] = useState('');
+  const { success, error, info, warning } = useNotification();
   const [activeTab, setActiveTab] = useState('orders');
   const [menuSection, setMenuSection] = useState('items');
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -113,7 +114,7 @@ function OrdersPage() {
         status: payload.status || 'pending',
         date: payload.date || new Date().toISOString()
       }, ...prev]);
-      setNotification(`New order ${payload.id} received`);
+      info(`New order ${payload.id} received`);
     });
 
     socket.on('order-updated', (payload) => {
@@ -145,7 +146,7 @@ function OrdersPage() {
       })));
     } catch (error) {
       console.error('Failed to load orders', error);
-      setNotification('Unable to load orders');
+      error('Unable to load orders');
     }
   };
 
@@ -155,7 +156,7 @@ function OrdersPage() {
       setMenuItems(data);
     } catch (error) {
       console.error('Failed to load menu items', error);
-      setNotification('Unable to load menu items');
+      error('Unable to load menu items');
     }
   };
 
@@ -165,7 +166,7 @@ function OrdersPage() {
       setTables(data);
     } catch (error) {
       console.error('Failed to load tables', error);
-      setNotification('Unable to load tables');
+      error('Unable to load tables');
     }
   };
 
@@ -179,7 +180,7 @@ function OrdersPage() {
       try {
         await updateTableState(table.number, payload);
         const tableLabel = table.label || `Table ${table.number}`;
-        showNotification(`${tableLabel} is now occupied.`);
+      info(`${tableLabel} is now occupied.`);
       } catch (error) {
         console.error(`Failed to transition table ${table.number} to occupied`, error);
       }
@@ -347,11 +348,6 @@ function OrdersPage() {
     }
   ];
 
-  const showNotification = (message) => {
-    setNotification(message);
-    window.setTimeout(() => setNotification(''), 3000);
-  };
-
   const getTableStatusMeta = (status) => tableStatusLegend.find((item) => item.value === normalizeTableStatus(status)) || tableStatusLegend[0];
 
   const getPrimaryTableActions = (table) => {
@@ -459,10 +455,10 @@ function OrdersPage() {
     try {
       await updateOrder(orderId, { status: 'completed' });
       setOrders((prev) => prev.map((order) => order.id === orderId ? { ...order, status: 'completed' } : order));
-      showNotification(`Order ${orderId} marked completed.`);
+      success(`Order ${orderId} marked completed.`);
     } catch (error) {
       console.error(error);
-      showNotification('Unable to update order.');
+      error('Unable to update order.');
     }
   };
 
@@ -470,10 +466,10 @@ function OrdersPage() {
     try {
       await updateOrder(orderId, { status: 'cancelled' });
       setOrders((prev) => prev.map((order) => order.id === orderId ? { ...order, status: 'cancelled' } : order));
-      showNotification(`Order ${orderId} cancelled.`);
+      success(`Order ${orderId} cancelled.`);
     } catch (error) {
       console.error(error);
-      showNotification('Unable to cancel order.');
+      error('Unable to cancel order.');
     }
   };
 
@@ -482,7 +478,7 @@ function OrdersPage() {
     const draft = { ...orderDraft };
     const items = draft.items.filter((item) => item.menuItemId);
     if (items.length === 0) {
-      showNotification('Add at least one product.');
+      warning('Add at least one product.');
       return;
     }
     const productNames = items.map((item) => {
@@ -512,11 +508,11 @@ function OrdersPage() {
       });
       setOrderDraft({ customerName: '', tableNumber: '', status: 'pending', items: [{ menuItemId: '', quantity: 1 }] });
       setOrderModalOpen(false);
-      showNotification('Order created successfully!');
+      success('Order created successfully!');
       loadOrders();
     } catch (error) {
       console.error(error);
-      showNotification(error.message);
+      error(error.message);
     }
   };
 
@@ -535,10 +531,10 @@ function OrdersPage() {
       await saveMenuItem(payload);
       await loadMenuItems();
       setMenuItemModalOpen(false);
-      showNotification('Menu item saved.');
+      success('Menu item saved.');
     } catch (error) {
       console.error(error);
-      showNotification('Unable to save menu item.');
+      error('Unable to save menu item.');
     }
   };
 
@@ -602,7 +598,7 @@ function OrdersPage() {
     }
 
     if (action === 'history') {
-      showNotification('History view is ready for future expansion.');
+      info('History view is ready for future expansion.');
       return;
     }
 
@@ -657,7 +653,7 @@ function OrdersPage() {
           reservedUntil: reservationTime,
           isBooking: false
         });
-        showNotification(`Table ${tableDialog.table.number} reserved.`);
+        success(`Table ${tableDialog.table.number} reserved.`);
       } else if (tableDialog.mode === 'book') {
         if (!tableForm.guestCount) {
           throw new Error('Please enter a guest count.');
@@ -684,7 +680,7 @@ function OrdersPage() {
           isBooking: true,
           sessionStartedAt: new Date().toISOString()
         });
-        showNotification(`Table ${tableDialog.table.number} booked.`);
+        success(`Table ${tableDialog.table.number} booked.`);
       } else if (tableDialog.mode === 'status') {
         updateTableLocally(tableDialog.table.number, { status: tableForm.status, reservedUntil: null, isBooking: false, customerName: tableForm.customerName || null });
         await updateTableState(tableDialog.table.number, {
@@ -693,7 +689,7 @@ function OrdersPage() {
           reservedUntil: null,
           isBooking: false
         });
-        showNotification(`Table ${tableDialog.table.number} status updated.`);
+        success(`Table ${tableDialog.table.number} status updated.`);
       } else if (tableDialog.mode === 'manage') {
         if (tableForm.notes.trim()) {
           updateTableLocally(tableDialog.table.number, { notes: tableForm.notes.trim() });
@@ -706,13 +702,13 @@ function OrdersPage() {
           reservedUntil: tableDialog.table.reservedUntil || null,
           isBooking: Boolean(tableDialog.table.isBooking)
         });
-        showNotification('Table details saved.');
+        success('Table details saved.');
       }
       closeTableDialog();
       await loadTables();
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Unable to update table.');
+      error(error.message || 'Unable to update table.');
     } finally {
       setTableActionPending(false);
     }
@@ -725,45 +721,45 @@ function OrdersPage() {
       if (tableConfirm.action === 'checkin') {
         updateTableLocally(tableConfirm.table.number, { status: 'occupied', reservedUntil: null, isBooking: true, sessionStartedAt: new Date().toISOString() });
         await updateTableState(tableConfirm.table.number, { status: 'occupied', reservedUntil: null, isBooking: true, sessionStartedAt: new Date().toISOString() });
-        showNotification(`Table ${tableConfirm.table.number} checked in.`);
+        success(`Table ${tableConfirm.table.number} checked in.`);
       } else if (tableConfirm.action === 'cancel') {
         updateTableLocally(tableConfirm.table.number, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, notes: '', phoneNumber: '', guestCount: 1, assignedStaff: '', sessionStartedAt: null });
         await updateTableState(tableConfirm.table.number, { status: 'vacant', customerName: null, phoneNumber: '', guestCount: 1, notes: '', assignedStaff: '', reservedUntil: null, isBooking: false, sessionStartedAt: null });
-        showNotification(`Reservation for table ${tableConfirm.table.number} cancelled.`);
+        success(`Reservation for table ${tableConfirm.table.number} cancelled.`);
       } else if (tableConfirm.action === 'checkout') {
         updateTableLocally(tableConfirm.table.number, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, sessionStartedAt: null, phoneNumber: '', guestCount: 1, notes: '', assignedStaff: '' });
         await updateTableState(tableConfirm.table.number, { status: 'vacant', customerName: null, phoneNumber: '', guestCount: 1, notes: '', assignedStaff: '', reservedUntil: null, isBooking: false, sessionStartedAt: null });
-        showNotification(`Table ${tableConfirm.table.number} checked out.`);
+        success(`Table ${tableConfirm.table.number} checked out.`);
       } else if (tableConfirm.action === 'ready') {
         updateTableLocally(tableConfirm.table.number, { status: 'vacant', reservedUntil: null, isBooking: false, customerName: null, sessionStartedAt: null });
         await updateTableState(tableConfirm.table.number, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, sessionStartedAt: null });
-        showNotification(`Table ${tableConfirm.table.number} marked ready.`);
+        success(`Table ${tableConfirm.table.number} marked ready.`);
       } else if (tableConfirm.action === 'available') {
         updateTableLocally(tableConfirm.table.number, { status: 'vacant', reservedUntil: null, isBooking: false, customerName: null, sessionStartedAt: null });
         await updateTableState(tableConfirm.table.number, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, sessionStartedAt: null });
-        showNotification(`Table ${tableConfirm.table.number} marked available.`);
+        success(`Table ${tableConfirm.table.number} marked available.`);
       } else if (tableConfirm.action === 'enable') {
         updateTableLocally(tableConfirm.table.number, { status: 'vacant', reservedUntil: null, isBooking: false, customerName: null, sessionStartedAt: null });
         await updateTableState(tableConfirm.table.number, { status: 'vacant', customerName: null, reservedUntil: null, isBooking: false, sessionStartedAt: null });
-        showNotification(`Table ${tableConfirm.table.number} enabled.`);
+        success(`Table ${tableConfirm.table.number} enabled.`);
       } else if (tableConfirm.action === 'cleaning') {
         updateTableLocally(tableConfirm.table.number, { status: 'cleaning' });
         await updateTableState(tableConfirm.table.number, { status: 'cleaning' });
-        showNotification(`Table ${tableConfirm.table.number} marked cleaning.`);
+        success(`Table ${tableConfirm.table.number} marked cleaning.`);
       } else if (tableConfirm.action === 'maintenance') {
         updateTableLocally(tableConfirm.table.number, { status: 'maintenance' });
         await updateTableState(tableConfirm.table.number, { status: 'maintenance' });
-        showNotification(`Table ${tableConfirm.table.number} marked maintenance.`);
+        success(`Table ${tableConfirm.table.number} marked maintenance.`);
       } else if (tableConfirm.action === 'disable') {
         updateTableLocally(tableConfirm.table.number, { status: 'out_of_service' });
         await updateTableState(tableConfirm.table.number, { status: 'out_of_service' });
-        showNotification(`Table ${tableConfirm.table.number} disabled.`);
+        success(`Table ${tableConfirm.table.number} disabled.`);
       }
       closeTableConfirm();
       await loadTables();
     } catch (error) {
       console.error(error);
-      showNotification(error.message || 'Unable to update table.');
+      error(error.message || 'Unable to update table.');
     } finally {
       setTableActionPending(false);
     }
@@ -776,14 +772,9 @@ function OrdersPage() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-7">
-          {notification ? (
-              <div className="mb-4 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                {notification}
-              </div>
-            ) : null}
-
-          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-full bg-slate-100 p-2 shadow-sm dark:bg-slate-800">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-7">
+          <div className="mb-4 overflow-x-auto">
+            <div className="flex min-w-max items-center gap-2 rounded-full bg-slate-100 p-1.5 shadow-sm dark:bg-slate-800">
               <button type="button" className={`rounded-full px-4 py-2 text-sm font-semibold transition ${activeTab === 'orders' ? 'bg-slate-900 text-white shadow-lg' : 'bg-transparent text-slate-700 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700'}`} onClick={() => handleSectionChange('orders')}>
                 Orders
               </button>
@@ -794,33 +785,34 @@ function OrdersPage() {
                 Tables
               </button>
             </div>
+          </div>
 
             {activeTab === 'orders' ? (
               <section className="space-y-6">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                   <div>
                     <p className="text-xs uppercase tracking-[0.28em] text-sky-500">Orders</p>
-                    <h1 className="mt-3 text-3xl font-semibold text-slate-900">Order management</h1>
-                    <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">Manage current order flow, bulk actions, and real-time updates from the kitchen.</p>
+                    <h1 className="mt-3 text-2xl font-semibold text-slate-900 sm:text-3xl dark:text-slate-100">Order management</h1>
+                    <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600 dark:text-slate-400">Manage current order flow, bulk actions, and real-time updates from the kitchen.</p>
                   </div>
-                  <button type="button" onClick={() => setOrderModalOpen(true)} className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800">+ New Order</button>
+                  <button type="button" onClick={() => setOrderModalOpen(true)} className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 sm:w-auto">+ New Order</button>
                 </div>
 
-                <div className="grid gap-4 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)]">
+                <div className="grid gap-4 sm:grid-cols-2">
                   <div className="rounded-3xl bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.07)] dark:bg-slate-900 dark:text-slate-100">
                     <p className="text-sm uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Total Orders</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900 dark:text-white">{orders.length}</p>
+                    <p className="mt-3 text-3xl font-bold text-slate-900 dark:text-white sm:text-4xl">{orders.length}</p>
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Orders loaded from backend.</p>
                   </div>
                   <div className="rounded-3xl bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.07)] dark:bg-slate-900 dark:text-slate-100">
                     <p className="text-sm uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">In Transit</p>
-                    <p className="mt-3 text-4xl font-bold text-slate-900 dark:text-white">{orders.filter((order) => ['processing', 'in transit', 'shipping', 'out for delivery', 'delivering'].includes(order.status)).length}</p>
+                    <p className="mt-3 text-3xl font-bold text-slate-900 dark:text-white sm:text-4xl">{orders.filter((order) => ['processing', 'in transit', 'shipping', 'out for delivery', 'delivering'].includes(order.status)).length}</p>
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Orders currently moving through the workflow.</p>
                   </div>
                 </div>
 
-                <div className="rounded-[28px] bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.07)] dark:bg-slate-900 dark:text-slate-100">
-                  <div className="grid gap-4 lg:grid-cols-[repeat(4,minmax(0,1fr))]">
+                <div className="rounded-[28px] bg-white p-4 shadow-[0_18px_40px_rgba(15,23,42,0.07)] dark:bg-slate-900 dark:text-slate-100 sm:p-6">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                     <input value={filterText} onChange={(e) => setFilterText(e.target.value)} placeholder="Search order ID or customer" className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
                     <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
                       <option value="">All Status</option>
@@ -834,15 +826,41 @@ function OrdersPage() {
                     </select>
                   </div>
 
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => { setStatusFilter(''); setDateFilter(''); setFilterText(''); setSortBy('date_desc'); }} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">Clear</button>
                       <button type="button" onClick={() => setSelectedIds(new Set())} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">Clear selection</button>
                     </div>
-                    <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">Showing {filteredOrders.length} orders • Page {page} of {pageCount}</div>
+                    <div className="text-sm text-slate-500 dark:text-slate-400">Showing {filteredOrders.length} orders • Page {page} of {pageCount}</div>
                   </div>
 
-                  <div className="mt-5 overflow-x-auto">
+                  <div className="mt-5 space-y-3 lg:hidden">
+                    {paginatedOrders.length === 0 ? (
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400">No orders found.</div>
+                    ) : paginatedOrders.map((order) => (
+                      <div key={order.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900 dark:text-slate-100">{order.product || 'Order item'}</p>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">{order.customerName || 'Customer'}</p>
+                          </div>
+                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span>
+                        </div>
+                        <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-400">
+                          <div className="flex items-center justify-between"><span>Order ID</span><span className="font-medium text-slate-900 dark:text-slate-100">#{order.id}</span></div>
+                          <div className="flex items-center justify-between"><span>Amount</span><span className="font-medium text-slate-900 dark:text-slate-100">{formatMoney(order.amount)}</span></div>
+                          <div className="flex items-center justify-between"><span>Date</span><span>{formatOrderDate(order.date)}</span></div>
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button type="button" onClick={() => openViewOrder(order)} className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">View</button>
+                          <button type="button" onClick={() => completeOrder(order.id)} disabled={order.status === 'completed'} className="rounded-2xl bg-sky-500 px-3 py-2 text-xs font-semibold text-white hover:bg-sky-600 disabled:bg-slate-300 dark:disabled:bg-slate-700">Complete</button>
+                          <button type="button" onClick={() => cancelOrder(order.id)} disabled={order.status === 'cancelled'} className="rounded-2xl bg-rose-500 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-600 disabled:bg-slate-300 dark:disabled:bg-slate-700">Cancel</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-5 hidden overflow-x-auto lg:block">
                     <table className="min-w-full divide-y divide-slate-200 text-left text-sm text-slate-700 dark:text-slate-200">
                       <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900 dark:text-slate-400">
                         <tr>
@@ -877,7 +895,7 @@ function OrdersPage() {
                             <td className="px-4 py-3 dark:text-slate-100">{order.customerName}</td>
                             <td className="px-4 py-3 dark:text-slate-100">{order.product}</td>
                             <td className="px-4 py-3 dark:text-slate-100">{formatMoney(order.amount)}</td>
-                            <td className="px-4 py-3"> <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span></td>
+                            <td className="px-4 py-3"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span></td>
                             <td className="px-4 py-3 dark:text-slate-100">{formatOrderDate(order.date)}</td>
                             <td className="px-4 py-3">
                               <div className="flex flex-wrap gap-2">
@@ -892,10 +910,10 @@ function OrdersPage() {
                     </table>
                   </div>
 
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-4 text-sm text-slate-500">
-                    <div>
+                  <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm text-slate-500">
+                    <div className="flex flex-wrap items-center gap-2">
                       <button type="button" onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800">Previous</button>
-                      <button type="button" onClick={() => setPage(Math.min(pageCount, page + 1))} disabled={page === pageCount} className="ml-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800">Next</button>
+                      <button type="button" onClick={() => setPage(Math.min(pageCount, page + 1))} disabled={page === pageCount} className="rounded-2xl border border-slate-200 bg-white px-3 py-2 text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800">Next</button>
                     </div>
                     <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
                       <option value={10}>10 / page</option>
@@ -952,7 +970,7 @@ function OrdersPage() {
                       <option value="price_desc">Price High → Low</option>
                       <option value="stock_desc">Stock</option>
                     </select>
-                    <button type="button" onClick={() => showNotification('Menu intelligence refreshed')} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">Refresh Insights</button>
+                    <button type="button" onClick={() => info('Menu intelligence refreshed')} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">Refresh Insights</button>
                   </div>
 
                   <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -1360,10 +1378,10 @@ function OrdersPage() {
                 await updateOrder(viewOrder.id, { status: viewOrder.status });
                 setOrders((prev) => prev.map((order) => order.id === viewOrder.id ? viewOrder : order));
                 setViewModalOpen(false);
-                showNotification('Order updated');
+                success('Order updated');
               } catch (error) {
                 console.error(error);
-                showNotification('Unable to update order.');
+                error('Unable to update order.');
               }
             }} className="grid gap-4">
               <div className="grid gap-4 lg:grid-cols-2">

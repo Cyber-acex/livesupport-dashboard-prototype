@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
+import { useNotification } from '../contexts/NotificationContext';
 
 const socket = io();
 
@@ -87,11 +88,12 @@ function TicketCard({ ticket, onEscalate, onDelete }) {
 }
 
 function TicketsPage() {
+  const { success, error } = useNotification();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
+  const localTicketActionsRef = useRef({ created: new Set(), deleted: new Set(), escalated: new Set() });
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [notification, setNotification] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createForm, setCreateForm] = useState({
     subject: '',
@@ -110,8 +112,8 @@ function TicketsPage() {
         const res = await fetch('/api/tickets');
         const data = await res.json();
         setTickets(Array.isArray(data) ? data : []);
-      } catch (error) {
-        console.error('Failed to load tickets', error);
+      } catch (err) {
+        console.error('Failed to load tickets', err);
       } finally {
         setLoading(false);
       }
@@ -120,17 +122,34 @@ function TicketsPage() {
     fetchTickets();
 
     socket.on('ticketCreated', (ticket) => {
-      setTickets((prev) => [ticket, ...prev]);
-      setNotification(`Ticket #${ticket.id} created successfully.`);
+      setTickets((prev) => {
+        if (prev.some((item) => String(item.id) === String(ticket.id))) return prev;
+        return [ticket, ...prev];
+      });
+      const ticketId = String(ticket.id);
+      if (localTicketActionsRef.current.created.has(ticketId)) {
+        localTicketActionsRef.current.created.delete(ticketId);
+        return;
+      }
+      success(`Created ticket #${ticket.id}`);
     });
 
     socket.on('ticketDeleted', ({ id }) => {
       setTickets((prev) => prev.filter((ticket) => ticket.id !== id));
-      setNotification(`Ticket #${id} deleted.`);
+      if (localTicketActionsRef.current.deleted.has(id)) {
+        localTicketActionsRef.current.deleted.delete(id);
+        return;
+      }
+      success(`Deleted ticket #${id}`);
     });
 
     socket.on('ticketEscalated', ({ ticket_id }) => {
       setTickets((prev) => prev.map((ticket) => ticket.id === ticket_id ? { ...ticket, escalated: true } : ticket));
+      if (localTicketActionsRef.current.escalated.has(ticket_id)) {
+        localTicketActionsRef.current.escalated.delete(ticket_id);
+        return;
+      }
+      success(`Escalated ticket #${ticket_id}`);
     });
 
     return () => {
@@ -138,7 +157,7 @@ function TicketsPage() {
       socket.off('ticketDeleted');
       socket.off('ticketEscalated');
     };
-  }, []);
+  }, [success]);
 
   const filteredTickets = useMemo(() => {
     const term = query.toLowerCase();
@@ -158,11 +177,12 @@ function TicketsPage() {
         body: JSON.stringify({ ticket_id: ticket.id })
       });
       if (!res.ok) throw new Error('Escalation failed');
+      localTicketActionsRef.current.escalated.add(ticket.id);
       setTickets((prev) => prev.map((item) => item.id === ticket.id ? { ...item, escalated: true } : item));
-      setNotification(`Ticket #${ticket.id} escalated.`);
-    } catch (error) {
-      console.error(error);
-      setNotification('Failed to escalate ticket.');
+      success(`Escalated ticket #${ticket.id}`);
+    } catch (err) {
+      console.error(err);
+      error('Failed to escalate ticket');
     }
   };
 
@@ -171,11 +191,12 @@ function TicketsPage() {
     try {
       const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
+      localTicketActionsRef.current.deleted.add(id);
       setTickets((prev) => prev.filter((ticket) => ticket.id !== id));
-      setNotification(`Ticket #${id} deleted successfully.`);
-    } catch (error) {
-      console.error(error);
-      setNotification('Failed to delete ticket.');
+      success(`Deleted ticket #${id}`);
+    } catch (err) {
+      console.error(err);
+      error('Failed to delete ticket');
     }
   };
 
@@ -185,7 +206,7 @@ function TicketsPage() {
       ? (createForm.customSubject || '').trim()
       : createForm.subject.trim();
     if (!trimmedContent) {
-      setNotification('Please enter a ticket description before creating it.');
+      error('Please enter a ticket description before creating it');
       return;
     }
 
@@ -201,6 +222,7 @@ function TicketsPage() {
       });
       if (!res.ok) throw new Error('Create failed');
       const data = await res.json();
+      localTicketActionsRef.current.created.add(String(data.id));
       const newTicket = {
         id: data.id,
         ...createForm,
@@ -211,7 +233,7 @@ function TicketsPage() {
         escalated: false
       };
       setTickets((prev) => [newTicket, ...prev]);
-      setNotification(`Ticket #${data.id} created successfully.`);
+      success(`Created ticket #${data.id}`);
       setShowCreateModal(false);
       setCreateForm({
         subject: '',
@@ -223,34 +245,28 @@ function TicketsPage() {
         priority: 'Normal',
         status: 'Open'
       });
-    } catch (error) {
-      console.error(error);
-      setNotification('Failed to create ticket.');
+    } catch (err) {
+      console.error(err);
+      error('Failed to create ticket');
     }
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
+    <div className="flex min-h-dvh overflow-hidden bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-white">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-7">
-          {notification ? (
-              <div className="mb-4 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                {notification}
-              </div>
-            ) : null}
-
+        <main className="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-7">
           <section className="rounded-3xl border border-white/10 bg-slate-950/40 p-4 shadow-2xl shadow-black/20 sm:p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                 <div className="space-y-3">
                   <h1 className="text-2xl font-semibold text-white">Tickets</h1>
-                  <div className="flex flex-col gap-3 md:flex-row md:flex-wrap">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                     <input
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
                       placeholder="Search tickets, IDs, content or assignee..."
-                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none md:w-80"
+                      className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none sm:w-80"
                     />
                     <select
                       value={statusFilter}
@@ -264,15 +280,15 @@ function TicketsPage() {
                     </select>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                   <button
                     type="button"
                     onClick={() => setShowCreateModal(true)}
-                    className="rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
+                    className="w-full rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400 sm:w-auto"
                   >
                     Create Ticket
                   </button>
-                  <div className="text-sm text-white/70">Showing {filteredTickets.length} tickets</div>
+                  <div className="text-center text-sm text-white/70 sm:text-left">Showing {filteredTickets.length} tickets</div>
                 </div>
               </div>
 

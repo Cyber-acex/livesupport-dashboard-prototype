@@ -136,21 +136,21 @@ function DashboardPage() {
   ]), [recentMessages]);
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+    <div className="flex min-h-dvh overflow-hidden bg-gray-50 dark:bg-gray-900">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-4 mx-auto w-full max-w-7xl md:p-6">
+        <main className="mx-auto flex-1 w-full max-w-7xl overflow-y-auto p-3 sm:p-4 md:p-6">
           {/* Page Header */}
           <div className="mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
+              <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl dark:text-white">Dashboard</h1>
               <p className="mt-1 text-gray-600 dark:text-gray-400">Welcome back! Here's a quick view of your support system.</p>
             </div>
 
           {/* Metric Cards Grid */}
-          <div className="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_360px] items-start md:gap-6">
+          <div className="mb-8 grid grid-cols-1 items-start gap-4 md:gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
               <div className="flex flex-col gap-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <MetricCard
                     icon={customerIcon}
                     label="Customers"
@@ -187,7 +187,7 @@ function DashboardPage() {
             </div>
 
           {/* Charts Grid */}
-          <div className="grid grid-cols-12 gap-6">
+          <div className="grid grid-cols-12 gap-4 sm:gap-6">
               <div className="col-span-12 xl:col-span-12">
                 <div className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03]">
                   <div className="mb-4 flex items-start justify-between">

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
+import { useNotification } from '../contexts/NotificationContext';
 import {
   getSettings,
   saveSettings,
@@ -14,8 +15,8 @@ import {
 
 function SettingsPage() {
   const location = useLocation();
+  const { success, error, info } = useNotification();
   const [activeSection, setActiveSection] = useState('account');
-  const [notification, setNotification] = useState('');
   const [settings, setSettings] = useState(getSettings());
   const [passwordChanged, setPasswordChanged] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -72,11 +73,6 @@ function SettingsPage() {
     checkAdmin();
   }, []);
 
-  const showNotification = (message) => {
-    setNotification(message);
-    window.setTimeout(() => setNotification(''), 3000);
-  };
-
   const handleSaveSettings = () => {
     // If there's a selected file, upload it first
     const doSave = async () => {
@@ -100,10 +96,10 @@ function SettingsPage() {
 
         // Save other settings
         await saveSettings(settings);
-        showNotification('Settings saved successfully!');
+        success('Settings saved successfully');
       } catch (e) {
         console.error('Error saving settings/avatar', e);
-        showNotification('Failed to save settings');
+        error('Failed to save settings');
       }
     };
 
@@ -147,10 +143,10 @@ function SettingsPage() {
       if (res.ok) {
         await fetchUsers();
       } else {
-        showNotification('Failed to update user');
+        error('Failed to update user');
       }
     } catch (e) {
-      showNotification('Error updating user');
+      error('Error updating user');
     }
   };
 
@@ -164,10 +160,10 @@ function SettingsPage() {
         alert(`New password: ${data.password}`);
         await fetchUsers();
       } else {
-        showNotification('Failed to reset password');
+        error('Failed to reset password');
       }
     } catch (e) {
-      showNotification('Error resetting password');
+      error('Error resetting password');
     }
   };
 
@@ -176,10 +172,10 @@ function SettingsPage() {
       await fetch(`/api/admin/users/${userId}/force-logout`, {
         method: 'POST'
       });
-      showNotification('Force logout requested');
+      success('Force logout requested');
       await fetchUsers();
     } catch (e) {
-      showNotification('Error forcing logout');
+      error('Error forcing logout');
     }
   };
 
@@ -193,10 +189,10 @@ function SettingsPage() {
         await fetchUsers();
       } else {
         const err = await res.json().catch(() => ({}));
-        showNotification(`Delete failed: ${err.message || err.error || res.statusText}`);
+        error(`Delete failed: ${err.message || err.error || res.statusText}`);
       }
     } catch (e) {
-      showNotification('Error deleting user');
+      error('Error deleting user');
     }
   };
 
@@ -285,7 +281,7 @@ function SettingsPage() {
     <button
       key={id}
       onClick={() => setActiveSection(id)}
-      className={`w-full text-left px-4 py-3 rounded-lg transition-all ${
+      className={`w-full whitespace-nowrap rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-all sm:px-4 sm:py-3 sm:text-base ${
         activeSection === id
           ? 'bg-indigo-600 text-white shadow-md'
           : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
@@ -296,26 +292,19 @@ function SettingsPage() {
   );
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-slate-950 overflow-hidden text-slate-900 dark:text-slate-100">
+    <div className="flex min-h-dvh overflow-hidden bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
 
-        {/* Notification */}
-        {notification && (
-          <div className="mx-4 mt-4 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg text-sm dark:bg-emerald-500/10 dark:border-emerald-400/20 dark:text-emerald-200">
-            {notification}
-          </div>
-        )}
-
         {/* Settings Container */}
-        <div className="flex-1 overflow-hidden flex">
+        <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
           {/* Sidebar */}
-          <div className="w-64 bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 dark:border-slate-800">
+          <div className="border-b border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:w-64 lg:border-b-0 lg:border-r lg:overflow-y-auto">
+            <div className="border-b border-gray-200 p-4 sm:p-6 dark:border-slate-800">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">Settings</h3>
             </div>
-            <nav className="p-4 space-y-2">
+            <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:flex-col lg:overflow-visible lg:px-4 lg:py-4">
               {renderNavButton('account', 'Account')}
               {renderNavButton('notifications', 'Notifications')}
               {renderNavButton('chat', 'Chat Settings')}
@@ -327,15 +316,15 @@ function SettingsPage() {
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-4xl mx-auto p-8">
+            <div className="mx-auto w-full max-w-4xl p-3 sm:p-6 lg:p-8">
               {/* Account Section */}
               {activeSection === 'account' && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 mb-8">Account Settings</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Account Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 mb-6 dark:bg-slate-900 dark:text-slate-100">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                      <div className="md:col-span-1 flex flex-col items-center">
+                  <div className="mb-6 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6">
+                    <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+                      <div className="flex flex-col items-center lg:items-start">
                         <div className="mb-4 flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-indigo-100 text-2xl font-bold text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-200">
                           {avatarPreview ? (
                             <img src={avatarPreview} alt="Avatar preview" className="h-full w-full object-cover" />
@@ -343,13 +332,13 @@ function SettingsPage() {
                             <span>{(settings.displayName || 'User')[0].toUpperCase()}</span>
                           )}
                         </div>
-                        <label className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors cursor-pointer text-sm font-medium">
+                        <label className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700">
                           Upload Avatar
                           <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                         </label>
                       </div>
 
-                      <div className="md:col-span-2 space-y-4">
+                      <div className="space-y-4">
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">Display Name</label>
                           <input
@@ -423,7 +412,7 @@ function SettingsPage() {
 
                     <button
                       onClick={handleSaveSettings}
-                      className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                     >
                       Save Changes
                     </button>
@@ -434,10 +423,10 @@ function SettingsPage() {
               {/* Notifications Section */}
               {activeSection === 'notifications' && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-8">Notification Settings</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Notification Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6 dark:bg-slate-900 dark:text-slate-100">
-                    <div className="flex items-center justify-between">
+                  <div className="space-y-4 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6 sm:space-y-6">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <label className="font-medium text-slate-900 dark:text-slate-100">Message Alerts</label>
                         <p className="text-sm text-slate-500 dark:text-slate-400">Receive alerts for new messages</p>
@@ -452,8 +441,8 @@ function SettingsPage() {
                       </label>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
-                      <div className="flex items-center justify-between">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <label className="font-medium text-slate-900">Ticket Alerts</label>
                           <p className="text-sm text-slate-500">Receive alerts for new tickets</p>
@@ -469,8 +458,8 @@ function SettingsPage() {
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
-                      <div className="flex items-center justify-between">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <label className="font-medium text-slate-900">Sound Notifications</label>
                           <p className="text-sm text-slate-500">Play sound for notifications</p>
@@ -486,10 +475,10 @@ function SettingsPage() {
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <button
                         onClick={handleSaveSettings}
-                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                        className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                       >
                         Save Changes
                       </button>
@@ -501,9 +490,9 @@ function SettingsPage() {
               {/* Chat Section */}
               {activeSection === 'chat' && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 mb-8">Chat Settings</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Chat Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6 dark:bg-slate-900 dark:text-slate-100">
+                  <div className="space-y-4 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6 sm:space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-100 mb-2">Auto Reply</label>
                       <textarea
@@ -528,7 +517,7 @@ function SettingsPage() {
 
                     <button
                       onClick={handleSaveSettings}
-                      className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                     >
                       Save Changes
                     </button>
@@ -539,12 +528,12 @@ function SettingsPage() {
               {/* AI Settings Section */}
               {activeSection === 'ai' && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 mb-8">AI Settings</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">AI Settings</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6">
+                  <div className="space-y-4 rounded-lg bg-white p-4 shadow sm:p-6 sm:space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-slate-900 mb-4">Autopilot Mode</label>
-                      <div className="grid grid-cols-3 gap-3 mb-6">
+                      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {Object.entries(AUTOPILOT_MODES).map(([mode, info]) => (
                           <button
                             key={mode}
@@ -575,8 +564,8 @@ function SettingsPage() {
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
-                      <label className="block text-sm font-medium text-slate-700 mb-2">Auto Assign</label>
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
+                      <label className="mb-2 block text-sm font-medium text-slate-700">Auto Assign</label>
                       <select
                         value={settings.autoAssign}
                         onChange={(e) => setSettings({ ...settings, autoAssign: e.target.value })}
@@ -588,10 +577,10 @@ function SettingsPage() {
                       <p className="text-xs text-slate-500 mt-1">Automatically assign tickets to available agents</p>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <button
                         onClick={handleSaveSettings}
-                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                        className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                       >
                         Save Changes
                       </button>
@@ -603,9 +592,9 @@ function SettingsPage() {
               {/* Appearance Section */}
               {activeSection === 'appearance' && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 mb-8">Appearance</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Appearance</h2>
 
-                  <div className="bg-white rounded-lg shadow p-6 space-y-6 dark:bg-slate-900 dark:text-slate-100">
+                  <div className="space-y-4 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6 sm:space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-100 mb-2">Theme</label>
                       <select
@@ -648,9 +637,9 @@ function SettingsPage() {
                       </select>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
-                      <label className="block text-sm font-medium text-slate-700 mb-3">Font Size</label>
-                      <div className="flex items-center gap-3">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
+                      <label className="mb-3 block text-sm font-medium text-slate-700 dark:text-slate-100">Font Size</label>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <input
                           type="range"
                           min="90"
@@ -660,15 +649,15 @@ function SettingsPage() {
                           onChange={(e) => handleFontSizeChange(e.target.value)}
                           className="flex-1"
                         />
-                        <span className="text-sm font-medium text-slate-600 min-w-32">
+                        <span className="min-w-32 text-sm font-medium text-slate-600">
                           {getFontSizeLabel(settings.fontSize)}
                         </span>
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
-                      <label className="block text-sm font-medium text-slate-700 mb-3">Page Zoom</label>
-                      <div className="flex items-center gap-3">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
+                      <label className="mb-3 block text-sm font-medium text-slate-700 dark:text-slate-100">Page Zoom</label>
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <button
                           onClick={() => handleZoomChange(Math.max(25, Number(settings.pageZoom) - 5))}
                           className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
@@ -690,22 +679,22 @@ function SettingsPage() {
                         >
                           +
                         </button>
-                        <span className="text-sm font-medium text-slate-600 min-w-16 text-center">
+                        <span className="min-w-16 text-center text-sm font-medium text-slate-600">
                           {settings.pageZoom}%
                         </span>
                       </div>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6 bg-slate-50 rounded-lg p-4 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    <div className="rounded-lg border-t border-slate-200 bg-slate-50 p-4 pt-4 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 sm:pt-6">
                       <p className="text-sm text-slate-600 dark:text-slate-300">
                         <strong>Note:</strong> Sidebar position and width changes apply immediately. Refresh the page or navigate to see full effect.
                       </p>
                     </div>
 
-                    <div className="border-t border-slate-200 pt-6">
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <button
                         onClick={handleSaveSettings}
-                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                        className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                       >
                         Save Changes
                       </button>
@@ -717,12 +706,12 @@ function SettingsPage() {
               {/* Admin Users Section */}
               {activeSection === 'admin-users' && isAdmin && (
                 <div>
-                  <h2 className="text-3xl font-bold text-slate-900 mb-8">Manage Users</h2>
+                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Manage Users</h2>
 
                   {/* Create User Section */}
-                  <div className="bg-white rounded-lg shadow p-6 mb-8 dark:bg-slate-900 dark:text-slate-100">
-                    <h3 className="text-xl font-semibold text-gray-800 mb-4 dark:text-slate-100">Create New User</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                  <div className="mb-8 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6">
+                    <h3 className="mb-4 text-xl font-semibold text-gray-800 dark:text-slate-100">Create New User</h3>
+                    <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-4">
                       <input
                         type="text"
                         placeholder="Name"
@@ -758,7 +747,7 @@ function SettingsPage() {
                     </div>
                     <button
                       onClick={handleCreateUser}
-                      className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                      className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                     >
                       Create User
                     </button>
@@ -768,7 +757,7 @@ function SettingsPage() {
                   </div>
 
                   {/* Users Table */}
-                  <div className="bg-white rounded-lg shadow overflow-x-auto dark:bg-slate-900 dark:text-slate-100">
+                  <div className="overflow-x-auto rounded-lg bg-white shadow dark:bg-slate-900 dark:text-slate-100">
                     {usersLoading ? (
                       <div className="p-6 text-center text-slate-500 dark:text-slate-400">Loading users...</div>
                     ) : users.length === 0 ? (
@@ -776,7 +765,7 @@ function SettingsPage() {
                         {users.length === 0 ? 'No users found' : 'Click "Manage Users" to load users'}
                       </div>
                     ) : (
-                      <table className="w-full text-left text-sm">
+                      <table className="min-w-[760px] w-full text-left text-sm">
                         <thead className="bg-gray-100 border-b border-gray-200 dark:bg-slate-800 dark:border-slate-700">
                           <tr>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">ID</th>
@@ -809,7 +798,7 @@ function SettingsPage() {
                     <div className="mt-6">
                       <button
                         onClick={() => { setUsersLoading(true); fetchUsers(); }}
-                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium"
+                        className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
                       >
                         Load Users
                       </button>
@@ -836,10 +825,10 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
 
   return (
     <tr className="border-b border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800">
-      <td className="px-6 py-3 text-gray-900 dark:text-slate-100">{user.id}</td>
-      <td className="px-6 py-3 text-gray-900 dark:text-slate-100">{user.name}</td>
-      <td className="px-6 py-3 text-gray-600 dark:text-slate-400">{user.email}</td>
-      <td className="px-6 py-3">
+      <td className="px-3 py-3 text-gray-900 dark:text-slate-100 sm:px-6">{user.id}</td>
+      <td className="px-3 py-3 text-gray-900 dark:text-slate-100 sm:px-6">{user.name}</td>
+      <td className="px-3 py-3 text-gray-600 dark:text-slate-400 sm:px-6">{user.email}</td>
+      <td className="px-3 py-3 sm:px-6">
         <select
           value={role}
           onChange={(e) => setRole(e.target.value)}
@@ -852,7 +841,7 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           ))}
         </select>
       </td>
-      <td className="px-6 py-3">
+      <td className="px-3 py-3 sm:px-6">
         {user.active ? (
           <span className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-green-500 rounded-full"></span>
@@ -862,7 +851,7 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           <span className="text-gray-500 text-xs">Offline</span>
         )}
       </td>
-      <td className="px-6 py-3">
+      <td className="px-3 py-3 sm:px-6">
         <input
           type="checkbox"
           checked={disabled}
@@ -870,8 +859,8 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           className="w-4 h-4 cursor-pointer"
         />
       </td>
-      <td className="px-6 py-3">
-        <div className="flex gap-2">
+      <td className="px-3 py-3 sm:px-6">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={handleSave}
             className="bg-indigo-600 text-white px-3 py-1 rounded text-xs hover:bg-indigo-700 transition-colors"

@@ -6,6 +6,7 @@ import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
+import { useNotification } from '../contexts/NotificationContext';
 import {
   fetchActiveDeliveries,
   fetchOrderStatuses,
@@ -26,6 +27,7 @@ L.Icon.Default.mergeOptions({
 });
 
 function TrackingPage() {
+  const { success, error, warning, info } = useNotification();
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef(new Map());
@@ -35,7 +37,6 @@ function TrackingPage() {
   const [orderStatuses, setOrderStatuses] = useState(new Map());
   const [selectedDeliveryId, setSelectedDeliveryId] = useState(null);
   const [searchInput, setSearchInput] = useState('');
-  const [notification, setNotification] = useState('');
 
   const summary = useMemo(() => {
     const statusCounts = deliveries.reduce((acc, delivery) => {
@@ -90,16 +91,12 @@ function TrackingPage() {
       const statusesData = await fetchOrderStatuses();
       setDeliveries(deliveriesData);
       setOrderStatuses(statusesData);
-    } catch (error) {
-      console.error('Failed to load data', error);
-      showNotification('Unable to load deliveries');
+    } catch (err) {
+      console.error('Failed to load data', err);
+      error('Unable to load deliveries');
     }
   };
 
-  const showNotification = (message) => {
-    setNotification(message);
-    window.setTimeout(() => setNotification(''), 3000);
-  };
 
   useEffect(() => {
     if (!mapInstanceRef.current) return;
@@ -162,7 +159,7 @@ function TrackingPage() {
 
   const handleSearch = () => {
     if (!searchInput.trim()) {
-      showNotification('Enter an order ID');
+      info('Enter an order ID');
       return;
     }
 
@@ -173,9 +170,9 @@ function TrackingPage() {
       const marker = markersRef.current.get(`delivery-${found.id}`);
       if (marker) marker.openPopup();
       setSelectedDeliveryId(found.id);
-      showNotification(`Found order ${found.order_id}`);
+      info(`Found order ${found.order_id}`);
     } else {
-      showNotification('Order not found');
+      info('Order not found');
     }
   };
 
@@ -200,7 +197,7 @@ function TrackingPage() {
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [50, 50] });
     } else {
-      showNotification('No deliveries to display');
+      info('No deliveries to display');
     }
   };
 
@@ -212,14 +209,14 @@ function TrackingPage() {
       markersRef.current.clear();
       polylinesRef.current.clear();
       setDeliveries([]);
-      showNotification('All markers cleared');
+      info('All markers cleared');
     }
   };
 
   const handleAddTestDelivery = () => {
     const testDelivery = generateTestDelivery();
     setDeliveries((prev) => [...prev, testDelivery]);
-    showNotification(`Test delivery added: ${testDelivery.order_id}`);
+    info(`Test delivery added: ${testDelivery.order_id}`);
   };
 
   const handleFocusDelivery = (deliveryId, delivery) => {
@@ -235,7 +232,7 @@ function TrackingPage() {
   const handleStopAll = () => {
     if (window.confirm('Stop all deliveries?')) {
       setDeliveries([]);
-      showNotification('All deliveries stopped');
+      info('All deliveries stopped');
     }
   };
 
@@ -265,12 +262,6 @@ function TrackingPage() {
           <TopBar />
 
           <main className="flex-1 p-4 sm:p-6 lg:p-8">
-            {notification ? (
-              <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-700">
-                {notification}
-              </div>
-            ) : null}
-
             <section className="rounded-[28px] bg-white p-6 shadow-[0_18px_40px_rgba(15,23,42,0.07)] ring-1 ring-slate-200">
               <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
                 <div>

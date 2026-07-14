@@ -173,12 +173,12 @@ function TopBar({ onSidebarToggle }) {
   };
 
   return (
-    <header className="sticky top-0 z-50 flex w-full border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
-      <div className="flex grow flex-col items-center justify-between lg:flex-row lg:px-6">
-        <div className="flex w-full items-center justify-between gap-2 border-b border-gray-200 px-3 py-3 sm:gap-4 lg:justify-normal lg:border-b-0 lg:px-0 lg:py-4 dark:border-gray-800">
+    <header className="sticky top-0 z-50 flex w-full border-b border-gray-200 bg-white/95 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95">
+      <div className="flex grow flex-col items-center justify-between gap-3 px-3 py-3 sm:px-4 lg:flex-row lg:px-6 lg:py-4">
+        <div className="flex w-full items-center justify-between gap-2 sm:gap-4 lg:justify-normal lg:px-0">
           <button
             onClick={() => (onSidebarToggle ? onSidebarToggle() : toggleSidebar())}
-            className="z-50 flex h-10 w-10 items-center justify-center rounded-lg border-gray-200 text-gray-500 lg:h-11 lg:w-11 lg:border dark:border-gray-800 dark:text-gray-400"
+            className="z-50 flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm lg:h-11 lg:w-11 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400"
             aria-label="Toggle sidebar"
           >
             <svg className="hidden fill-current lg:block" width="16" height="12" viewBox="0 0 16 12" xmlns="http://www.w3.org/2000/svg"><path d="M0.583 1C0.583 0.586 0.919 0.25 1.333 0.25H14.667C15.081 0.25 15.417 0.586 15.417 1C15.417 1.414 15.081 1.75 14.667 1.75L1.333 1.75C0.919 1.75 0.583 1.414 0.583 1ZM0.583 11C0.583 10.586 0.919 10.25 1.333 10.25L14.667 10.25C15.081 10.25 15.417 10.586 15.417 11C15.417 11.414 15.081 11.75 14.667 11.75L1.333 11.75C0.919 11.75 0.583 11.414 0.583 11ZM1.333 5.25C0.919 5.25 0.583 5.586 0.583 6C0.583 6.414 0.919 6.75 1.333 6.75L7.999 6.75C8.414 6.75 8.75 6.414 8.75 6C8.75 5.586 8.414 5.25 7.999 5.25L1.333 5.25Z"/></svg>
@@ -206,8 +206,8 @@ function TopBar({ onSidebarToggle }) {
           </div>
         </div>
 
-        <div className={`w-full items-center justify-between gap-4 px-5 py-4 lg:flex lg:justify-end lg:px-0`}>
-          <div className="2xsm:gap-3 flex items-center gap-2">
+        <div className="flex w-full items-center justify-between gap-2 sm:gap-3 lg:justify-end lg:px-0">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 const newDarkMode = !darkMode;
@@ -245,15 +245,15 @@ function TopBar({ onSidebarToggle }) {
           </div>
 
           <div className="relative ml-4" ref={userRef}>
-            <button onClick={(e) => { e.stopPropagation(); setUserOpen(!userOpen); }} className="flex items-center text-gray-700 dark:text-gray-400">
-              <span className="mr-3 flex h-11 w-11 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-800 dark:bg-slate-700 dark:text-white">
+            <button onClick={(e) => { e.stopPropagation(); setUserOpen(!userOpen); }} className="flex items-center rounded-full px-1 py-1 text-gray-700 transition hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 sm:px-2">
+              <span className="mr-2 flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-800 sm:mr-3 sm:h-11 sm:w-11 dark:bg-slate-700 dark:text-white">
                 {avatarUrl ? (
                   <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" />
                 ) : (
                   userInitials
                 )}
               </span>
-              <span className="mr-1 block font-medium">{displayName}</span>
+              <span className="mr-1 hidden font-medium sm:block">{displayName}</span>
               <svg className={`${userOpen ? 'rotate-180' : ''} transition-transform`} width="18" height="20" viewBox="0 0 18 20"><path d="M4.3125 8.65625L9 13.3437L13.6875 8.65625" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
 

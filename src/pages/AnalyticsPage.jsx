@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNotification } from '../contexts/NotificationContext';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -74,7 +75,7 @@ function AnalyticsPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [timeRange, setTimeRange] = useState('7');
-  const [notification, setNotification] = useState('');
+  const { success, info } = useNotification();
   const ticketsRef = useRef(null);
   const barRef = useRef(null);
   const [ticketChart, setTicketChart] = useState(null);
@@ -129,11 +130,11 @@ function AnalyticsPage() {
 
   useEffect(() => {
     if (!socket) return;
-    socket.on('ticketCreated', () => setNotification('Ticket created.'));
-    socket.on('ticketDeleted', () => setNotification('Ticket deleted.'));
-    socket.on('ticketEscalated', () => setNotification('Ticket escalated.'));
-    socket.on('receiptCreated', () => setNotification('Receipt created.'));
-    socket.on('receiptDeleted', () => setNotification('Receipt deleted.'));
+    socket.on('ticketCreated', () => info('Ticket created.'));
+    socket.on('ticketDeleted', () => info('Ticket deleted.'));
+    socket.on('ticketEscalated', () => info('Ticket escalated.'));
+    socket.on('receiptCreated', () => info('Receipt created.'));
+    socket.on('receiptDeleted', () => info('Receipt deleted.'));
     socket.on('connect', () => console.log('Socket connected'));
     return () => {
       socket.off('ticketCreated');
@@ -160,14 +161,8 @@ function AnalyticsPage() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          {notification ? (
-            <div className="mb-5 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700">
-              {notification}
-            </div>
-          ) : null}
-
-          <div className="mb-6 overflow-hidden rounded-[32px] border border-slate-200/70 bg-slate-950 p-6 text-white shadow-[0_40px_90px_rgba(2,6,23,0.24)]">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-8">
+          <div className="mb-6 overflow-hidden rounded-[32px] border border-slate-200/70 bg-slate-950 p-4 text-white shadow-[0_40px_90px_rgba(2,6,23,0.24)] sm:p-6">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-2xl">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-200">
@@ -198,40 +193,42 @@ function AnalyticsPage() {
             </div>
           </div>
 
-          <div className="mb-6 inline-flex rounded-full border border-slate-200/70 bg-white/80 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur">
-            {['analytics', 'staff'].map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                className={`rounded-full px-4 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'bg-transparent text-slate-700 hover:bg-slate-100'}`}
-                onClick={() => setActiveTab(tab)}
-              >
-                {tab === 'analytics' ? 'Analytics' : 'Staff Performance'}
-              </button>
-            ))}
+          <div className="mb-6 overflow-x-auto">
+            <div className="flex min-w-max items-center gap-2 rounded-full border border-slate-200/70 bg-white/80 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur">
+              {['analytics', 'staff'].map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'bg-transparent text-slate-700 hover:bg-slate-100'}`}
+                  onClick={() => setActiveTab(tab)}
+                >
+                  {tab === 'analytics' ? 'Analytics' : 'Staff Performance'}
+                </button>
+              ))}
+            </div>
           </div>
 
           {activeTab === 'analytics' ? (
             <section className="space-y-6">
-              <div className="grid gap-4 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_minmax(220px,1fr)_minmax(220px,1fr)]">
-                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
                   <label className="mb-2 block text-sm font-semibold text-slate-600">From</label>
                   <input value={startDate} onChange={(event) => setStartDate(event.target.value)} type="date" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none" />
                 </div>
-                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
                   <label className="mb-2 block text-sm font-semibold text-slate-600">To</label>
                   <input value={endDate} onChange={(event) => setEndDate(event.target.value)} type="date" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none" />
                 </div>
-                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
                   <label className="mb-2 block text-sm font-semibold text-slate-600">Branch</label>
                   <select value={branch} onChange={(event) => setBranch(event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none">
                     <option value="all">All</option>
                     <option value="ikeja">Ikeja</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-                  <button type="button" onClick={() => setNotification('Filters applied.')} className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">Apply</button>
-                  <button type="button" onClick={() => setNotification('CSV export prepared.')} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">Export CSV</button>
+                <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
+                  <button type="button" onClick={() => success('Filters applied.')} className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">Apply</button>
+                  <button type="button" onClick={() => success('CSV export prepared.')} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">Export CSV</button>
                 </div>
               </div>
 
@@ -245,7 +242,7 @@ function AnalyticsPage() {
               </div>
 
               <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
                   <div className="mb-4 flex items-center justify-between">
                     <div>
                       <h3 className="text-xl font-semibold text-slate-900">Support Activity</h3>
@@ -258,7 +255,7 @@ function AnalyticsPage() {
                   </div>
                 </div>
 
-                <div className="rounded-[30px] border border-slate-200/70 bg-slate-950 p-6 text-white shadow-[0_20px_50px_rgba(15,23,42,0.12)]">
+                <div className="rounded-[30px] border border-slate-200/70 bg-slate-950 p-4 text-white shadow-[0_20px_50px_rgba(15,23,42,0.12)] sm:p-6">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Focus score</p>
                   <h3 className="mt-3 text-2xl font-semibold">Smart operations, less friction</h3>
                   <p className="mt-3 text-sm leading-7 text-slate-300">Prioritize high-impact conversations, keep response times sharp, and surface trend shifts before they become issues.</p>
@@ -286,7 +283,7 @@ function AnalyticsPage() {
               </div>
 
               <div className="grid gap-6 xl:grid-cols-2">
-                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
                   <h3 className="mb-4 text-xl font-semibold text-slate-900">AI vs Staff Messages (Monthly)</h3>
                   <div className="h-[360px] rounded-[24px] bg-slate-50 p-4">
                     <StatisticsChart className="h-full w-full" />
@@ -328,7 +325,7 @@ function AnalyticsPage() {
                 <InfoCard title="AI feedback" value={analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'} description="Average quality rating from feedback." />
               </div>
 
-              <div className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+              <div className="rounded-[28px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-6">
                 <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
                   <h3 className="text-xl font-semibold text-slate-900">Live Staff Presence Map</h3>
                   <div className="flex flex-wrap gap-2">
@@ -377,7 +374,7 @@ function AnalyticsPage() {
               </div>
 
               <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                <aside className="rounded-[28px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-6">
                   <div className="mb-6">
                     <h4 className="text-xs uppercase tracking-[0.25em] text-slate-500">Performance summary</h4>
                     <p className="mt-4 text-3xl font-bold text-slate-900">{analytics.numChats ?? '—'}</p>
@@ -407,7 +404,7 @@ function AnalyticsPage() {
                   </div>
                 </aside>
 
-                <div className="rounded-[28px] border border-slate-200/70 bg-white/80 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                <div className="rounded-[28px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-6">
                   <div className="mb-4 flex flex-wrap items-center gap-3">
                     <input placeholder="Search staff by name" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none sm:w-auto" />
                     <select className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none">
@@ -417,14 +414,15 @@ function AnalyticsPage() {
                       <option value="messages_handled">Handled</option>
                     </select>
                   </div>
-                  <div className="grid gap-3 rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                    <div className="grid grid-cols-[1.7fr_0.9fr_0.85fr_0.85fr_0.85fr_1.05fr_0.8fr] gap-3 px-3 py-2 font-semibold uppercase tracking-[0.1em] text-slate-600">
-                      <span>Agent</span><span>Status</span><span>Handled</span><span>Avg Resp</span><span>Resolution</span><span>Trend</span><span />
-                    </div>
-                    {staffMetrics.length === 0 ? (
-                      <div className="rounded-2xl bg-white p-6 text-center text-slate-500">Loading...</div>
-                    ) : staffMetrics.map((member) => (
-                      <div key={member.id} className="grid grid-cols-[1.7fr_0.9fr_0.85fr_0.85fr_0.85fr_1.05fr_0.8fr] gap-3 items-center rounded-2xl bg-white px-3 py-4 text-sm text-slate-700">
+                  <div className="overflow-x-auto rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    <div className="min-w-[760px] grid gap-3">
+                      <div className="grid grid-cols-[1.7fr_0.9fr_0.85fr_0.85fr_0.85fr_1.05fr_0.8fr] gap-3 px-3 py-2 font-semibold uppercase tracking-[0.1em] text-slate-600">
+                        <span>Agent</span><span>Status</span><span>Handled</span><span>Avg Resp</span><span>Resolution</span><span>Trend</span><span />
+                      </div>
+                      {staffMetrics.length === 0 ? (
+                        <div className="rounded-2xl bg-white p-6 text-center text-slate-500">Loading...</div>
+                      ) : staffMetrics.map((member) => (
+                        <div key={member.id} className="grid grid-cols-[1.7fr_0.9fr_0.85fr_0.85fr_0.85fr_1.05fr_0.8fr] gap-3 items-center rounded-2xl bg-white px-3 py-4 text-sm text-slate-700">
                         <div className="flex items-center gap-3">
                           <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-200 text-slate-700">{member.name?.slice(0, 2).toUpperCase()}</div>
                           <div>
@@ -442,9 +440,10 @@ function AnalyticsPage() {
                         <strong>{member.avg_response_time ?? '—'}s</strong>
                         <strong>{member.resolution_rate != null ? `${member.resolution_rate}%` : '—'}</strong>
                         <span className="text-slate-500">—</span>
-                        <button className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white">View</button>
-                      </div>
-                    ))}
+                          <button className="rounded-2xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white">View</button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <div className="mt-5 h-64 rounded-[22px] bg-slate-50 p-4">
                     <canvas id="activityChart" className="h-full w-full" />

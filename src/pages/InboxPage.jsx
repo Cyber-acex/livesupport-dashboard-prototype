@@ -8,6 +8,7 @@ import CallLinkPanel from '../components/CallLinkPanel';
 import { useCallSocket } from '../hooks/useCallSocket';
 import { useCallWebRTC } from '../hooks/useCallWebRTC';
 import { formatInboxTimestamp } from '../utils/inboxTime';
+import { useNotification } from '../contexts/NotificationContext';
 
 const queueFilters = [
   { id: 'all', label: 'All', icon: '✦' },
@@ -21,6 +22,7 @@ function formatDate(value) {
 }
 
 function InboxPage() {
+  const { success, error, warning, info } = useNotification();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState([]);
@@ -30,7 +32,6 @@ function InboxPage() {
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState(null);
-  const [notification, setNotification] = useState('');
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [receiptSaving, setReceiptSaving] = useState(false);
@@ -47,6 +48,8 @@ function InboxPage() {
     notes: '',
     lineItems: []
   });
+  const [escalatedConversationIds, setEscalatedConversationIds] = useState([]);
+  const [escalatingConversationId, setEscalatingConversationId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [callToken, setCallToken] = useState('');
   const [callLink, setCallLink] = useState('');
@@ -165,7 +168,7 @@ function InboxPage() {
         }
       } catch (error) {
         console.error('Inbox load error', error);
-        if (active) setNotification('Failed to load inbox conversations.');
+        if (active) error('Failed to load inbox conversations');
       } finally {
         if (active) setLoading(false);
       }
@@ -205,11 +208,11 @@ function InboxPage() {
         if (active) {
           setMessages(Array.isArray(data) ? data : []);
         }
-      } catch (error) {
-        console.error('Inbox thread load error', error);
+      } catch (err) {
+        console.error('Inbox thread load error', err);
         if (active) {
           setMessages([]);
-          setNotification('Failed to load message thread.');
+          error('Failed to load message thread');
         }
       } finally {
         if (active) setMessagesLoading(false);
@@ -384,10 +387,10 @@ function InboxPage() {
       }
 
       setComposer(suggestion);
-      setNotification('AI reply inserted into the composer.');
+      success('AI reply inserted into the composer');
     } catch (error) {
       console.error('AI reply generation error', error);
-      setNotification(error.message || 'Failed to generate AI reply.');
+      error(err.message || 'Failed to generate AI reply');
     } finally {
       setIsGeneratingReply(false);
     }
@@ -439,15 +442,67 @@ function InboxPage() {
       }));
     } catch (error) {
       console.error('Inbox send message error', error);
-      setNotification(error.message || 'Failed to send message.');
+      error(err.message || 'Failed to send message');
     } finally {
       setIsSending(false);
     }
   }
 
+  async function handleEscalateConversation() {
+    const conversationId = activeConversation?.id || selectedConversation?.id;
+    if (!conversationId) return;
+
+    const conversationName = activeConversation?.name
+      || selectedConversation?.name
+      || activeConversation?.phone
+      || selectedConversation?.phone
+      || 'Customer';
+
+    if (escalatingConversationId === String(conversationId)) return;
+
+    setEscalatingConversationId(String(conversationId));
+
+    try {
+      const response = await fetch('/api/escalate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ conversation_id: conversationId, name: conversationName })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok && data?.success !== true) {
+        throw new Error(data?.error || 'Failed to escalate conversation');
+      }
+
+      setEscalatedConversationIds((prev) => {
+        const nextId = String(conversationId);
+        return prev.includes(nextId) ? prev : [...prev, nextId];
+      });
+
+      setConversations((prev) => prev.map((conversation) => (
+        String(conversation.id) === String(conversationId)
+          ? { ...conversation, escalated: true }
+          : conversation
+      )));
+
+      setSelectedConversation((prev) => (
+        prev && String(prev.id) === String(conversationId)
+          ? { ...prev, escalated: true }
+          : prev
+      ));
+
+      success(`Escalated conversation #${conversationId}`);
+    } catch (error) {
+      console.error('Conversation escalation failed', error);
+      error(error.message || 'Failed to escalate conversation');
+    } finally {
+      setEscalatingConversationId(null);
+    }
+  }
+
   async function handleCallCustomer() {
     if (!selectedConversation?.id) {
-      setNotification('Select a conversation before placing a call.');
+      warning('Select a conversation before placing a call');
       return;
     }
 
@@ -481,7 +536,7 @@ function InboxPage() {
       setCallToken(secureToken);
       setCallLink(`${host}/call/${secureToken}`);
       setCallStatus(data.status || 'waiting');
-      setNotification('Call link generated. Customer can answer using the secure link.');
+      success('Call link generated. Customer can answer using the secure link');
     } catch (error) {
       console.error('Call creation failed', error);
       setCallError(error.message || 'Failed to create voice call.');
@@ -656,7 +711,7 @@ function InboxPage() {
   async function handleSaveReceipt() {
     const content = buildReceiptText();
     if (!receiptForm.lineItems.some((item) => (item.description || '').trim())) {
-      setNotification('Add at least one item before saving the receipt.');
+      warning('Add at least one item before saving the receipt');
       return;
     }
 
@@ -672,11 +727,11 @@ function InboxPage() {
         throw new Error('Failed to save receipt.');
       }
 
-      setNotification('Receipt created and stored successfully.');
+      success('Receipt created and stored successfully');
       setIsReceiptModalOpen(false);
     } catch (error) {
       console.error('Receipt save failed', error);
-      setNotification(error.message || 'Failed to save receipt.');
+      error(err.message || 'Failed to save receipt');
     } finally {
       setReceiptSaving(false);
     }
@@ -685,7 +740,7 @@ function InboxPage() {
   function handlePreviewReceipt() {
     const previewWindow = window.open('', '_blank', 'width=900,height=800');
     if (!previewWindow) {
-      setNotification('Popup blocked. Please allow popups to preview the receipt.');
+      warning('Popup blocked. Please allow popups to preview the receipt');
       return;
     }
 
@@ -784,12 +839,6 @@ function InboxPage() {
               </div>
             </div>
 
-            {notification ? (
-              <div className="mb-6 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
-                {notification}
-              </div>
-            ) : null}
-
             <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
               <div className="grid h-[calc(100dvh-12rem)] min-h-[720px] max-h-[calc(100dvh-12rem)] grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_320px]">
                 <aside className="border-b border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-b-0 xl:border-r">
@@ -858,8 +907,21 @@ function InboxPage() {
                           </div>
                         </div>
                         <div className="flex gap-2">
-                          <button type="button" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-                            Escalate
+                          <button
+                            type="button"
+                            onClick={handleEscalateConversation}
+                            disabled={Boolean(activeConversation?.escalated || escalatedConversationIds.includes(String(activeConversation?.id))) || escalatingConversationId === String(activeConversation?.id)}
+                            className={`rounded-full border px-3 py-2 text-sm font-medium transition ${
+                              activeConversation?.escalated || escalatedConversationIds.includes(String(activeConversation?.id))
+                                ? 'cursor-not-allowed border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-300'
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+                            } ${escalatingConversationId === String(activeConversation?.id) ? 'opacity-70' : ''}`}
+                          >
+                            {activeConversation?.escalated || escalatedConversationIds.includes(String(activeConversation?.id))
+                              ? 'Escalated'
+                              : escalatingConversationId === String(activeConversation?.id)
+                                ? 'Escalating...'
+                                : 'Escalate'}
                           </button>
                           <button type="button" className="rounded-full bg-brand-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-700">
                             Resolve
