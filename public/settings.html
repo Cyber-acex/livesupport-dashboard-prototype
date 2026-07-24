@@ -1090,28 +1090,36 @@ input:checked + .slider {
   });
 
   // Load staff name and account settings
-  fetch("/api/user")
-    .then(res => res.json())
-    .then(data => {
-      // Store user role for access control
-      currentUserRole = (data && data.role) ? String(data.role).toLowerCase() : null;
-      
-      // show the user-friendly display name from settings, fallback to role or name
-      const name = data.displayName || data.name || data.role || 'Staff';
-      const sn = document.getElementById("staffName"); if (sn) sn.textContent = name;
-      // Show admin link only for admins
-      try {
-        if (data && currentUserRole === 'admin') {
-          const btn = document.getElementById('adminUsersBtn');
-          if (btn) {
-            btn.style.display = 'block';
-            btn.addEventListener('click', () => { showSection('adminUsers'); });
+  async function loadUserProfile() {
+    fetch("/api/user")
+      .then(res => res.json())
+      .then(data => {
+        // Store user role for access control
+        currentUserRole = (data && data.role) ? String(data.role).toLowerCase() : null;
+        
+        // show the user-friendly display name from settings, fallback to role or name
+        const name = data.displayName || data.name || data.role || 'Staff';
+        const sn = document.getElementById("staffName"); if (sn) sn.textContent = name;
+        // Show admin link only for admins
+        try {
+          if (data && currentUserRole === 'admin') {
+            const btn = document.getElementById('adminUsersBtn');
+            if (btn) {
+              btn.style.display = 'block';
+              btn.addEventListener('click', () => { showSection('adminUsers'); });
+            }
+            const usersBtn = document.getElementById('usersBtn'); if (usersBtn) usersBtn.style.display='inline-block';
           }
-          const usersBtn = document.getElementById('usersBtn'); if (usersBtn) usersBtn.style.display='inline-block';
-        }
-      } catch (e) { console.error('admin button wiring error', e); }
-    })
-    .catch(err => console.log("User fetch error", err));
+        } catch (e) { console.error('admin button wiring error', e); }
+      })
+      .catch(err => console.log("User fetch error", err));
+  }
+  
+  // Load initial profile
+  loadUserProfile();
+  
+  // Listen for profile updates
+  window.addEventListener('profile:updated', loadUserProfile);
 
   // Populate settings on page load
   window.addEventListener('DOMContentLoaded', () => {
@@ -1125,4 +1133,3 @@ input:checked + .slider {
 <script src="./js/sidebar.js" defer></script>
 </body>
 </html>
-

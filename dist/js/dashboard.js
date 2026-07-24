@@ -537,47 +537,56 @@ dashboardReady(()=>{
         console.error('Failed to load session info', e);
       }
     }
-    try{
-      let displayName = null;
-      const sres = await fetch('/api/settings');
-      if(sres.ok){
-        const settings = await sres.json();
-        if(settings && settings.displayName) displayName = settings.displayName;
-        // try common image fields
-        var profileImage = settings && (settings.image_url || settings.avatar_url || settings.avatar || settings.profile_image || settings.avatarUrl || settings.imageUrl) ? (settings.image_url || settings.avatar_url || settings.avatar || settings.profile_image || settings.avatarUrl || settings.imageUrl) : null;
-      }
-      if(!displayName){
-        const ures = await fetch('/api/user');
-        if(ures.ok){
-          const user = await ures.json();
-          displayName = user && (user.name || user.displayName) ? (user.name || user.displayName) : null;
-          // try user avatar fields as fallback
-          if(!profileImage) profileImage = user && (user.avatar || user.image || user.avatar_url || user.image_url) ? (user.avatar || user.image || user.avatar_url || user.image_url) : null;
+    
+    async function loadProfileInfo() {
+      try{
+        let displayName = null;
+        const sres = await fetch('/api/settings');
+        if(sres.ok){
+          const settings = await sres.json();
+          if(settings && settings.displayName) displayName = settings.displayName;
+          // try common image fields
+          var profileImage = settings && (settings.image_url || settings.avatar_url || settings.avatar || settings.profile_image || settings.avatarUrl || settings.imageUrl) ? (settings.image_url || settings.avatar_url || settings.avatar || settings.profile_image || settings.avatarUrl || settings.imageUrl) : null;
         }
-      }
-      displayName = displayName || 'Staff';
-      if(profileNameEl) profileNameEl.textContent = displayName;
-      if(avatarSm) avatarSm.textContent = (displayName || 'S').charAt(0).toUpperCase();
-      // default: show initials
-      if(avatarSm) avatarSm.style.display = '';
-      if(avatarImg) avatarImg.style.display = 'none';
+        if(!displayName){
+          const ures = await fetch('/api/user');
+          if(ures.ok){
+            const user = await ures.json();
+            displayName = user && (user.name || user.displayName) ? (user.name || user.displayName) : null;
+            // try user avatar fields as fallback
+            if(!profileImage) profileImage = user && (user.avatar || user.image || user.avatar_url || user.image_url) ? (user.avatar || user.image || user.avatar_url || user.image_url) : null;
+          }
+        }
+        displayName = displayName || 'Staff';
+        if(profileNameEl) profileNameEl.textContent = displayName;
+        if(avatarSm) avatarSm.textContent = (displayName || 'S').charAt(0).toUpperCase();
+        // default: show initials
+        if(avatarSm) avatarSm.style.display = '';
+        if(avatarImg) avatarImg.style.display = 'none';
 
-      if(profileImage && avatarImg){
-        try{
-          let src = String(profileImage || '').trim();
-          if(src && src.charAt(0) === '/') src = (window.location.origin || '') + src;
-          // set image and show it; on error revert to initials
-          avatarImg.src = src;
-          avatarImg.style.display = 'inline-block';
-          avatarImg.onload = function(){ if(avatarSm) avatarSm.style.display = 'none'; };
-          avatarImg.onerror = function(){ avatarImg.style.display = 'none'; if(avatarSm) avatarSm.style.display = ''; };
-        }catch(e){
-          console.error('profile image set error', e);
+        if(profileImage && avatarImg){
+          try{
+            let src = String(profileImage || '').trim();
+            if(src && src.charAt(0) === '/') src = (window.location.origin || '') + src;
+            // set image and show it; on error revert to initials
+            avatarImg.src = src;
+            avatarImg.style.display = 'inline-block';
+            avatarImg.onload = function(){ if(avatarSm) avatarSm.style.display = 'none'; };
+            avatarImg.onerror = function(){ avatarImg.style.display = 'none'; if(avatarSm) avatarSm.style.display = ''; };
+          }catch(e){
+            console.error('profile image set error', e);
+          }
         }
+      }catch(e){
+        console.error('Failed to load profile name', e);
       }
-    }catch(e){
-      console.error('Failed to load profile name', e);
     }
+    
+    // Load initial profile info
+    await loadProfileInfo();
+    
+    // Add listener for profile updates
+    window.addEventListener('profile:updated', loadProfileInfo);
 
     profileBtn.addEventListener('click', (e)=>{
       e.stopPropagation();

@@ -133,6 +133,13 @@ function AnalyticsPage() {
     socket.on('ticketCreated', () => info('Ticket created.'));
     socket.on('ticketDeleted', () => info('Ticket deleted.'));
     socket.on('ticketEscalated', () => info('Ticket escalated.'));
+    socket.on('ticketFeedbackSubmitted', async () => {
+      try {
+        setAnalytics(await fetchAnalytics());
+      } catch (error) {
+        console.error('Failed to refresh CSAT analytics:', error);
+      }
+    });
     socket.on('receiptCreated', () => info('Receipt created.'));
     socket.on('receiptDeleted', () => info('Receipt deleted.'));
     socket.on('connect', () => console.log('Socket connected'));
@@ -140,11 +147,29 @@ function AnalyticsPage() {
       socket.off('ticketCreated');
       socket.off('ticketDeleted');
       socket.off('ticketEscalated');
+      socket.off('ticketFeedbackSubmitted');
       socket.off('receiptCreated');
       socket.off('receiptDeleted');
       socket.off('connect');
     };
   }, []);
+
+  const formatMoney = (value) => {
+    if (typeof value !== 'number') return '—';
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0
+    }).format(value);
+  };
+
+  const analyticsBreakdowns = useMemo(() => ({
+    channels: Array.isArray(analytics.channelDistribution) ? analytics.channelDistribution : [],
+    intents: Array.isArray(analytics.intentDistribution) ? analytics.intentDistribution : [],
+    issues: Array.isArray(analytics.issueCategories) ? analytics.issueCategories : [],
+    revenue: analytics.revenueSaved || {},
+    topAgent: analytics.topAgent || null
+  }), [analytics]);
 
   const staffCards = useMemo(() => staffMetrics.map((metric) => (
     <div key={metric.id} className="rounded-[22px] border border-slate-200/80 bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.07)]">
@@ -182,10 +207,10 @@ function AnalyticsPage() {
             </div>
             <div className="mt-6 flex flex-wrap gap-3">
               <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-200">
-                Active chats: <span className="ml-2 font-semibold text-white">{analytics.activeChats ?? '—'}</span>
+                Active chats: <span className="ml-2 font-semibold text-white">{typeof analytics.activeChats === 'number' ? analytics.activeChats : '—'}</span>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-200">
-                Avg response: <span className="ml-2 font-semibold text-white">{analytics.avgResponseSeconds ? Math.round(analytics.avgResponseSeconds) : '—'}s</span>
+                Avg response: <span className="ml-2 font-semibold text-white">{typeof analytics.avgResponseSeconds === 'number' ? `${Math.round(analytics.avgResponseSeconds)}s` : '—'}</span>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-200">
                 Feedback: <span className="ml-2 font-semibold text-white">{analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'}</span>
@@ -233,12 +258,15 @@ function AnalyticsPage() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <InfoCard title="Total Tickets" value={analytics.numTickets ?? '—'} description="Created in selected range" />
-                <InfoCard title="Avg Response (s)" value={analytics.avgResponseSeconds ? Math.round(analytics.avgResponseSeconds) : '—'} description="Average first response time" />
-                <InfoCard title="Resolution Time" value={analytics.avgResolutionSeconds ? Math.round(analytics.avgResolutionSeconds) : '—'} description="Average seconds to resolve" />
-                <InfoCard title="Active Chats" value={analytics.activeChats ?? '—'} description="Currently live" />
+                <InfoCard title="Total Tickets" value={typeof analytics.numTickets === 'number' ? analytics.numTickets : '—'} description="Created in selected range" />
+                <InfoCard title="Avg Response (s)" value={typeof analytics.avgResponseSeconds === 'number' ? Math.round(analytics.avgResponseSeconds) : '—'} description="Average first response time" />
+                <InfoCard title="Resolution Time" value={typeof analytics.avgResolutionSeconds === 'number' ? Math.round(analytics.avgResolutionSeconds) : '—'} description="Average seconds to resolve" />
+                <InfoCard title="Active Chats" value={typeof analytics.activeChats === 'number' ? analytics.activeChats : '—'} description="Currently live" />
                 <InfoCard title="AI Feedback Avg" value={analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'} description="Average rating from staff/customers" />
-                <InfoCard title="Feedback Count" value={analytics.aiFeedbackCount ?? '—'} description="Total feedback entries" />
+                <InfoCard title="Escalation Rate" value={analytics.escalationRate ? `${Math.round(analytics.escalationRate * 100)}%` : '—'} description="Share of chats escalated" />
+                <InfoCard title="AI Accuracy" value={analytics.aiAccuracy != null ? Number(analytics.aiAccuracy).toFixed(2) : '—'} description="Feedback-derived accuracy" />
+                <InfoCard title="Recovered Orders" value={analytics.revenueSaved?.recoveredOrders ?? '—'} description="Orders kept from cancellation" />
+                <InfoCard title="Revenue Saved" value={analytics.revenueSaved?.recoveredAmount != null ? formatMoney(analytics.revenueSaved.recoveredAmount) : '—'} description="Estimated revenue preserved" />
               </div>
 
               <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
@@ -277,6 +305,100 @@ function AnalyticsPage() {
                       <div className="h-2 rounded-full bg-white/10">
                         <div className="h-2 w-[87%] rounded-full bg-gradient-to-r from-cyan-400 to-emerald-500" />
                       </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-6 xl:grid-cols-2">
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
+                  <h3 className="text-xl font-semibold text-slate-900">Channel volume</h3>
+                  <p className="mt-2 text-sm text-slate-500">Support traffic by conversation source.</p>
+                  <div className="mt-5 space-y-3">
+                    {analyticsBreakdowns.channels.length === 0 ? (
+                      <div className="rounded-2xl bg-slate-50 p-6 text-center text-slate-500">No channel data yet.</div>
+                    ) : analyticsBreakdowns.channels.map((row) => (
+                      <div key={row.channel} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <span className="text-sm font-medium text-slate-700">{row.channel}</span>
+                        <span className="text-sm font-semibold text-slate-900">{row.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
+                  <h3 className="text-xl font-semibold text-slate-900">Intent distribution</h3>
+                  <p className="mt-2 text-sm text-slate-500">Top detected intents from risk and escalation events.</p>
+                  <div className="mt-5 space-y-3">
+                    {analyticsBreakdowns.intents.length === 0 ? (
+                      <div className="rounded-2xl bg-slate-50 p-6 text-center text-slate-500">No intent data yet.</div>
+                    ) : analyticsBreakdowns.intents.slice(0, 6).map((row) => (
+                      <div key={row.intent} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <span className="text-sm font-medium text-slate-700">{row.intent}</span>
+                        <span className="text-sm font-semibold text-slate-900">{row.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-6 xl:grid-cols-3">
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-xl font-semibold text-slate-900">Top issues</h3>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs uppercase tracking-[0.18em] text-slate-500">Refunds & complaints</span>
+                  </div>
+                  <div className="space-y-3">
+                    {analyticsBreakdowns.issues.length === 0 ? (
+                      <div className="rounded-2xl bg-slate-50 p-6 text-center text-slate-500">No top issues identified.</div>
+                    ) : analyticsBreakdowns.issues.map((row) => (
+                      <div key={row.issue} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                        <span className="text-sm font-medium text-slate-700">{row.issue}</span>
+                        <span className="text-sm font-semibold text-slate-900">{row.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-xl font-semibold text-slate-900">Revenue saved</h3>
+                    <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs uppercase tracking-[0.18em] text-emerald-700">Estimates</span>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Prevented cancellations</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{analyticsBreakdowns.revenue.preventedCancellations ?? '—'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Recovered orders</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{analyticsBreakdowns.revenue.recoveredOrders ?? '—'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Estimated value</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{analyticsBreakdowns.revenue.recoveredAmount != null ? formatMoney(analyticsBreakdowns.revenue.recoveredAmount) : '—'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="text-xl font-semibold text-slate-900">Agent & AI performance</h3>
+                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs uppercase tracking-[0.18em] text-slate-500">Accuracy</span>
+                  </div>
+                  <div className="space-y-4">
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Escalation rate</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{analytics.escalationRate ? `${Math.round(analytics.escalationRate * 100)}%` : '—'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">AI performance</div>
+                      <div className="mt-2 text-2xl font-semibold text-slate-900">{analytics.aiAccuracy != null ? `${Number(analytics.aiAccuracy).toFixed(2)}%` : '—'}</div>
+                    </div>
+                    <div className="rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm text-slate-500">Top agent</div>
+                      <div className="mt-2 text-lg font-semibold text-slate-900">{analyticsBreakdowns.topAgent?.name ?? '—'}</div>
+                      <div className="text-sm text-slate-500">Handled {analyticsBreakdowns.topAgent?.messagesHandled ?? '—'} replies</div>
                     </div>
                   </div>
                 </div>

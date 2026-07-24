@@ -10,8 +10,9 @@ const __dirname = dirname(__filename);
 const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 
-// Friendly fallback and quick-clarification options used when the model/API fails
+// Friendly fallback and conversational guidance used when the model/API fails
 const FALLBACK_REPLY = "Sorry, I'm having trouble processing that right now. Please try again in a moment or type 'help' for assistance.";
+const CLARIFICATION_OPTIONS = "Tell me what you'd like help with, and I'll guide you from there.";
 
 let knowledgeBase = [];
 let cannedResponses = [];
@@ -171,6 +172,23 @@ const MENU_ITEMS = {
     }
 };
 
+const DELIVERY_FEE = 3.50;
+const FREE_DELIVERY_THRESHOLD = 25.00;
+
+function formatQuickPricingInfo(menuItems) {
+    const lines = [
+        `Delivery fee: $${DELIVERY_FEE.toFixed(2)} per order.`,
+        `Free delivery for orders above $${FREE_DELIVERY_THRESHOLD.toFixed(2)}.`
+    ];
+    const categories = new Set(menuItems.map(item => item.category || 'Menu'));
+    const featured = menuItems.slice(0, 6).map(item => `- ${item.name}: $${item.price.toFixed(2)}`);
+    lines.push('Featured menu items:');
+    lines.push(...featured);
+    lines.push(`
+To see the full menu, ask for menu items by category or say "show me the menu".`);
+    return lines.join('\n');
+}
+
 function findCannedResponse(message) {
     if (!message || cannedResponses.length === 0) return null;
     const lowerMessage = message.toString().toLowerCase();
@@ -212,9 +230,7 @@ async function handleQuickOption(choice, phone, conversationId) {
         const menuItemsFromDb = await getMenuItemsFromDb();
         const menuItems = menuItemsFromDb.length > 0 ? menuItemsFromDb : getFallbackMenuItems();
         const formatted = formatMenuItemsForPrompt(menuItems).split('\n').slice(0, 18).join('\n');
-        return `Here is a quick menu overview:\n${formatted}\n\nIf you want to order, tell me what you'd like or reply with 1 for your last order, 2 to speak with staff, or just ask another question.
-
-${CLARIFICATION_OPTIONS}`;
+        return `Here is a quick menu overview:\n${formatted}\n\nTell me what you'd like to order, or ask me anything about the menu.`;
     }
 
     if (choice === 'last_order') {
@@ -223,13 +239,9 @@ ${CLARIFICATION_OPTIONS}`;
         }
         const orderHistory = await getOrderHistory(phone);
         if (orderHistory && orderHistory.count > 0) {
-            return `Here is your recent order summary:\n${orderHistory.summary}
-
-${CLARIFICATION_OPTIONS}`;
+            return `Here is your recent order summary:\n${orderHistory.summary}`;
         }
-        return `I couldn't find any recent orders for this number. Please provide your order ID or phone number again so I can check.
-
-${CLARIFICATION_OPTIONS}`;
+        return `I couldn't find any recent orders for this number. Please provide your order ID or phone number again so I can check.`;
     }
 
     if (choice === 'staff') {
@@ -245,6 +257,46 @@ ${CLARIFICATION_OPTIONS}`;
         return `I am connecting you with our staff now. One of our agents will assist you shortly.`;
     }
 
+}
+
+function buildPolicyGuidance(message = '') {
+    const lowerMessage = String(message || '').toLowerCase();
+    const rules = [];
+
+    const hasAllergy = /allergy|allergic|peanut|nuts|gluten|dairy|shellfish|sesame|celiac|cross contamination/.test(lowerMessage);
+    const hasRefund = /refund|refunds|reimburse|compensation|voucher|credit|money back|discount/.test(lowerMessage);
+    const hasDelayedOrder = /late|delay|delayed|overdue|missing items|cold food|driver delay|weather/.test(lowerMessage);
+    const hasPaymentFailure = /payment failed|declined|card declined|charge failed|failed payment|transaction failed|payment issue/.test(lowerMessage);
+
+    if (hasAllergy) {
+        rules.push(
+            'Food Allergy Policy: customer allergy confirmation is mandatory before any food recommendation or resolution. If the customer reports an allergy or possible contamination, escalate to the supervisor/kitchen immediately, use medically cautious wording, and avoid guaranteeing food safety without kitchen confirmation.'
+        );
+    }
+
+    if (hasRefund) {
+        rules.push(
+            'Refund Policy: only approved eligible reasons can trigger a refund or compensation. Always collect evidence, document the issue, and do not promise a refund or voucher without confirming the eligibility and approval threshold. For severe service failures, escalate to a manager and prefer documented compensation paths only.'
+        );
+    }
+
+    if (hasDelayedOrder) {
+        rules.push(
+            'Delivery Delay Policy: keep the message proactive and transparent, confirm the order status, and provide the latest ETA when available. If the delay is severe, escalate to the delivery or operations lead and offer the documented recovery path only.'
+        );
+    }
+
+    if (hasPaymentFailure) {
+        rules.push(
+            'Payment Failure Policy: validate the payment status before offering a refund or retry. Do not promise a reimbursement or claim a charge was successful without checking the transaction state, and guide the customer toward the supported retry or manual review flow.'
+        );
+    }
+
+    if (rules.length === 0) {
+        return 'No policy-specific issue detected. Reply with the standard customer support guidance and stay within the approved response posture for the conversation.';
+    }
+
+    return `Policy guardrails for this reply:\n- ${rules.join('\n- ')}`;
 }
 
 async function getMenuItemsFromDb() {
@@ -335,9 +387,68 @@ function isMenuInquiry(message) {
         'dishes',
         'specials',
         'what is on the menu',
-        'what do you serve'
+        'what do you serve',
+        'price',
+        'delivery fee',
+        'delivery charge'
     ];
     return menuKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
+function isReservationInquiry(message) {
+    if (!message) return false;
+    const lowerMessage = message.toLowerCase();
+    const reservationKeywords = [
+        'book',
+        'reserve',
+        'reservation',
+        'table for',
+        'book for',
+        'can i book',
+        'can i reserve',
+        'booking',
+        'table availability',
+        'reserve a table'
+    ];
+    return reservationKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
+function isModificationRequest(message) {
+    if (!message) return false;
+    const lowerMessage = message.toLowerCase();
+    const modificationKeywords = [
+        'remove',
+        'add',
+        'extra',
+        'substitute',
+        'without',
+        'no onions',
+        'no cheese',
+        'hold the',
+        'add more',
+        'extra chicken',
+        'add chicken',
+        'no onions'
+    ];
+    return modificationKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
+function isMissingItemRequest(message) {
+    if (!message) return false;
+    const lowerMessage = message.toLowerCase();
+    const missingKeywords = [
+        'forgot',
+        'missing',
+        'did not receive',
+        'didn\'t receive',
+        'no drink',
+        'no side',
+        'drink is missing',
+        'item is missing',
+        'missing item',
+        'not included'
+    ];
+    return missingKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
 async function findRelevantKB(message) {
@@ -521,9 +632,56 @@ function isOrderStatusInquiry(message) {
         'delivery status',
         'where is order',
         'order is',
-        'status for order'
+        'status for order',
+        'eta',
+        'estimated time',
+        'delivery time',
+        'delay',
+        'late'
     ];
     return orderStatusKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
+function isRefundInquiry(message) {
+    if (!message) return false;
+    const lowerMessage = message.toLowerCase();
+    const refundKeywords = [
+        'refund',
+        'money back',
+        'return my money',
+        'cancel order',
+        'cancel my order',
+        'chargeback',
+        'refund request',
+        'reimburse',
+        'compensation',
+        'get my money back',
+        'want my money back'
+    ];
+    return refundKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
+function isColdFoodComplaint(message) {
+    if (!message) return false;
+    const lowerMessage = message.toLowerCase();
+    const coldKeywords = [
+        'cold food',
+        'food arrived cold',
+        'cold order',
+        'food is cold',
+        'my food is cold',
+        'cold meal'
+    ];
+    return coldKeywords.some(keyword => lowerMessage.includes(keyword));
+}
+
+function extractPartySize(message) {
+    if (!message) return null;
+    const lower = message.toLowerCase();
+    const match = lower.match(/(?:for|party of|party|table for|book for)\s*(\d{1,2})/i) || lower.match(/(\d{1,2})\s*(?:people|persons|guests|pax)/i);
+    if (!match) return null;
+    const value = parseInt(match[1], 10);
+    return Number.isFinite(value) ? value : null;
 }
 
 async function getOrderById(orderId) {
@@ -1211,9 +1369,9 @@ async function createOrderFromConversation(conversationId, phone) {
     }
 }
 
-async function getMistralReply(message, phone = null, conversationId = null) {
+async function getMistralReply(message, phone = null, conversationId = null, branchId = null) {
     try {
-        console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId);
+        console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", branchId);
         
         // Check if this is a response to an order confirmation
         if (conversationId && isOrderConfirmationResponse(message)) {
@@ -1243,7 +1401,31 @@ async function getMistralReply(message, phone = null, conversationId = null) {
         }
 
         if (orderStatusRequest && !orderId) {
-            return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order.";
+            return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
+        }
+
+        if (isReservationInquiry(message)) {
+            const partySize = extractPartySize(message);
+            if (partySize) {
+                return `I can help with that. Let me check availability for a table for ${partySize}. If you have a preferred date and time, please include it in your message.`;
+            }
+            return "I can help with reservations. Please tell me how many people are in your party and when you'd like to book.";
+        }
+
+        if (isColdFoodComplaint(message)) {
+            return "I'm very sorry your food arrived cold. I can offer a replacement, expedited redelivery, or a manager review. Please let me know which you'd prefer, and I will start the process immediately.";
+        }
+
+        if (isMissingItemRequest(message)) {
+            return "I'm sorry something was missing from your order. I can arrange a quick replacement for the missing item or offer a voucher/credit if you prefer. Please tell me what item was missing so I can resolve it right away.";
+        }
+
+        if (isModificationRequest(message)) {
+            return "I can help update your order if it's still within the allowed modification window. Please provide your order ID and the exact change you'd like, such as removing onions or adding extra chicken.";
+        }
+
+        if (isRefundInquiry(message)) {
+            return "I understand you want a refund. I’ll check your order and eligibility. If it qualifies, I will escalate this to a manager for approval and keep you informed every step of the way.";
         }
 
         const ticketRequest = isTicketCreationRequest(message);
@@ -1319,6 +1501,9 @@ async function getMistralReply(message, phone = null, conversationId = null) {
             if (formattedMenu) {
                 menuContext = `\n\nMenu information from the Orders page:\n${formattedMenu}`;
             }
+            if (effectiveMenuItems.length > 0) {
+                menuContext += `\n\nPricing and delivery fees:\n- Delivery fee: $${DELIVERY_FEE.toFixed(2)}\n- Free delivery for orders over $${FREE_DELIVERY_THRESHOLD.toFixed(2)}.`;
+            }
         }
 
         // Get customer order history
@@ -1334,6 +1519,10 @@ async function getMistralReply(message, phone = null, conversationId = null) {
             }
         } else {
             console.log("No phone provided to getMistralReply");
+        }
+
+        if (branchId) {
+            orderContext += `\n\nCustomer branch context: branch ID ${branchId}. Use the branch context to route requests or confirm availability for the correct location.`;
         }
 
         // Include recent conversation history so Mistral remembers ongoing orders
@@ -1364,10 +1553,14 @@ async function getMistralReply(message, phone = null, conversationId = null) {
         // Craft a system prompt and user prompt for the support agent
 
         // Craft a system prompt and user prompt for the support agent
-        const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.`;
-        let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}
+        const policyGuidance = buildPolicyGuidance(message);
+        const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.
 
-${CLARIFICATION_OPTIONS}`;
+Follow these policy guardrails when taking action:
+${policyGuidance}
+
+Never invent compensation, refund amounts, or replacement guarantees. Only offer actions supported by the policy, verified order information, or documented escalation.`;
+        let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}`;
 
         if (menuInquiry) {
             userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;
@@ -1448,8 +1641,8 @@ The customer appears to be placing an order but I couldn't identify the specific
                 return reply;
             }
 
-            console.log("Detected non-explicit AI handoff reply; returning clarification options instead.");
-            return `I want to keep helping you. Please choose one of these options:\n0 - Show me the menu\n1 - Show my last order\n2 - Talk to staff\nOr tell me more about your issue and I will follow up.`;
+            console.log("Detected non-explicit AI handoff reply; returning a natural follow-up instead.");
+            return `I want to keep helping you. Tell me more about what you need, and I’ll keep assisting you here.`;
         }
 
         return reply;
@@ -1459,4 +1652,4 @@ The customer appears to be placing an order but I couldn't identify the specific
     }
 }
 
-export { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory, extractOrderItemsFromMessage };
+export { getMistralReply, buildPolicyGuidance, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize };

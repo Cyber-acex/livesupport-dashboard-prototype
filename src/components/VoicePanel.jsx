@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useVoiceSocket } from '../hooks/useVoiceSocket';
+import { resumeAudioContext } from '../utils/audioContext';
 import '../voice.css';
 
 const VoiceIcon = ({ name, className = '' }) => {
@@ -198,7 +199,6 @@ const VoicePanel = () => {
 
   const timerIntervalRef = useRef(null);
 
-  // Custom socket initialization
   const socket = useVoiceSocket(user, {
     onPresenceUpdate: setStaff,
     onChannelsUpdate: setChannels,
@@ -304,7 +304,7 @@ const VoicePanel = () => {
       }
     }
 
-    const stream = selectLocalStreamSource();
+    const stream = await selectLocalStreamSource();
     if (!stream) {
       console.error('⚠️ selectLocalStreamSource returned null');
       return null;
@@ -320,28 +320,25 @@ const VoicePanel = () => {
     return stream;
   }, [showToast]);
 
-  const selectLocalStreamSource = useCallback(() => {
+  const cleanupNoiseProcessing = useCallback(() => {
     const state = stateRef.current;
-    if (!state.rawLocalStream) return null;
-
-    if (state.noiseSuppressionEnabled) {
-      if (!state.processedLocalStream) {
-        state.processedLocalStream = createNoiseProcessedStream(state.rawLocalStream);
-      }
-      state.localStream = state.processedLocalStream;
-    } else {
-      cleanupNoiseProcessing();
-      state.localStream = state.rawLocalStream;
+    if (state.noiseAudioContext) {
+      state.noiseAudioContext.close().catch(() => {});
+      state.noiseAudioContext = null;
     }
-    return state.localStream;
+    if (state.processedLocalStream) {
+      state.processedLocalStream.getTracks().forEach(track => track.stop());
+      state.processedLocalStream = null;
+    }
   }, []);
 
-  const createNoiseProcessedStream = useCallback((rawStream) => {
+  const createNoiseProcessedStream = useCallback(async (rawStream) => {
     const state = stateRef.current;
     if (!window.AudioContext || !rawStream) return rawStream;
     cleanupNoiseProcessing();
 
     const audioContext = new AudioContext();
+    await resumeAudioContext(audioContext);
     const source = audioContext.createMediaStreamSource(rawStream);
 
     const highpass = audioContext.createBiquadFilter();
@@ -400,19 +397,23 @@ const VoicePanel = () => {
 
     state.noiseAudioContext = audioContext;
     return destination.stream;
-  }, []);
+  }, [cleanupNoiseProcessing]);
 
-  const cleanupNoiseProcessing = useCallback(() => {
+  const selectLocalStreamSource = useCallback(async () => {
     const state = stateRef.current;
-    if (state.noiseAudioContext) {
-      state.noiseAudioContext.close().catch(() => {});
-      state.noiseAudioContext = null;
+    if (!state.rawLocalStream) return null;
+
+    if (state.noiseSuppressionEnabled) {
+      if (!state.processedLocalStream) {
+        state.processedLocalStream = await createNoiseProcessedStream(state.rawLocalStream);
+      }
+      state.localStream = state.processedLocalStream;
+    } else {
+      cleanupNoiseProcessing();
+      state.localStream = state.rawLocalStream;
     }
-    if (state.processedLocalStream) {
-      state.processedLocalStream.getTracks().forEach(track => track.stop());
-      state.processedLocalStream = null;
-    }
-  }, []);
+    return state.localStream;
+  }, [cleanupNoiseProcessing, createNoiseProcessedStream]);
 
   const replaceLocalAudioTrack = useCallback((stream) => {
     const state = stateRef.current;

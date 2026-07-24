@@ -85,11 +85,13 @@ function TopBar({ onSidebarToggle }) {
     loadCurrentUser();
     if (typeof window !== 'undefined') {
       window.addEventListener('avatar:updated', syncAvatarFromStorage);
+      window.addEventListener('profile:updated', loadCurrentUser);
     }
 
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('avatar:updated', syncAvatarFromStorage);
+        window.removeEventListener('profile:updated', loadCurrentUser);
       }
     };
   }, []);
@@ -135,6 +137,7 @@ function TopBar({ onSidebarToggle }) {
   const userInitials = getInitials(currentUser.name);
   const displayName = currentUser.name || 'Staff';
   const displayRole = currentUser.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Agent';
+  const activeBranchName = currentUser.branchName || currentUser.branch_name || currentUser.branch?.name || 'No branch';
   const avatarUrl = currentUser.avatar_url || currentUser.avatarUrl || (typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null);
 
   const handleSignOut = async () => {
@@ -233,13 +236,29 @@ function TopBar({ onSidebarToggle }) {
                   localStorage.setItem('theme', 'light');
                 }
               }}
-              className="relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400"
+              className="relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-gray-50 hover:text-gray-900 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300 dark:shadow-[0_10px_24px_rgba(2,6,23,0.35)] dark:hover:bg-gray-800 dark:hover:text-white"
               aria-label="Toggle dark mode"
             >
               {darkMode ? (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/></svg>
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M15.25 4.6A8.25 8.25 0 1 0 19.4 15.25a8.25 8.25 0 0 1-4.15-10.65Z" />
+                  <path d="M15.5 2.75v1.5" />
+                  <path d="M15.5 19.75v1.5" />
+                  <path d="M21.25 15.5h-1.5" />
+                  <path d="M4.25 15.5h-1.5" />
+                </svg>
               ) : (
-                <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4.293 2.293a1 1 0 011.414 0l.707.707a1 1 0 11-1.414 1.414l-.707-.707a1 1 0 010-1.414zm2.828 2.828a1 1 0 011.414 0l.707.707a1 1 0 11-1.414 1.414l-.707-.707a1 1 0 010-1.414zM10 7a3 3 0 100 6 3 3 0 000-6zm-4.293-.707a1 1 0 00-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707zm2.828 9.172a1 1 0 011.414 0l.707.707a1 1 0 11-1.414 1.414l-.707-.707a1 1 0 010-1.414zm10-10a1 1 0 010 1.414l-.707.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM10 18a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zm-4.293-2.293a1 1 0 00-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707zm-2.828-2.828a1 1 0 00-1.414 1.414l.707.707a1 1 0 001.414-1.414l-.707-.707z" clipRule="evenodd"/></svg>
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3.6" />
+                  <path d="M12 2.5v2.2" />
+                  <path d="M12 19.3v2.2" />
+                  <path d="M4.7 4.7l1.55 1.55" />
+                  <path d="M17.75 17.75l1.55 1.55" />
+                  <path d="M2.5 12h2.2" />
+                  <path d="M19.3 12h2.2" />
+                  <path d="M4.7 19.3l1.55-1.55" />
+                  <path d="M17.75 6.25l1.55-1.55" />
+                </svg>
               )}
             </button>
 
@@ -275,6 +294,9 @@ function TopBar({ onSidebarToggle }) {
                 <div>
                   <span className="block font-medium text-gray-700 dark:text-gray-400">{displayName}</span>
                   <span className="block text-sm text-gray-500">{displayRole}</span>
+                  <span className="mt-1 inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-700 dark:border-sky-900/50 dark:bg-sky-950/30 dark:text-sky-300">
+                    {activeBranchName}
+                  </span>
                 </div>
                 <div className="mt-3 rounded-xl border border-gray-100 bg-gray-50/80 px-3 py-3 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-800/50 dark:text-gray-300">
                   <div className="mb-2 flex items-center gap-2">

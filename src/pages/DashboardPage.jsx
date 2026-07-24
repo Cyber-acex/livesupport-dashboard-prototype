@@ -136,11 +136,11 @@ function DashboardPage() {
   ]), [recentMessages]);
 
   return (
-    <div className="flex min-h-dvh overflow-hidden bg-gray-50 dark:bg-gray-900">
+    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
-        <main className="mx-auto flex-1 w-full max-w-7xl overflow-y-auto p-3 sm:p-4 md:p-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-8">
           {/* Page Header */}
           <div className="mb-8">
               <h1 className="text-2xl font-bold text-gray-900 sm:text-3xl dark:text-white">Dashboard</h1>

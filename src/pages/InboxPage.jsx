@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import StatusBadge from '../components/StatusBadge';
 import CallStatusBadge from '../components/CallStatusBadge';
 import CallLinkPanel from '../components/CallLinkPanel';
+import VoiceCallPanel from '../components/VoiceCallPanel';
 import { useCallSocket } from '../hooks/useCallSocket';
 import { useCallWebRTC } from '../hooks/useCallWebRTC';
 import { formatInboxTimestamp } from '../utils/inboxTime';
@@ -23,7 +25,8 @@ function formatDate(value) {
   return formatInboxTimestamp(value);
 }
 
-function InboxPage() {
+function InboxPage({ defaultPlatform = null }) {
+  const platformFilter = String(defaultPlatform || '').trim().toLowerCase() || null;
   const { success, error, warning, info } = useNotification();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,10 +75,12 @@ function InboxPage() {
   const [callStarted, setCallStarted] = useState(false);
   const [offerSent, setOfferSent] = useState(false);
   const [localStream, setLocalStream] = useState(null);
+  const [showVoiceCallPanel, setShowVoiceCallPanel] = useState(false);
   const [recentOrders, setRecentOrders] = useState([]);
   const [recentOrdersLoading, setRecentOrdersLoading] = useState(false);
   const [remoteStream, setRemoteStream] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const navigate = useNavigate();
   const [editingConversationId, setEditingConversationId] = useState(null);
   const [editingConversationName, setEditingConversationName] = useState('');
   const [isSavingConversationName, setIsSavingConversationName] = useState(false);
@@ -455,19 +460,23 @@ function InboxPage() {
     }
   }
 
-  async function sendMessage() {
-    if (!selectedConversation?.id || !composer.trim()) return;
-    if (!canUseAiReply(autopilotMode) && composer.trim().startsWith('AI')) {
+  async function sendConversationMessage(text, options = {}) {
+    const { clearComposer = true } = options;
+    const trimmedText = text?.trim();
+
+    if (!selectedConversation?.id || !trimmedText) return false;
+    if (!canUseAiReply(autopilotMode) && trimmedText.startsWith('AI')) {
       warning('AI replies are disabled in Manual Mode.');
-      return;
+      return false;
     }
+
     setIsSending(true);
 
     try {
       const response = await fetch('/api/send-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation_id: selectedConversation.id, message: composer.trim() })
+        body: JSON.stringify({ conversation_id: selectedConversation.id, message: trimmedText })
       });
 
       if (!response.ok) {
@@ -479,11 +488,14 @@ function InboxPage() {
       const data = await response.json();
       const messageData = data.message || data.messageData || {
         sender: 'sent',
-        message: composer.trim(),
+        message: trimmedText,
         created_at: new Date().toISOString()
       };
 
-      setComposer('');
+      if (clearComposer) {
+        setComposer('');
+      }
+
       setMessages((prev) => {
         const alreadyExists = prev.some((msg) =>
           String(msg.sender) === String(messageData.sender) &&
@@ -503,12 +515,20 @@ function InboxPage() {
           unread_count: 0
         };
       }));
+
+      return true;
     } catch (error) {
       console.error('Inbox send message error', error);
-      error(err.message || 'Failed to send message');
+      error(error.message || 'Failed to send message');
+      return false;
     } finally {
       setIsSending(false);
     }
+  }
+
+  async function sendMessage() {
+    if (!selectedConversation?.id || !composer.trim()) return;
+    await sendConversationMessage(composer.trim());
   }
 
   async function handleEscalateConversation() {
@@ -640,6 +660,7 @@ function InboxPage() {
     setCallToken('');
     setOfferSent(false);
     setCallStarted(true);
+    setShowVoiceCallPanel(true);
 
     try {
       const response = await fetch('/api/call-sessions', {
@@ -690,6 +711,7 @@ function InboxPage() {
 
       const matchesQuery = !term || searchable.includes(term);
       const isEscalated = Boolean(conversation.escalated || escalatedConversationIds.includes(String(conversation.id)));
+      const matchesPlatform = !platformFilter || String(conversation.platform || '').toLowerCase() === platformFilter;
       const matchesFilter = (() => {
         switch (activeFilter) {
           case 'priority':
@@ -705,9 +727,9 @@ function InboxPage() {
         }
       })();
 
-      return matchesQuery && matchesFilter;
+      return matchesQuery && matchesPlatform && matchesFilter;
     });
-  }, [activeFilter, conversations, escalatedConversationIds, query]);
+  }, [activeFilter, conversations, escalatedConversationIds, platformFilter, query]);
 
   const activeConversation = filteredConversations.find((conversation) => conversation.id === selectedConversation?.id) || filteredConversations[0] || null;
   const activeConversationStatus = activeConversation?.escalated || escalatedConversationIds.includes(String(activeConversation?.id))
@@ -754,6 +776,36 @@ function InboxPage() {
   }, [activeConversation?.phone]);
 
   const latestRecentOrder = recentOrders[0] || null;
+  const queueSummary = useMemo(() => {
+    const visibleConversations = platformFilter
+      ? conversations.filter((conversation) => String(conversation.platform || '').toLowerCase() === platformFilter)
+      : conversations;
+    const total = visibleConversations.length;
+    const needsReply = visibleConversations.filter((conversation) => {
+      const isEscalated = Boolean(conversation.escalated || escalatedConversationIds.includes(String(conversation.id)));
+      return !isEscalated && ((conversation.unread_count || 0) > 0 || conversation.platform === 'WhatsApp');
+    }).length;
+    const escalated = visibleConversations.filter((conversation) => Boolean(conversation.escalated || escalatedConversationIds.includes(String(conversation.id)))).length;
+
+    return [
+      { label: 'Live queue', value: total, detail: 'Open conversations', tone: 'from-brand-500 to-cyan-400' },
+      { label: 'Needs reply', value: needsReply, detail: 'Awaiting agent action', tone: 'from-amber-500 to-orange-400' },
+      { label: 'Escalations', value: escalated, detail: 'Priority handoffs', tone: 'from-rose-500 to-pink-500' }
+    ];
+  }, [conversations, escalatedConversationIds, platformFilter]);
+
+  async function handleShareUpdate() {
+    if (!activeConversation?.id) return;
+
+    const shareText = latestRecentOrder
+      ? `Hi ${activeConversation.name || 'there'}, just a quick update on your order #${latestRecentOrder.order_id || latestRecentOrder.id || 'this order'}: it is currently ${latestRecentOrder.status || 'unknown'}.`
+      : "Customer doesn't have any recent orders";
+
+    const sent = await sendConversationMessage(shareText, { clearComposer: false });
+    if (sent) {
+      success('Update sent to customer');
+    }
+  }
 
   function createReceiptNumber() {
     return `RCP-${Date.now().toString().slice(-6)}`;
@@ -953,6 +1005,22 @@ function InboxPage() {
     }).filter((message) => message.content);
   }, [activeConversation, messages]);
 
+  const groupedConversationMessages = useMemo(() => {
+    const groups = [];
+    let previousSender = null;
+
+    conversationMessages.forEach((message) => {
+      if (previousSender !== message.sender) {
+        groups.push({ sender: message.sender, messages: [message] });
+        previousSender = message.sender;
+      } else {
+        groups[groups.length - 1].messages.push(message);
+      }
+    });
+
+    return groups;
+  }, [conversationMessages]);
+
   useEffect(() => {
     const container = messagesViewportRef.current;
     if (!container) return;
@@ -1036,19 +1104,20 @@ function InboxPage() {
     return (
       <div
         key={conversation.id}
-        className={`relative rounded-2xl border p-4 transition ${
+        className={`group relative overflow-hidden rounded-2xl border p-3.5 backdrop-blur-sm transition-all duration-300 ${
           isActive
-            ? 'border-brand-500/30 bg-brand-500/10 shadow-sm shadow-brand-500/10'
-            : 'border-slate-200 bg-white hover:border-brand-500/20 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/70 dark:hover:bg-slate-900'
+            ? 'border-brand-500/50 bg-brand-50/70 shadow-[0_10px_24px_rgba(37,99,235,0.12)] dark:bg-brand-500/10'
+            : 'border-slate-200/80 bg-white/90 hover:border-brand-500/30 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/70 dark:hover:bg-slate-900/80'
         }`}
       >
+        <div className={`absolute inset-y-0 left-0 w-0.5 bg-brand-500 ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`} />
         <button
           type="button"
           onClick={() => setSelectedConversation(conversation)}
           className="w-full text-left"
         >
           <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-400 text-sm font-semibold text-white">
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${isActive ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
               {initials}
             </div>
             <div className="min-w-0 flex-1">
@@ -1063,7 +1132,7 @@ function InboxPage() {
                 ) : null}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                   {conversation.platform || 'Chat'}
                 </span>
                 <span>{formatDate(conversation.last_message_at || conversation.updated_at || conversation.created_at)}</span>
@@ -1083,7 +1152,7 @@ function InboxPage() {
             setEditingConversationId(String(conversation.id));
             setEditingConversationName(conversation.name || conversation.phone || '');
           }}
-          className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:border-brand-500/30 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200/80 bg-white/90 text-slate-600 shadow-sm transition hover:border-brand-500/30 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 20h9" />
@@ -1092,7 +1161,7 @@ function InboxPage() {
         </button>
 
         {String(editingConversationId) === String(conversation.id) ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900" onClick={(event) => event.stopPropagation()}>
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white/90 p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900/80" onClick={(event) => event.stopPropagation()}>
             <input
               autoFocus
               value={editingConversationName}
@@ -1131,39 +1200,73 @@ function InboxPage() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 dark:bg-slate-950 dark:text-white">
+    <div className="min-h-screen bg-[#f4f7fb] text-slate-900 dark:bg-slate-950 dark:text-white">
       <div className="flex min-h-screen">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-            <div className="mb-4 flex flex-col gap-4 rounded-[32px] border border-slate-200 bg-white/80 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 sm:p-5 md:flex-row md:items-center md:justify-between md:gap-6">
-              <div>
-                <p className="text-sm font-semibold uppercase tracking-[0.24em] text-brand-500">Customer inbox</p>
-                <h1 className="mt-2 text-3xl font-semibold text-slate-900 dark:text-white">TailAdmin-style conversations</h1>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">A refined chat workspace for tickets, follow-ups, and live support replies.</p>
+          <main className="flex-1 min-h-0 overflow-hidden p-3 sm:p-4 lg:p-6">
+            <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950 sm:p-1">
+              <div className="flex flex-col gap-4 px-3 py-4 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="max-w-2xl">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-brand-600 dark:text-brand-400">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                    Operations / Inbox
+                  </div>
+                  <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
+                    {platformFilter === 'messenger' ? 'Messenger inbox workspace' : 'Inbox workspace'}
+                  </h1>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    {platformFilter === 'messenger'
+                      ? 'Manage Facebook Messenger customer conversations.'
+                      : 'Stay ahead of every customer conversation.'}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <label className="relative min-w-[240px] sm:min-w-[280px]">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="6" />
+                      <path d="m20 20-4.2-4.2" />
+                    </svg>
+                    <input
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                      placeholder="Search conversations..."
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700"
+                  >
+                    Refresh
+                  </button>
+                </div>
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search conversations..."
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white sm:min-w-[220px] md:min-w-[260px]"
-                />
-                <button
-                  type="button"
-                  onClick={() => window.location.reload()}
-                  className="inline-flex items-center justify-center rounded-2xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-700"
-                >
-                  Refresh
-                </button>
+
+              <div className="grid gap-px border-t border-slate-200 bg-slate-200 dark:border-slate-800 dark:bg-slate-800 sm:grid-cols-3">
+                {queueSummary.map((card) => (
+                  <div key={card.label} className="bg-white p-3.5 dark:bg-slate-950 sm:first:rounded-bl-xl sm:last:rounded-br-xl">
+                    <div className="flex items-center justify-between gap-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                      {card.label}
+                    </div>
+                    <span className={`h-2 w-2 rounded-full bg-gradient-to-r ${card.tone}`} />
+                    </div>
+                    <div className="mt-1 flex items-baseline gap-2">
+                      <p className="text-xl font-semibold text-slate-900 dark:text-white">{card.value}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{card.detail}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-[0_24px_70px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
-              <div className="grid gap-0 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_320px]">
-                <aside className="flex min-h-[320px] flex-col border-b border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:min-h-[460px] lg:border-b-0 lg:border-r">
-                  <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-950">
+              <div className="grid h-full min-h-0 flex-1 gap-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+                <aside className="flex min-h-0 flex-1 flex-col border-b border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:border-b-0 lg:border-r">
+                  <div className="rounded-[28px] border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-900 dark:text-white">Smart queue</p>
@@ -1192,7 +1295,7 @@ function InboxPage() {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1">
+                  <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                     <div className="space-y-3">
                       {loading ? (
                         <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
@@ -1209,12 +1312,12 @@ function InboxPage() {
                   </div>
                 </aside>
 
-                <section className="flex min-h-[420px] flex-col bg-white dark:bg-slate-950 lg:min-h-[560px]">
+                <section className="flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(241,245,249,0.94))] dark:bg-slate-950">
                   {activeConversation ? (
                     <>
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/80 px-5 py-4 dark:border-slate-800 dark:bg-slate-900/80">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-white/85 px-6 py-5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/85">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-400 text-sm font-semibold text-white">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-400 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.25)]">
                             {(activeConversation.name || activeConversation.phone || 'C').charAt(0).toUpperCase()}
                           </div>
                           <div>
@@ -1248,6 +1351,14 @@ function InboxPage() {
                           </button>
                           <button
                             type="button"
+                            onClick={() => navigate(`/inbox/chat/${activeConversation?.id}`)}
+                            disabled={!activeConversation?.id}
+                            className="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                          >
+                            Open staff chat
+                          </button>
+                          <button
+                            type="button"
                             onClick={handleResolveConversation}
                             className="rounded-full bg-brand-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-700"
                           >
@@ -1273,34 +1384,45 @@ function InboxPage() {
                         </div>
                       </div>
 
-                      <div className="relative flex-1 min-h-0">
-                        <div ref={messagesViewportRef} className="h-full scrollbar-thin scrollbar-thumb-slate-300 scrollbar-track-transparent dark:scrollbar-thumb-slate-700 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.08),_transparent_30%)] p-5 dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
-                          <div className="space-y-4">
-                          {messagesLoading ? (
-                          <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
-                            Loading message thread...
-                          </div>
-                        ) : conversationMessages.length > 0 ? (
-                          conversationMessages.map((message) => (
-                            <div key={message.id} className={`flex ${message.sender === 'agent' ? 'justify-end' : 'justify-start'}`}>
-                              <div className={`max-w-[80%] rounded-3xl px-4 py-3 text-sm leading-6 shadow-sm ${
-                                message.sender === 'agent'
-                                  ? 'bg-slate-900 text-slate-50 dark:bg-brand-600'
-                                  : 'border border-slate-200 bg-white text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200'
-                              }`}>
-                                <div className="mb-1 flex items-center justify-between gap-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
-                                  <span>{message.sender === 'agent' ? 'Support agent' : 'Customer'}</span>
-                                  {message.createdAt ? <span>{formatInboxTimestamp(message.createdAt)}</span> : null}
-                                </div>
-                                {message.content}
+                      <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
+                        <div ref={messagesViewportRef} className="flex-1 min-h-0 max-h-[56vh] overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                          <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+                            {messagesLoading ? (
+                              <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
+                                Loading message thread...
                               </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
-                            No message history found for this conversation yet.
-                          </div>
-                        )}
+                            ) : groupedConversationMessages.length > 0 ? (
+                              groupedConversationMessages.map((group, groupIndex) => (
+                                <div key={`${group.sender}-${groupIndex}`} className="space-y-6">
+                                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">
+                                    <span className="inline-flex h-1.5 w-1.5 rounded-full bg-brand-500" />
+                                    <span>{group.sender === 'agent' ? 'Support' : 'Customer'}</span>
+                                  </div>
+                                  <div className="space-y-3">
+                                    {group.messages.map((message) => (
+                                      <div key={message.id} className={`flex ${message.sender === 'agent' ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`relative max-w-[80%] rounded-[24px] border px-5 py-4 text-sm leading-7 shadow-sm ${
+                                          message.sender === 'agent'
+                                            ? 'border-transparent bg-brand-600 text-white'
+                                            : 'border border-slate-200 bg-white text-slate-700 shadow-[0_10px_25px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200'
+                                        }`}>
+                                          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                                          {message.createdAt ? (
+                                            <div className="mt-3 text-right text-[11px] leading-none text-slate-400 dark:text-slate-500">
+                                              {formatInboxTimestamp(message.createdAt)}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
+                                No message history found for this conversation yet.
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -1317,10 +1439,10 @@ function InboxPage() {
                         </button>
                       </div>
 
-                      <div className="border-t border-slate-200 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-900/80">
-                        <div className="rounded-3xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                      <div className="border-t border-slate-200/80 bg-gradient-to-r from-white via-slate-50/80 to-white p-4 dark:border-slate-800 dark:from-slate-950 dark:via-slate-900/70 dark:to-slate-950">
+                        <div className="mx-auto w-full max-w-2xl rounded-[28px] border border-slate-200/80 bg-white/90 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.09)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
                           <textarea
-                            rows={2}
+                            rows={3}
                             placeholder="Write a reply..."
                             value={composer}
                             onChange={(event) => setComposer(event.target.value)}
@@ -1330,7 +1452,7 @@ function InboxPage() {
                                 sendMessage();
                               }
                             }}
-                            className="w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            className="min-h-[112px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                           />
                           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -1432,7 +1554,11 @@ function InboxPage() {
                     >
                       Create receipt
                     </button>
-                    <button type="button" className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                    <button
+                      type="button"
+                      onClick={handleShareUpdate}
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                    >
                       Share update
                     </button>
                     <button
@@ -1453,6 +1579,17 @@ function InboxPage() {
                       </div>
                     ) : null}
                     <CallStatusBadge status={callStatus} />
+                    <div className="mt-4">
+                      {showVoiceCallPanel ? (
+                        <VoiceCallPanel
+                          contact={{ id: selectedConversation?.id, name: selectedConversation?.name || selectedConversation?.phone || 'Customer' }}
+                          currentUser={currentUser}
+                          onClose={() => setShowVoiceCallPanel(false)}
+                          onCallEnded={() => setShowVoiceCallPanel(false)}
+                        />
+                      ) : null}
+                    </div>
+                    <audio ref={remoteAudioRef} autoPlay playsInline hidden />
                   </div>
                 </aside>
               </div>

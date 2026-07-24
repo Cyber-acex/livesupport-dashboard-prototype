@@ -9,7 +9,7 @@ import session from "express-session";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { randomUUID, randomBytes } from 'crypto';
+import { randomUUID, randomBytes, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -21,7 +21,12 @@ import { sendEmail } from "./utils/email.js";
 import { fetchGmailEmails } from "./utils/gmail-imap.js";
 import createAuthRouter from "./routes/auth.js";
 import { canAutoSendReplies, normalizeAutopilotMode, canUseAiReply } from './src/services/autopilotMode.js';
+import { detectHighRiskIntent, createHighRiskEscalationContext, evaluateIntentPipeline } from './utils/highRiskIntentDetector.js';
+import { listVouchers, createVoucher, updateVoucher, deleteVoucher, validateVoucher, redeemVoucher, getVoucherStats, prepareVoucherOrderPayload } from './utils/voucherStorage.js';
+import { mergeConversationMessagesForDisplay } from './utils/conversationHistory.js';
+import { extractCsatRating } from './src/utils/csat.js';
 const app = express();
+app.set('trust proxy', true);
 
 const upload = multer({ dest: path.join(__dirname, "uploads") });
 
@@ -38,6 +43,10 @@ const onlineAgents = new Map(); // socketId -> { userId, name, role, socketId, l
 const typingIndicators = new Map(); // conversationId -> Set of agent names
 // Track user sessions to support force-logout
 const userSessions = new Map(); // userId -> Set of sessionIDs
+// Track resolved-ticket CSAT follow-ups by phone so numeric replies map back to the right ticket
+const pendingCsatByPhone = new Map();
+const FEEDBACK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const FEEDBACK_LINK_BASE_URL = process.env.FEEDBACK_LINK_BASE_URL || process.env.APP_URL || '';
 
 // Voice infrastructure
 const voiceUsers = new Map(); // socketId -> { userId, name, role, socketId, avatarUrl, status, voiceSessionId, muted, speaking, currentChannelId }
@@ -50,6 +59,8 @@ const CALL_UNANSWERED_TIMEOUT_MS = 60 * 1000;
 
 // Dashboard snapshots storage
 const dashboardSnapshots = new Map(); // name -> { data, saved_at }
+const recentWebhookEventIds = new Map(); // cache of recent webhook event IDs to prevent duplicate processing
+const WEBHOOK_EVENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 const defaultVoiceChannels = [
     { id: 1, name: 'General Staff', description: 'Open staff channel for general coordination', createdAt: new Date().toISOString() },
@@ -104,6 +115,145 @@ function normalizeVoiceUser(socket, data) {
         muted: !!data.muted,
         speaking: !!data.speaking,
         currentChannelId: data.currentChannelId || null
+    };
+}
+
+function emitHighRiskEscalation(payload) {
+    if (!payload) return;
+    try {
+        io.emit('highRiskEscalated', payload);
+        io.emit('staffNotification', {
+            type: 'high-risk-escalation',
+            title: 'High-risk intent detected',
+            body: payload.detectedIntent || 'High-risk intent detected',
+            conversationId: payload.conversationId,
+            createdAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.warn('Failed to emit high-risk escalation event', err);
+    }
+}
+
+async function persistHighRiskEscalation(context) {
+    if (!context || !context.conversationId) return null;
+    const payload = createHighRiskEscalationContext(context);
+    const customerName = await new Promise((resolve) => {
+        db.query('SELECT name FROM conversations WHERE id = ? LIMIT 1', [payload.conversationId], (err, rows) => {
+            if (err || !rows?.length) resolve(null);
+            else resolve(rows[0].name || null);
+        });
+    });
+
+    const extendedInsertSql = isPg
+        ? `INSERT INTO escalations (conversation_id, customer_name, escalated_at, alarm_active, assigned_staff_id, customer_id, branch_id, escalation_reason, detected_intent, ai_confidence, original_message, status)
+            VALUES (?, ?, ?, TRUE, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (conversation_id) DO UPDATE SET
+                escalated_at = CURRENT_TIMESTAMP,
+                alarm_active = TRUE,
+                escalation_reason = EXCLUDED.escalation_reason,
+                detected_intent = EXCLUDED.detected_intent,
+                ai_confidence = EXCLUDED.ai_confidence,
+                original_message = EXCLUDED.original_message,
+                status = EXCLUDED.status`
+        : `INSERT INTO escalations (conversation_id, customer_name, escalated_at, alarm_active, assigned_staff_id, customer_id, branch_id, escalation_reason, detected_intent, ai_confidence, original_message, status)
+            VALUES (?, ?, NOW(), 1, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                escalated_at = CURRENT_TIMESTAMP,
+                alarm_active = 1,
+                escalation_reason = VALUES(escalation_reason),
+                detected_intent = VALUES(detected_intent),
+                ai_confidence = VALUES(ai_confidence),
+                original_message = VALUES(original_message),
+                status = VALUES(status)`;
+
+    const fallbackInsertSql = isPg
+        ? `INSERT INTO escalations (conversation_id, customer_name, escalated_at, alarm_active, status)
+            VALUES (?, ?, ?, TRUE, ?)
+            ON CONFLICT (conversation_id) DO UPDATE SET
+                customer_name = EXCLUDED.customer_name,
+                escalated_at = CURRENT_TIMESTAMP,
+                alarm_active = TRUE,
+                status = EXCLUDED.status`
+        : `INSERT INTO escalations (conversation_id, customer_name, escalated_at, alarm_active, status)
+            VALUES (?, ?, NOW(), 1, ?)
+            ON DUPLICATE KEY UPDATE
+                customer_name = VALUES(customer_name),
+                escalated_at = CURRENT_TIMESTAMP,
+                alarm_active = 1,
+                status = VALUES(status)`;
+
+    return await new Promise((resolve) => {
+        const tryExtendedInsert = () => {
+            db.query(extendedInsertSql, [
+                payload.conversationId,
+                customerName || null,
+                payload.timestamp,
+                null,
+                payload.customerId || null,
+                payload.branchId || null,
+                payload.escalationReason || null,
+                payload.detectedIntent || null,
+                payload.confidence,
+                payload.message || null,
+                payload.status || 'Escalated'
+            ], (err) => {
+                if (!err) {
+                    resolve(payload);
+                    return;
+                }
+                const message = String(err?.message || err || '');
+                const isMissingColumn = /column .* does not exist|unknown column|no such column/i.test(message);
+                if (isMissingColumn) {
+                    db.query(fallbackInsertSql, [
+                        payload.conversationId,
+                        customerName || null,
+                        payload.timestamp,
+                        payload.status || 'Escalated'
+                    ], (fallbackErr) => {
+                        if (fallbackErr) {
+                            console.error('Failed to persist high-risk escalation with fallback insert', fallbackErr);
+                            resolve(null);
+                            return;
+                        }
+                        resolve(payload);
+                    });
+                    return;
+                }
+                console.error('Failed to persist high-risk escalation', err);
+                resolve(null);
+            });
+        };
+
+        tryExtendedInsert();
+    });
+}
+
+async function handleHighRiskMessage({ conversationId, customerMessage, phone, branchId = null, customerId = null, confidenceOverride = null }) {
+    const detection = evaluateIntentPipeline(customerMessage, { confidence: confidenceOverride ?? null });
+    const shouldEscalate = detection.shouldEscalate || detection.isHighRisk || (Number(detection.confidence) < 0.75);
+    const responsePayload = {
+        conversationId,
+        branchId,
+        customerId,
+        message: customerMessage,
+        confidence: Number(detection.confidence),
+        detectedIntent: detection.detectedIntent,
+        escalationReason: detection.escalationReason || (Number(detection.confidence) < 0.75 ? 'Low Confidence.' : null),
+        timestamp: new Date().toISOString(),
+        status: 'Escalated'
+    };
+
+    if (!shouldEscalate) return { shouldEscalate: false, reply: null, payload: null, detection };
+
+    const stored = await persistHighRiskEscalation(responsePayload);
+    if (stored) {
+        emitHighRiskEscalation(stored);
+    }
+    return {
+        shouldEscalate: true,
+        reply: detection.reply || 'I’m sorry, but I need to escalate this request to our team for review.',
+        payload: stored || responsePayload,
+        detection
     };
 }
 
@@ -409,6 +559,59 @@ function getVoiceSessionSummary(session) {
         }))
     };
 }
+
+function logIncomingMessagePayload(platform, conversationIdentifier, senderType, text, extra = {}) {
+    const payload = {
+        platform,
+        conversationIdentifier,
+        senderType,
+        text,
+        receivedAt: new Date().toISOString(),
+        ...extra
+    };
+    console.log('📥 Incoming message payload:', JSON.stringify(payload, null, 2));
+}
+
+function normalizeWebhookId(value) {
+    if (!value && value !== 0) return '';
+    return String(value).trim().replace(/\D+/g, '').toLowerCase();
+}
+
+function shouldIgnoreWebhookEvent(eventId, platform, compositeKey = null) {
+    // If we have a proper event ID, use it
+    if (eventId) {
+        const key = `${platform}:${eventId}`;
+        if (recentWebhookEventIds.has(key)) {
+            return true;
+        }
+        recentWebhookEventIds.set(key, Date.now());
+        return false;
+    }
+    
+    // If event ID is missing but we have a composite key (sender:recipient:timestamp:message_hash),
+    // use that for deduplication to prevent duplicate AI replies
+    if (compositeKey) {
+        const key = `${platform}:composite:${compositeKey}`;
+        if (recentWebhookEventIds.has(key)) {
+            console.warn(`⏱️ Duplicate webhook event detected using composite key: ${key}`);
+            return true;
+        }
+        recentWebhookEventIds.set(key, Date.now());
+        return false;
+    }
+    
+    // No ID and no composite key - can't deduplicate
+    return false;
+}
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, timestamp] of recentWebhookEventIds.entries()) {
+        if (now - timestamp > WEBHOOK_EVENT_CACHE_TTL_MS) {
+            recentWebhookEventIds.delete(key);
+        }
+    }
+}, WEBHOOK_EVENT_CACHE_TTL_MS);
 
 function getConversationAutopilotMode(conversationId) {
     const convId = Number(conversationId);
@@ -1102,6 +1305,44 @@ if (isPg) {
     db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT", (err) => {});
     db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS attachments TEXT", (err) => {});
     db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_due TIMESTAMP", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_by INTEGER", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_category VARCHAR(100)", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_rating INTEGER", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_rating_comment TEXT", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_rated_at TIMESTAMP", (err) => {});
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP", (err) => {});
+    db.query(`
+        CREATE TABLE IF NOT EXISTS customer_feedback (
+            id SERIAL PRIMARY KEY,
+            token VARCHAR(128) NOT NULL UNIQUE,
+            ticket_id INTEGER NOT NULL,
+            customer_id INTEGER,
+            branch_id INTEGER,
+            rating INTEGER,
+            comment TEXT,
+            used BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP NOT NULL,
+            used_at TIMESTAMP,
+            submitted_at TIMESTAMP,
+            feedback_source VARCHAR(100),
+            created_by_staff_id INTEGER
+        )
+    `, (err) => { if (err) console.log('Error creating customer_feedback table:', err); });
+    db.query(`
+        CREATE TABLE IF NOT EXISTS customer_feedback_delivery_logs (
+            id SERIAL PRIMARY KEY,
+            feedback_id INTEGER NOT NULL,
+            channel VARCHAR(50) NOT NULL,
+            destination VARCHAR(255),
+            status VARCHAR(30) NOT NULL,
+            error TEXT,
+            attempted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (feedback_id) REFERENCES customer_feedback(id) ON DELETE CASCADE
+        )
+    `, (err) => { if (err) console.log('Error creating customer_feedback_delivery_logs table:', err); });
 } else {
     // keep MySQL originals
     db.query(`
@@ -1177,6 +1418,14 @@ if (isPg) {
     db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS tags TEXT", (err) => { if (err && err.errno !== 1060) console.log('Error adding tags to tickets:', err); });
     db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS attachments TEXT", (err) => { if (err && err.errno !== 1060) console.log('Error adding attachments to tickets:', err); });
     db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS sla_due TIMESTAMP", (err) => { if (err && err.errno !== 1060) console.log('Error adding sla_due to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP", (err) => { if (err && err.errno !== 1060) console.log('Error adding resolved_at to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolved_by INTEGER", (err) => { if (err && err.errno !== 1060) console.log('Error adding resolved_by to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_notes TEXT", (err) => { if (err && err.errno !== 1060) console.log('Error adding resolution_notes to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS resolution_category VARCHAR(100)", (err) => { if (err && err.errno !== 1060) console.log('Error adding resolution_category to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_rating INTEGER", (err) => { if (err && err.errno !== 1060) console.log('Error adding customer_rating to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_rating_comment TEXT", (err) => { if (err && err.errno !== 1060) console.log('Error adding customer_rating_comment to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS customer_rated_at TIMESTAMP", (err) => { if (err && err.errno !== 1060) console.log('Error adding customer_rated_at to tickets:', err); });
+    db.query("ALTER TABLE tickets ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP", (err) => { if (err && err.errno !== 1060) console.log('Error adding updated_at to tickets:', err); });
 }
 
 
@@ -1246,6 +1495,458 @@ app.get('/favicon.png', (req, res) => {
 
 // Mount auth routes for password reset
 app.use('/api/auth', createAuthRouter(prisma));
+
+async function ensureDefaultBranch() {
+    try {
+        const existingBranch = await prisma.branch.findFirst({
+            select: { id: true, name: true, createdAt: true, updatedAt: true },
+            orderBy: { name: 'asc' }
+        });
+        if (existingBranch) return existingBranch;
+
+        const fallbackName = process.env.DEFAULT_BRANCH_NAME || 'Main Branch';
+        return prisma.branch.create({
+            data: { name: fallbackName },
+            select: { id: true, name: true, createdAt: true, updatedAt: true }
+        });
+    } catch (error) {
+        console.warn('Unable to ensure a default branch exists:', error?.message || error);
+        return null;
+    }
+}
+
+app.get('/api/branches', async (req, res) => {
+    try {
+        const email = String(req.query.email || '').trim().toLowerCase();
+        let branches = await prisma.branch.findMany({
+            orderBy: { name: 'asc' },
+            select: { id: true, name: true, createdAt: true, updatedAt: true }
+        });
+
+        if (email) {
+            const user = await prisma.user.findFirst({
+                where: { email },
+                select: {
+                    branch_id: true,
+                    branch: {
+                        select: { id: true, name: true, createdAt: true, updatedAt: true }
+                    }
+                }
+            });
+
+            if (user?.branch_id != null) {
+                const allowedBranchId = Number(user.branch_id);
+                const matchedBranch = branches.find((branch) => Number(branch.id) === allowedBranchId)
+                    || (user.branch ? {
+                        id: Number(user.branch.id),
+                        name: user.branch.name,
+                        createdAt: user.branch.createdAt,
+                        updatedAt: user.branch.updatedAt
+                    } : null);
+                if (matchedBranch) {
+                    return res.json([matchedBranch]);
+                }
+            }
+        }
+
+        if (!branches.length) {
+            const seededBranch = await ensureDefaultBranch();
+            if (seededBranch) {
+                branches = [seededBranch];
+            }
+        }
+
+        res.json(branches);
+    } catch (error) {
+        console.error('Failed to load branches', error);
+        res.status(500).json({ error: 'Failed to load branches' });
+    }
+});
+
+app.get('/api/customers/by-name/:name', async (req, res) => {
+    try {
+        const name = String(req.params.name || '').trim();
+        if (!name) {
+            return res.status(400).json({ error: 'name_required' });
+        }
+
+        const customer = await prisma.customer.findUnique({
+            where: { name },
+            select: {
+                id: true,
+                name: true,
+                phone: true,
+                conversations: {
+                    orderBy: { created_at: 'desc' },
+                    take: 1,
+                    select: { id: true, created_at: true, branch_id: true }
+                }
+            }
+        });
+
+        if (!customer) {
+            return res.json({ exists: false });
+        }
+
+        const latestConversation = customer.conversations[0] || null;
+        return res.json({
+            exists: true,
+            customer: { id: customer.id, name: customer.name, phone: customer.phone },
+            latestConversation
+        });
+    } catch (error) {
+        console.error('Failed to check customer by name', error);
+        res.status(500).json({ error: 'Failed to check customer' });
+    }
+});
+
+app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => {
+    try {
+        const { guestId, branchId, customerName, phone, channel } = req.body || {};
+        const normalizedBranchId = Number(branchId || 0);
+        const trimmedCustomerName = String(customerName || '').trim();
+
+        if (!normalizedBranchId) {
+            return res.status(400).json({ error: 'branch_required' });
+        }
+
+        if (!trimmedCustomerName) {
+            return res.status(400).json({ error: 'customer_name_required' });
+        }
+
+        const branch = await prisma.branch.findUnique({ where: { id: normalizedBranchId }, select: { id: true, name: true } });
+        if (!branch) {
+            return res.status(404).json({ error: 'branch_not_found' });
+        }
+
+        // Check if customer already exists
+        let customer = await prisma.customer.findUnique({
+            where: { name: trimmedCustomerName },
+            select: { id: true, name: true, phone: true }
+        });
+
+        // If customer exists, get their latest conversation
+        if (customer) {
+            const latestConversation = await prisma.conversation.findFirst({
+                where: { customer_id: customer.id },
+                orderBy: { created_at: 'desc' },
+                select: { id: true, created_at: true, branch_id: true, name: true }
+            });
+
+            if (latestConversation) {
+                // Return existing conversation
+                saveGuestSessionToStore({
+                    guestId: guestId || `guest-${Date.now()}`,
+                    conversationId: latestConversation.id,
+                    branchId: latestConversation.branch_id || normalizedBranchId,
+                    customerName: trimmedCustomerName,
+                    phone: phone || customer.phone || '',
+                    channel: channel || 'web'
+                });
+                return res.json({
+                    success: true,
+                    conversationId: latestConversation.id,
+                    branch: branch.name,
+                    isExisting: true
+                });
+            }
+        }
+
+        // Create new customer if doesn't exist
+        if (!customer) {
+            customer = await prisma.customer.create({
+                data: {
+                    name: trimmedCustomerName,
+                    phone: phone || null
+                },
+                select: { id: true, name: true, phone: true }
+            });
+        }
+
+        // Create new conversation for customer
+        const conversationResult = await new Promise((resolve, reject) => {
+            const insertSql = isPg
+                ? 'INSERT INTO conversations (phone, name, platform, branch_id, customer_id, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id'
+                : 'INSERT INTO conversations (phone, name, platform, branch_id, customer_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())';
+            const values = [phone || null, trimmedCustomerName, channel || 'web', normalizedBranchId, customer.id];
+            db.query(insertSql, values, (err, result) => {
+                if (err) return reject(err);
+                if (isPg && Array.isArray(result) && result[0]?.id != null) return resolve({ id: Number(result[0].id) });
+                if (isPg) return resolve({ id: Number(result?.insertId || null) });
+                if (result && typeof result === 'object' && 'insertId' in result) return resolve({ id: Number(result.insertId) });
+                resolve({ id: Number(result?.id || result?.insertId || null) });
+            });
+        });
+
+        const conversationId = Number(conversationResult?.id || 0);
+        if (!conversationId) {
+            return res.status(500).json({ error: 'conversation_create_failed' });
+        }
+
+        await new Promise((resolve, reject) => {
+            const messageSql = isPg
+                ? 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)'
+                : 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())';
+            db.query(messageSql, [conversationId, 'customer', `Welcome to ${branch.name}. We will respond shortly.`], (err) => { if (err) return reject(err); resolve(); });
+        });
+
+        saveGuestSessionToStore({
+            guestId: guestId || `guest-${Date.now()}`,
+            conversationId,
+            branchId: normalizedBranchId,
+            customerName: trimmedCustomerName,
+            phone: phone || '',
+            channel: channel || 'web'
+        });
+        return res.json({
+            success: true,
+            conversationId,
+            branch: branch.name,
+            isExisting: false
+        });
+    } catch (error) {
+        console.error('Failed to create customer web chat session', error);
+        res.status(500).json({ error: error?.message || 'Failed to create customer web chat session' });
+    }
+});
+
+app.get('/api/customer-web-chat/sessions/:guestId', (req, res) => {
+    try {
+        const session = loadGuestSessionFromStore(req.params.guestId);
+        if (!session) return res.status(404).json({ error: 'session_not_found' });
+        res.json({ success: true, session });
+    } catch (error) {
+        console.error('Failed to load customer web chat session', error);
+        res.status(500).json({ error: 'Failed to load customer web chat session' });
+    }
+});
+
+async function persistCustomerWebChatReply(conversationId, replyText, sender = 'sent') {
+    const normalizedConversationId = Number(conversationId || 0);
+    if (!normalizedConversationId || !replyText) return null;
+
+    const replyRow = await new Promise((resolve, reject) => {
+        const insertSql = isPg
+            ? 'INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id'
+            : 'INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())';
+        db.query(insertSql, [normalizedConversationId, sender, replyText, null], (err, result) => {
+            if (err) return reject(err);
+            if (isPg && Array.isArray(result) && result[0]?.id != null) return resolve({ id: Number(result[0].id) });
+            if (isPg) return resolve({ id: Number(result?.insertId || null) });
+            if (result && typeof result === 'object' && 'insertId' in result) return resolve({ id: Number(result.insertId) });
+            resolve({ id: Number(result?.id || result?.insertId || null) });
+        });
+    });
+
+    await new Promise((resolve, reject) => {
+        const aiInsertSql = isPg
+            ? 'INSERT INTO ai_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)'
+            : 'INSERT INTO ai_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())';
+        db.query(aiInsertSql, [normalizedConversationId, sender, replyText, null], (err) => {
+            if (err) return reject(err);
+            resolve();
+        });
+    });
+
+    const payload = {
+        id: replyRow?.id || null,
+        conversation_id: normalizedConversationId,
+        sender,
+        message: replyText,
+        created_at: new Date().toISOString()
+    };
+    emitNewMessageEvent(normalizedConversationId, payload);
+    return payload;
+}
+
+async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessage, phone, branchId }) {
+    const normalizedConversationId = Number(conversationId || 0);
+    const resolvedPhone = phone || null;
+    if (!normalizedConversationId || !customerMessage) return null;
+
+    if (isCustomerGreeting(customerMessage) && isStaffIdleForThreeMinutes(normalizedConversationId)) {
+        enableAIForConversation(normalizedConversationId);
+    }
+
+    const isHighRiskAnalysis = await handleHighRiskMessage({
+        conversationId: normalizedConversationId,
+        customerMessage,
+        phone: resolvedPhone,
+        branchId: Number(branchId || 0) || null,
+        customerId: null
+    });
+
+    if (isHighRiskAnalysis.shouldEscalate) {
+        if (isHighRiskAnalysis.reply) {
+            return persistCustomerWebChatReply(normalizedConversationId, isHighRiskAnalysis.reply, 'sent');
+        }
+        return null;
+    }
+
+    const orderConfirmed = await checkAndSaveOrderConfirmation(resolvedPhone, normalizedConversationId, customerMessage);
+    const aiAutoAllowed = isAIAutoSendEnabled(normalizedConversationId);
+    const forceAI = isTicketCreationRequest(customerMessage) || isRequestingStaff(customerMessage);
+    let replyText = null;
+
+    if (orderConfirmed && orderConfirmed.orderId) {
+        replyText = `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`;
+    } else if (aiAutoAllowed && (forceAI || shouldAIRespond(normalizedConversationId))) {
+        replyText = await getMistralReply(customerMessage, resolvedPhone, normalizedConversationId, Number(branchId || 0) || null);
+    }
+
+    if (replyText) {
+        return persistCustomerWebChatReply(normalizedConversationId, replyText, 'sent');
+    }
+
+    return null;
+}
+
+app.post('/api/customer-web-chat/messages', express.json(), async (req, res) => {
+    try {
+        const { guestId, conversationId, branchId, customerName, phone, message } = req.body || {};
+        const normalizedConversationId = Number(conversationId || 0);
+        const normalizedBranchId = Number(branchId || 0);
+        if (!normalizedConversationId || !message) {
+            return res.status(400).json({ error: 'conversation_and_message_required' });
+        }
+
+        const conversationRow = await new Promise((resolve, reject) => {
+            db.query('SELECT id, branch_id, name, phone FROM conversations WHERE id = ? LIMIT 1', [normalizedConversationId], (err, rows) => {
+                if (err) return reject(err);
+                resolve(Array.isArray(rows) && rows.length ? rows[0] : null);
+            });
+        });
+
+        if (!conversationRow) {
+            return res.status(404).json({ error: 'conversation_not_found' });
+        }
+        if (normalizedBranchId && Number(conversationRow.branch_id) !== normalizedBranchId) {
+            return res.status(403).json({ error: 'branch_mismatch' });
+        }
+
+        const insertMessageSql = isPg
+            ? 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) RETURNING id'
+            : 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())';
+        const messageInsertResult = await new Promise((resolve, reject) => {
+            db.query(insertMessageSql, [normalizedConversationId, 'customer', message], (err, result) => {
+                if (err) return reject(err);
+                if (isPg && Array.isArray(result) && result[0]?.id != null) return resolve({ id: Number(result[0].id) });
+                if (isPg) return resolve({ id: Number(result?.insertId || null) });
+                if (result && typeof result === 'object' && 'insertId' in result) return resolve({ id: Number(result.insertId) });
+                resolve({ id: Number(result?.id || result?.insertId || null) });
+            });
+        });
+
+        const messageData = {
+            id: messageInsertResult.id,
+            conversation_id: normalizedConversationId,
+            sender: 'customer',
+            message,
+            created_at: new Date().toISOString()
+        };
+        emitNewMessageEvent(normalizedConversationId, messageData);
+
+        const replyPayload = await maybeGenerateCustomerWebChatReply({
+            conversationId: normalizedConversationId,
+            customerMessage: message,
+            phone: phone || conversationRow.phone || null,
+            branchId: normalizedBranchId || Number(conversationRow.branch_id || 0)
+        });
+
+        if (replyPayload) {
+            checkAndCreateTicket(normalizedConversationId, phone || conversationRow.phone || null, message);
+        }
+
+        res.json({ success: true, message: messageData, reply: replyPayload || null });
+    } catch (error) {
+        console.error('Failed to save customer web chat message', error);
+        res.status(500).json({ error: error?.message || 'Failed to save customer web chat message' });
+    }
+});
+
+app.get('/api/customer-web-chat/conversations/:id/messages', (req, res) => {
+    const conversationId = Number(req.params.id || 0);
+    if (!conversationId) {
+        return res.status(400).json({ error: 'conversation_id_required' });
+    }
+
+    db.query('SELECT id, conversation_id, sender, message, created_at FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC', [conversationId], (err, rows) => {
+        if (err) {
+            console.error('Failed to load customer web chat messages', err);
+            return res.status(500).json({ error: 'Failed to load messages' });
+        }
+        const messages = Array.isArray(rows) ? rows : [];
+        db.query('SELECT id, conversation_id, sender, message, created_at FROM replies WHERE conversation_id = ? ORDER BY created_at ASC, id ASC', [conversationId], (replyErr, replyRows) => {
+            if (replyErr) {
+                console.error('Failed to load customer web chat replies', replyErr);
+                return res.json({ success: true, messages: mergeConversationMessagesForDisplay(messages) });
+            }
+            const mergedRows = mergeConversationMessagesForDisplay([...messages, ...(Array.isArray(replyRows) ? replyRows : [])]);
+            res.json({ success: true, messages: mergedRows });
+        });
+    });
+});
+
+const customerGuestSessions = new Map();
+
+function loadGuestSessionFromStore(guestId) {
+    if (!guestId) return null;
+    const storageKey = `livesupport:webchat:guest-session:${guestId}`;
+    if (customerGuestSessions.has(storageKey)) {
+        return customerGuestSessions.get(storageKey);
+    }
+
+    const preset = globalThis.localStorage?.getItem?.(storageKey) || null;
+    if (!preset) return null;
+    try {
+        const parsed = JSON.parse(preset);
+        customerGuestSessions.set(storageKey, parsed);
+        return parsed;
+    } catch (error) {
+        console.warn('Unable to parse persisted guest session', error);
+        return null;
+    }
+}
+
+function saveGuestSessionToStore(session) {
+    if (!session?.guestId) return null;
+    const storageKey = `livesupport:webchat:guest-session:${session.guestId}`;
+    const nextSession = { ...session };
+    customerGuestSessions.set(storageKey, nextSession);
+    try {
+        globalThis.localStorage?.setItem?.(storageKey, JSON.stringify(nextSession));
+    } catch (error) {
+        console.warn('Unable to persist guest session', error);
+    }
+    return nextSession;
+}
+
+const branchScopedPrefixes = [
+    '/api/conversations',
+    '/api/messages',
+    '/api/recent-tickets',
+    '/api/recent-messages',
+    '/api/tickets',
+    '/api/orders',
+    '/api/dashboard-stats',
+    '/api/dashboard-revenue',
+    '/api/analytics',
+    '/api/my-metrics',
+    '/api/tickets-by-period',
+    '/api/tickets-monthly',
+    '/api/messages-by-period',
+    '/api/outward-messages-by-period',
+    '/api/messages-monthly',
+    '/api/messages-daily',
+    '/api/escalations',
+    '/api/resolved',
+    '/api/refunds',
+    '/api/delivery-issues'
+];
+
+branchScopedPrefixes.forEach((prefix) => {
+    app.use(prefix, ensureBranchContext);
+});
 
 // Monthly messages counts (AI vs Staff)
 app.get('/api/messages/monthly', async (req, res) => {
@@ -1318,6 +2019,31 @@ if (!fs.existsSync(path.join(__dirname, "uploads"))) {
     fs.mkdirSync(path.join(__dirname, "uploads"), { recursive: true });
 }
 
+function getSessionBranch(req) {
+    if (!req || !req.session) return null;
+    if (req.session.branch) return req.session.branch;
+    if (req.session.user && req.session.user.branch_id != null) {
+        return { id: Number(req.session.user.branch_id), name: req.session.user.branch_name || null };
+    }
+    return null;
+}
+
+function ensureBranchContext(req, res, next) {
+    if (!req.session || !req.session.user) {
+        return isAuthenticated(req, res, next);
+    }
+    const branch = getSessionBranch(req);
+    if (branch && Number(branch.id) > 0) {
+        req.branch = branch;
+        req.branchId = Number(branch.id);
+        return next();
+    }
+    if (req.path && req.path.startsWith('/api')) {
+        return res.status(403).json({ error: 'branch_not_selected' });
+    }
+    return res.redirect('/login.html?error=branch_required');
+}
+
 function isAuthenticated(req, res, next) {
     if (req.session && req.session.user) {
         return next();
@@ -1360,73 +2086,138 @@ app.get("/", isAuthenticated, (req, res) => {
     if (fs.existsSync(reactIndexFile)) {
         return res.sendFile(reactIndexFile);
     }
-    return res.sendFile(path.join(__dirname, "public", "login.html"));
+    return res.status(404).send('React app build not found');
 });
 
 app.get("/login", (req, res) => {
     if (fs.existsSync(reactIndexFile)) {
         return res.sendFile(reactIndexFile);
     }
-    return res.sendFile(path.join(__dirname, "public", "login.html"));
+    return res.status(404).send('React app build not found');
 });
 
 app.get("/login.html", (req, res) => {
     if (fs.existsSync(reactIndexFile)) {
-        return res.sendFile(reactIndexFile);
+        return res.redirect('/login');
     }
-    return res.sendFile(path.join(__dirname, "public", "login.html"));
+    return res.status(404).send('React app build not found');
 });
 
-app.post("/login", (req, res) => {
-    console.log("Full req.body:", JSON.stringify(req.body, null, 2));
-    const { email, password, remember } = req.body;
-    console.log("Login attempt:", email, password);
-    console.log("Email type:", typeof email, "Password type:", typeof password);
-    console.log("Remember me:", remember);
-    const sql = "SELECT * FROM users WHERE email = ? AND password = ?";
-    // Use pool.query which handles connection acquisition/release internally
-    db.query(sql, [email, password], (err, result) => {
-        console.log("DB result:", result);
-        if (err) {
-            console.error('Login DB error:', err);
-            return res.status(500).send('Internal Server Error');
-        }
-        if (result && result.length > 0) {
-            // Normalize role to lowercase to avoid case-sensitivity issues (e.g., 'Admin' vs 'admin')
-            try { result[0].role = (result[0].role || '').toString().toLowerCase(); } catch(e) {}
-            req.session.user = result[0];
-                // record login time for session info
-                try { req.session.loginTime = new Date().toISOString(); } catch (e) {}
-                req.session.userId = result[0].id;
-                // If "remember me" is checked, extend session to 72 hours
-                if (remember === 'on' || remember === true) {
-                    const seventyTwoHours = 72 * 60 * 60 * 1000;
-                    req.session.cookie.maxAge = seventyTwoHours;
-                    console.log('Remember me enabled: session extended to 72 hours');
+app.post("/login", async (req, res) => {
+    const body = req.body || {};
+    const { email, password, remember, branchId } = body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedPassword = String(password || '').trim();
+    if (!normalizedEmail || !normalizedPassword) {
+        return res.redirect('/login?error=invalid');
+    }
+
+    try {
+        const staff = await prisma.staff.findFirst({
+            where: {
+                email: normalizedEmail,
+                password: normalizedPassword
+            },
+            include: { branch: true }
+        });
+
+        if (!staff) {
+            try {
+                if (req.session) {
+                    req.session.user = null;
+                    req.session.userId = null;
+                    req.session.branch = null;
+                    req.session.branchId = null;
+                    req.session.branchName = null;
+                    req.session.loginTime = null;
+                    req.session.lastActivity = null;
+                    if (typeof req.session.destroy === 'function') {
+                        await new Promise((resolve, reject) => {
+                            req.session.destroy((err) => (err ? reject(err) : resolve()));
+                        });
+                    }
                 }
-                // Track this session id for the logged-in user to allow force-logout
-                try {
-                    const sid = req.sessionID;
-                    const uid = String(result[0].id);
-                    const set = userSessions.get(uid) || new Set();
-                    set.add(sid);
-                    userSessions.set(uid, set);
-                    try { io.emit('admin:users:changed', { action: 'login', id: uid }); } catch (e) { console.error('Emit admin users changed error', e); }
-                } catch (e) {
-                    console.error('Failed to track user session', e);
-                }
-            // Redirect to dashboard and indicate a fresh login so client can show welcome animation
-            res.redirect("/dashboard?welcome=1");
-        } else {
-            res.redirect("/login?error=invalid");
+            } catch (cleanupErr) {
+                console.error('Failed to clear stale session on invalid login', cleanupErr);
+            }
+            res.clearCookie('connect.sid');
+            return res.redirect('/login?error=invalid_credentials');
         }
-    });
+
+        const selectedBranchId = Number(branchId || staff.branch_id || 0);
+        const branch = selectedBranchId > 0
+            ? await prisma.branch.findUnique({ where: { id: selectedBranchId } })
+            : null;
+
+        if (!branch) {
+            return res.redirect('/login?error=branch_required');
+        }
+
+        const userBranchId = staff.branch_id != null ? Number(staff.branch_id) : null;
+        const branchMatchesUser = userBranchId == null || userBranchId === Number(branch.id);
+        if (!branchMatchesUser) {
+            return res.redirect('/login?error=branch_mismatch');
+        }
+
+        const sessionUser = {
+            id: staff.id,
+            email: staff.email,
+            name: staff.fullName || staff.email,
+            role: String(staff.role || 'staff').toLowerCase(),
+            branch_id: branch.id,
+            branch_name: branch.name,
+            accountType: 'staff'
+        };
+
+        req.session.user = sessionUser;
+        req.session.loginTime = new Date().toISOString();
+        req.session.userId = staff.id;
+        req.session.branch = { id: branch.id, name: branch.name };
+        req.session.branchId = branch.id;
+        req.session.branchName = branch.name;
+        if (remember === 'on' || remember === true) {
+            const seventyTwoHours = 72 * 60 * 60 * 1000;
+            req.session.cookie.maxAge = seventyTwoHours;
+        }
+        try {
+            const sid = req.sessionID;
+            const uid = String(staff.id);
+            const set = userSessions.get(uid) || new Set();
+            set.add(sid);
+            userSessions.set(uid, set);
+            try { io.emit('admin:users:changed', { action: 'login', id: uid }); } catch (e) { console.error('Emit admin users changed error', e); }
+        } catch (e) {
+            console.error('Failed to track user session', e);
+        }
+        return res.redirect('/dashboard?welcome=1');
+    } catch (error) {
+        console.error('Login error:', error);
+        return res.redirect('/login?error=invalid');
+    }
 });
+
+const getGoogleRedirectUri = (req) => {
+    if (process.env.GOOGLE_REDIRECT_URI && process.env.GOOGLE_REDIRECT_URI.trim()) {
+        return process.env.GOOGLE_REDIRECT_URI;
+    }
+
+    const forwardedProto = (req.get('x-forwarded-proto') || req.protocol || 'http').split(',')[0].trim();
+    const forwardedHost = (req.get('x-forwarded-host') || req.get('x-forwarded-server') || req.get('host') || 'localhost:3001').split(',')[0].trim();
+    return `${forwardedProto}://${forwardedHost}/auth/google/callback`;
+};
 
 // Initiate Google OAuth login flow
 app.get('/auth/google', (req, res) => {
     const clientId = process.env.GOOGLE_CLIENT_ID;
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`;
+    const redirectUri = getGoogleRedirectUri(req);
+    
+    console.log(`Google OAuth start: clientId=${clientId ? 'present' : 'missing'}, redirectUri=${redirectUri}`);
+    if (process.env.GOOGLE_REDIRECT_URI) {
+        console.log(`Google OAuth explicit redirect URI from env: ${process.env.GOOGLE_REDIRECT_URI}`);
+    }
+    if (process.env.APP_URL) {
+        console.log(`Google OAuth APP_URL from env: ${process.env.APP_URL}`);
+    }
     
     if (!clientId) {
         return res.status(500).send('Google OAuth is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_REDIRECT_URI in .env');
@@ -1456,7 +2247,7 @@ app.get('/auth/google/callback', async (req, res) => {
     
     const clientId = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`;
+    const redirectUri = getGoogleRedirectUri(req);
     
     if (!clientId || !clientSecret) {
         return res.status(500).send('Google OAuth credentials not configured');
@@ -1656,6 +2447,8 @@ const reactRoutes = [
     '/admin-users'
 ];
 
+const publicReactRoutes = ['/customer-chat', '/customer-chat/onboarding'];
+
 reactRoutes.forEach((route) => {
     app.get(route, isAuthenticated, (req, res) => {
         if (fs.existsSync(reactIndexFile)) {
@@ -1665,8 +2458,18 @@ reactRoutes.forEach((route) => {
     });
 });
 
+publicReactRoutes.forEach((route) => {
+    app.get(route, (req, res) => {
+        if (fs.existsSync(reactIndexFile)) {
+            return res.sendFile(reactIndexFile);
+        }
+        return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+    });
+});
+
 app.use((req, res, next) => {
     const pathname = req.path || '/';
+    const isPublicCustomerRoute = pathname === '/customer-chat' || pathname === '/customer-chat/onboarding' || pathname.startsWith('/customer-chat/');
     if (
         pathname.startsWith('/api') ||
         pathname.startsWith('/auth') ||
@@ -1676,8 +2479,15 @@ app.use((req, res, next) => {
         pathname === '/login' ||
         pathname === '/login.html' ||
         pathname.startsWith('/webhook') ||
-        pathname.includes('.')
+        pathname.includes('.') ||
+        isPublicCustomerRoute
     ) {
+        if (isPublicCustomerRoute) {
+            if (fs.existsSync(reactIndexFile)) {
+                return res.sendFile(reactIndexFile);
+            }
+            return res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+        }
         return next();
     }
 
@@ -2220,17 +3030,44 @@ app.post('/api/menu/item/reduce-stock', express.json(), (req, res) => {
 });
 
 app.get("/logout", (req, res) => {
+    const uid = req.session && req.session.userId ? String(req.session.userId) : null;
+    const sessionId = req.sessionID;
+
     try {
-        const uid = req.session && req.session.userId ? String(req.session.userId) : null;
         if (uid && userSessions.has(uid)) {
             const set = userSessions.get(uid);
-            set.delete(req.sessionID);
+            set.delete(sessionId);
             if (set.size === 0) userSessions.delete(uid);
             else userSessions.set(uid, set);
         }
     } catch (e) { console.error('Error cleaning userSessions on logout', e); }
-    try { const uid = req.session && req.session.userId ? String(req.session.userId) : null; req.session.destroy(() => { try { if (uid) io.emit('admin:users:changed', { action: 'logout', id: uid }); } catch (e) {} }); } catch (e) { req.session.destroy(); }
-    res.redirect("/login.html");
+
+    const finishLogout = () => {
+        try {
+            res.clearCookie('connect.sid');
+        } catch (clearError) {
+            console.warn('Unable to clear session cookie on logout', clearError);
+        }
+        return res.redirect('/login.html');
+    };
+
+    try {
+        if (req.session && typeof req.session.destroy === 'function') {
+            req.session.destroy((err) => {
+                if (err) {
+                    console.error('Logout session destroy error', err);
+                }
+                try { if (uid) io.emit('admin:users:changed', { action: 'logout', id: uid }); } catch (e) {}
+                finishLogout();
+            });
+            return;
+        }
+    } catch (e) {
+        console.error('Logout session teardown error', e);
+    }
+
+    try { if (uid) io.emit('admin:users:changed', { action: 'logout', id: uid }); } catch (e) {}
+    finishLogout();
 });
 
 // Health check route to verify DB connectivity
@@ -2263,7 +3100,9 @@ app.get("/api/user", (req, res) => {
                 id: req.session.userId,
                 name: req.session.user.name,
                 role: req.session.user.role,
-                password: req.session.user.password || ''
+                password: req.session.user.password || '',
+                branchId: req.session.branchId || req.session.branch?.id || req.session.user?.branch_id || null,
+                branchName: req.session.branchName || req.session.branch?.name || req.session.user?.branch_name || null
             });
         }
 
@@ -2274,7 +3113,9 @@ app.get("/api/user", (req, res) => {
             name: req.session.user.name,
             role: req.session.user.role,
             password: req.session.user.password || '',
-            avatar_url: avatarUrl
+            avatar_url: avatarUrl,
+            branchId: req.session.branchId || req.session.branch?.id || req.session.user?.branch_id || null,
+            branchName: req.session.branchName || req.session.branch?.name || req.session.user?.branch_name || null
         });
     });
 });
@@ -2299,18 +3140,26 @@ function isAdmin(req, res, next) {
 // Admin: User management APIs
 // ---------------------------
 app.get('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
-    db.query('SELECT id, name, email, role, disabled FROM users', (err, rows) => {
+    db.query('SELECT s.id, s.full_name, s.email, s.role, s.branch_id, b.name AS branch_name FROM staffs s LEFT JOIN branches b ON b.id = s.branch_id', (err, rows) => {
         if (err) return res.status(500).json({ error: 'db_error' });
         try {
             const augmented = rows.map(r => {
                 const uid = String(r.id);
                 const sessions = userSessions.get(uid);
-                // check onlineAgents map for any socket with this userId
                 let online = false;
                 for (const a of onlineAgents.values()) {
                     if (String(a.userId) === uid) { online = true; break; }
                 }
-                return Object.assign({}, r, { active: !!(sessions && sessions.size > 0) || online });
+                return {
+                    id: r.id,
+                    name: r.full_name || r.email,
+                    email: r.email,
+                    role: r.role || 'staff',
+                    branchId: r.branch_id || null,
+                    branchName: r.branch_name || null,
+                    disabled: false,
+                    active: !!(sessions && sessions.size > 0) || online
+                };
             });
             res.json(augmented);
         } catch (e) {
@@ -2320,21 +3169,45 @@ app.get('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
     });
 });
 
-app.post('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
-    const { name, email, password, role } = req.body;
+app.post('/api/admin/users', isAuthenticated, isAdmin, async (req, res) => {
+    const { name, email, password, role, branchId } = req.body;
     console.log('POST /api/admin/users body=', req.body);
     if (!email || !password) return res.status(400).json({ error: 'email_and_password_required' });
+
+    let resolvedBranchId = null;
+    const explicitBranchId = branchId != null && branchId !== '' ? Number(branchId) : null;
+    if (explicitBranchId && !Number.isNaN(explicitBranchId) && explicitBranchId > 0) {
+        resolvedBranchId = explicitBranchId;
+    } else if (req.session.branchId) {
+        resolvedBranchId = Number(req.session.branchId);
+    }
+
+    if (resolvedBranchId) {
+        try {
+            const branch = await prisma.branch.findUnique({
+                where: { id: resolvedBranchId },
+                select: { id: true }
+            });
+            if (!branch) {
+                return res.status(400).json({ error: 'branch_not_found' });
+            }
+        } catch (branchError) {
+            console.error('Failed to validate assigned branch:', branchError);
+            return res.status(500).json({ error: 'branch_validation_failed' });
+        }
+    }
+
     const sql = isPg
-        ? 'INSERT INTO users (name, email, password, role, disabled) VALUES (?, ?, ?, ?, false) RETURNING id'
-        : 'INSERT INTO users (name, email, password, role, disabled) VALUES (?, ?, ?, ?, 0)';
-    db.query(sql, [name || email.split('@')[0], email, password, role || 'agent'], (err, result) => {
+        ? 'INSERT INTO staffs (full_name, email, password, role, branch_id) VALUES (?, ?, ?, ?, ?) RETURNING id'
+        : 'INSERT INTO staffs (full_name, email, password, role, branch_id) VALUES (?, ?, ?, ?, ?)';
+    db.query(sql, [name || email.split('@')[0], email, password, role || 'staff', resolvedBranchId], (err, result) => {
         if (err) {
-            console.error('Failed to insert user:', err);
+            console.error('Failed to insert staff:', err);
             const payload = { error: 'db_error', code: err.code || null, message: err.sqlMessage || String(err) };
             return res.status(500).json(payload);
         }
         const insertedId = result && (result.insertId || result.lastID || (result.rows && result.rows[0] && result.rows[0].id) || null);
-        console.log('User created id=', insertedId);
+        console.log('Staff created id=', insertedId);
         try { io.emit('admin:users:changed', { action: 'create', id: insertedId, email }); } catch (e) { console.error('Emit admin users changed error', e); }
         res.json({ success: true, id: insertedId });
     });
@@ -2342,9 +3215,9 @@ app.post('/api/admin/users', isAuthenticated, isAdmin, (req, res) => {
 
 app.put('/api/admin/users/:id', isAuthenticated, isAdmin, (req, res) => {
     const id = req.params.id;
-    const { name, role, disabled } = req.body;
-    const sql = 'UPDATE users SET name = COALESCE(?, name), role = COALESCE(?, role), disabled = COALESCE(?, disabled) WHERE id = ?';
-    db.query(sql, [name, role, (disabled ? true : false), id], (err) => {
+    const { name, role } = req.body;
+    const sql = 'UPDATE staffs SET full_name = COALESCE(?, full_name), role = COALESCE(?, role) WHERE id = ?';
+    db.query(sql, [name, role, id], (err) => {
         if (err) return res.status(500).json({ error: 'db_error' });
         try { io.emit('admin:users:changed', { action: 'update', id }); } catch (e) { console.error('Emit admin users changed error', e); }
         res.json({ success: true });
@@ -2353,14 +3226,12 @@ app.put('/api/admin/users/:id', isAuthenticated, isAdmin, (req, res) => {
 
 app.delete('/api/admin/users/:id', isAuthenticated, isAdmin, (req, res) => {
     const id = req.params.id;
-    db.query('DELETE FROM users WHERE id = ?', [id], (err) => {
+    db.query('DELETE FROM staffs WHERE id = ?', [id], (err) => {
         if (err) return res.status(500).json({ error: 'db_error' });
-        // destroy tracked sessions
         try {
             const set = userSessions.get(String(id));
             if (set) {
                 set.forEach(sid => {
-                    // destroy session by id if possible
                     try { req.sessionStore.destroy(sid, () => {}); } catch (e) {}
                 });
                 userSessions.delete(String(id));
@@ -2374,9 +3245,8 @@ app.delete('/api/admin/users/:id', isAuthenticated, isAdmin, (req, res) => {
 app.post('/api/admin/users/:id/reset-password', isAuthenticated, isAdmin, (req, res) => {
     const id = req.params.id;
     const newPass = Math.random().toString(36).slice(-8);
-    db.query('UPDATE users SET password = ? WHERE id = ?', [newPass, id], (err) => {
+    db.query('UPDATE staffs SET password = ? WHERE id = ?', [newPass, id], (err) => {
         if (err) return res.status(500).json({ error: 'db_error' });
-        // Optionally email the password; here we just return it so admin can communicate it
         try { io.emit('admin:users:changed', { action: 'reset-password', id }); } catch (e) { console.error('Emit admin users changed error', e); }
         res.json({ success: true, password: newPass });
     });
@@ -2667,12 +3537,16 @@ if (isPg) {
 // Conversations & Messages
 // ---------------------------
 app.get("/api/conversations", (req, res) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
     if (req.query.id) {
-        db.query("SELECT * FROM conversations WHERE id = ?", [req.query.id], (err, result) => {
+        const sql = branchId > 0 ? 'SELECT * FROM conversations WHERE id = ? AND branch_id = ?' : 'SELECT * FROM conversations WHERE id = ?';
+        const params = branchId > 0 ? [req.query.id, branchId] : [req.query.id];
+        db.query(sql, params, (err, result) => {
             if (err) throw err;
             res.json(result);
         });
     } else {
+        const branchPredicate = branchId > 0 ? `WHERE c.branch_id = ${branchId}` : '';
         const primarySql = `
             SELECT c.*, 
                 (SELECT COUNT(*) FROM messages m2 
@@ -2689,6 +3563,7 @@ app.get("/api/conversations", (req, res) => {
                     ORDER BY m.created_at DESC, m.id DESC
                     LIMIT 1) AS last_message_at
             FROM conversations c
+            ${branchPredicate}
             ORDER BY GREATEST(COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1), c.created_at), c.created_at) DESC
         `;
 
@@ -2730,6 +3605,7 @@ app.get("/api/conversations", (req, res) => {
                         ORDER BY m.created_at DESC, m.id DESC
                         LIMIT 1) AS last_message_at
                 FROM conversations c
+                ${branchPredicate}
                 ORDER BY COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC, m.id DESC LIMIT 1), c.created_at) DESC
             `;
 
@@ -2738,8 +3614,11 @@ app.get("/api/conversations", (req, res) => {
                     console.error('/api/conversations fallback query also failed', err2 && err2.message);
                     // As a last resort, try a very simple query that should be compatible with any schema
                     console.warn('/api/conversations attempting ultimate simple fallback query');
-                    const ultimateSql = `SELECT id, phone, name, platform, created_at FROM conversations ORDER BY created_at DESC`;
-                    db.query(ultimateSql, (err3, result3) => {
+                    const ultimateSql = branchId > 0
+                        ? `SELECT id, phone, name, platform, created_at FROM conversations WHERE branch_id = ? ORDER BY created_at DESC`
+                        : `SELECT id, phone, name, platform, created_at FROM conversations ORDER BY created_at DESC`;
+                    const ultimateParams = branchId > 0 ? [branchId] : [];
+                    db.query(ultimateSql, ultimateParams, (err3, result3) => {
                         if (err3) {
                             console.error('/api/conversations ultimate fallback failed', err3 && err3.message);
                             return res.status(500).json({ error: 'Database error' });
@@ -3007,6 +3886,8 @@ app.delete('/api/conversations', isAuthenticated, (req, res) => {
 
 // Recent tickets endpoint used by dashboard (joins last message and status)
 app.get('/api/recent-tickets', (req, res) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const branchClause = branchId > 0 ? ` AND c.branch_id = ${branchId}` : '';
     const sql = `
         SELECT c.id, c.phone, c.name, c.platform, c.created_at,
             (SELECT m.message FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message,
@@ -3017,6 +3898,7 @@ app.get('/api/recent-tickets', (req, res) => {
                 ELSE 'Open'
             END) AS status
         FROM conversations c
+        WHERE 1=1${branchClause}
         ORDER BY GREATEST(COALESCE((SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), c.created_at), c.created_at) DESC
         LIMIT 20
     `;
@@ -3048,16 +3930,28 @@ app.get('/api/recent-tickets', (req, res) => {
 
     // Recent customer messages for dashboard (last N customer messages)
     app.get('/api/recent-messages', (req, res) => {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
         const limit = Math.min(100, parseInt(req.query.limit || '5', 10));
-        const sql = `
-            SELECT m.id, m.conversation_id, m.sender, m.message, m.created_at, c.name AS customer_name, c.phone
-            FROM messages m
-            JOIN conversations c ON c.id = m.conversation_id
-            WHERE m.sender IS NULL OR LOWER(m.sender) NOT IN ('sent','sent_by_agent') AND m.sender <> 'sent'
-            ORDER BY m.created_at DESC
-            LIMIT ?
-        `;
-        db.query(sql, [limit], (err, rows) => {
+        const sql = branchId > 0
+            ? `
+                SELECT m.id, m.conversation_id, m.sender, m.message, m.created_at, c.name AS customer_name, c.phone
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.branch_id = ?
+                  AND (m.sender IS NULL OR LOWER(m.sender) NOT IN ('sent','sent_by_agent') AND m.sender <> 'sent')
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            `
+            : `
+                SELECT m.id, m.conversation_id, m.sender, m.message, m.created_at, c.name AS customer_name, c.phone
+                FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.sender IS NULL OR LOWER(m.sender) NOT IN ('sent','sent_by_agent') AND m.sender <> 'sent'
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            `;
+        const params = branchId > 0 ? [branchId, limit] : [limit];
+        db.query(sql, params, (err, rows) => {
             if (err) {
                 console.error('/api/recent-messages db error', err);
                 return res.status(500).json({ error: 'DB error' });
@@ -3115,7 +4009,7 @@ app.get("/api/suggest-reply/:id", async (req, res) => {
                             return res.json({ suggestion: "No customer message yet to suggest a reply." });
                         }
 
-                        const suggestion = await getMistralReply(latestCustomerMessage, phone, conversationId);
+                        const suggestion = await getMistralReply(latestCustomerMessage, phone, conversationId, null);
                         return res.json({ suggestion });
                     }
                 );
@@ -3130,80 +4024,288 @@ app.get("/api/suggest-reply/:id", async (req, res) => {
 // ---------------------------
 // Send Message (Agent)
 // ---------------------------
-async function sendAutoReply(phone, message) {
-    try {
-        // Ensure phone is in E.164 format for WhatsApp (add + if missing)
-        let formattedPhone = phone;
-        if (!formattedPhone.startsWith('+')) {
-            formattedPhone = '+' + formattedPhone.replace(/\D/g, '');
+async function sendPlatformMessage(target, message, platform = 'whatsapp') {
+    if (!target) {
+        throw new Error('Missing target for sendPlatformMessage');
+    }
+
+    if (String(platform || '').toLowerCase() === 'messenger') {
+        const token = process.env.MESSENGER_PAGE_ACCESS_TOKEN;
+        if (!token) {
+            throw new Error('Messenger page access token is not configured. Add MESSENGER_PAGE_ACCESS_TOKEN to your .env.');
         }
 
-        const token = await getWhatsAppToken();
         const response = await fetch(
-            `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            `https://graph.facebook.com/v18.0/me/messages`,
             {
-                method: "POST",
+                method: 'POST',
                 headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    messaging_product: "whatsapp",
-                    to: formattedPhone,
-                    type: "text",
-                    text: { body: message }
+                    recipient: { id: target },
+                    message: { text: message }
                 })
             }
         );
 
-        // (previously emitted a playHandoffAudio event for some AI replies; removed per request)
-
         const data = await response.json();
-        console.log("Auto-reply sent:", data);
-
         if (!response.ok || (data && data.error)) {
             throw new Error(JSON.stringify({ status: response.status, data }));
         }
+        return data;
+    }
 
-        const conversation_id = await getOrCreateConversationByPhone(phone);
+    let formattedPhone = target;
+    if (!formattedPhone.startsWith('+')) {
+        formattedPhone = '+' + formattedPhone.replace(/\D/g, '');
+    }
+
+    const token = await getWhatsAppToken();
+    const response = await fetch(
+        `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
+        {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                to: formattedPhone,
+                type: 'text',
+                text: { body: message }
+            })
+        }
+    );
+
+    const data = await response.json();
+    if (!response.ok || (data && data.error)) {
+        throw new Error(JSON.stringify({ status: response.status, data }));
+    }
+    return data;
+}
+
+async function sendAutoReply(phone, message, platform = 'whatsapp') {
+    try {
+        const data = await sendPlatformMessage(phone, message, platform);
+        console.log('Auto-reply sent:', data);
+
+        const conversation_id = await getOrCreateConversationByPhone(phone, platform);
         db.query(
-            "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+            'INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
             [conversation_id, 'sent', message, null],
             (err) => {
                 if (err) {
-                    console.log("AUTO-REPLY INSERT ERROR:", err);
+                    console.log('AUTO-REPLY INSERT ERROR:', err);
                 }
             }
         );
 
         db.query(
-            "INSERT INTO ai_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
+            'INSERT INTO ai_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
             [conversation_id, 'sent', message, null],
             (err) => {
                 if (err) {
-                    console.log("AUTO-REPLY AI_MESSAGE INSERT ERROR:", err);
+                    console.log('AUTO-REPLY AI_MESSAGE INSERT ERROR:', err);
                 }
             }
         );
 
         const messageData = {
             conversation_id,
-            sender: "sent",
+            sender: 'sent',
             message,
             created_at: new Date().toISOString()
         };
         emitNewMessageEvent(conversation_id, messageData);
-
+        return { success: true, conversation_id };
     } catch (error) {
-        console.log("AUTO-REPLY ERROR:", error);
+        console.log('AUTO-REPLY ERROR:', error);
+        return { success: false, error: error.message || 'Send failed' };
     }
+}
+
+function hashFeedbackToken(token) {
+    return createHash('sha256').update(token).digest('hex');
+}
+
+function createFeedbackToken() {
+    return randomBytes(24).toString('base64url');
+}
+
+function feedbackLinkForToken(token) {
+    const baseUrl = FEEDBACK_LINK_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+    return `${baseUrl.replace(/\/$/, '')}/rate/${encodeURIComponent(token)}`;
+}
+
+function queryAsync(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.query(sql, params, (err, result) => err ? reject(err) : resolve(result));
+    });
+}
+
+async function createOneTimeFeedbackRequest(ticketId, staffId) {
+    const ticketRows = await queryAsync(
+        'SELECT id, customer_phone, customer_name, branch_id FROM tickets WHERE id = ? LIMIT 1',
+        [ticketId]
+    );
+    const ticket = ticketRows?.[0];
+    if (!ticket) throw new Error('Ticket not found');
+
+    const rawToken = createFeedbackToken();
+    const tokenHash = hashFeedbackToken(rawToken);
+    const expiresAt = new Date(Date.now() + FEEDBACK_TOKEN_TTL_MS).toISOString();
+    const feedbackRows = await queryAsync(
+        `INSERT INTO customer_feedback
+            (token, ticket_id, customer_id, branch_id, expires_at, feedback_source, created_by_staff_id)
+         VALUES (?, ?, ?, ?, ?, 'One-Time Link', ?)
+         RETURNING id`,
+        [tokenHash, Number(ticket.id), null, ticket.branch_id || null, expiresAt, staffId || null]
+    );
+
+    const feedbackId = feedbackRows?.[0]?.id;
+    let destination = ticket.customer_phone || null;
+    if (!destination && ticket.customer_name) {
+        const conversationRows = await queryAsync(
+            `SELECT DISTINCT phone FROM conversations
+             WHERE phone IS NOT NULL AND name = ? AND LOWER(COALESCE(platform, 'whatsapp')) = 'whatsapp'`,
+            [ticket.customer_name]
+        );
+        destination = conversationRows.length === 1 ? conversationRows[0].phone : null;
+    }
+    const message = `✅ Your support request has been resolved.\n\nThank you for choosing us.\n\nWe would really appreciate your feedback.\n\nPlease rate your support experience by clicking the secure link below.\n\n${feedbackLinkForToken(rawToken)}\n\nThis link can only be used once and expires in 24 hours.\n\nThank you for helping us improve our service.`;
+
+    if (!destination) {
+        await queryAsync(
+            'INSERT INTO customer_feedback_delivery_logs (feedback_id, channel, destination, status, error) VALUES (?, ?, ?, ?, ?)',
+            [feedbackId, 'whatsapp', null, 'manual_review', ticket.customer_name ? 'No unique WhatsApp destination found' : 'No WhatsApp number stored on ticket']
+        );
+        return { id: feedbackId, deliveryStatus: 'manual_review' };
+    }
+
+    const delivery = await sendAutoReply(destination, message);
+    await queryAsync(
+        'INSERT INTO customer_feedback_delivery_logs (feedback_id, channel, destination, status, error) VALUES (?, ?, ?, ?, ?)',
+        [feedbackId, 'whatsapp', destination, delivery.success ? 'sent' : 'failed', delivery.error || null]
+    );
+    return { id: feedbackId, deliveryStatus: delivery.success ? 'sent' : 'failed' };
+}
+
+app.get('/api/feedback/:token', async (req, res) => {
+    try {
+        const tokenHash = hashFeedbackToken(String(req.params.token || ''));
+        const rows = await queryAsync(
+            `SELECT used, expires_at, ticket_id FROM customer_feedback WHERE token = ? LIMIT 1`,
+            [tokenHash]
+        );
+        const feedback = rows?.[0];
+        if (!feedback) return res.status(404).json({ status: 'not_found' });
+        if (feedback.used) return res.status(410).json({ status: 'used' });
+        if (new Date(feedback.expires_at).getTime() <= Date.now()) return res.status(410).json({ status: 'expired' });
+        res.json({ status: 'available' });
+    } catch (error) {
+        console.error('Feedback lookup failed:', error);
+        res.status(500).json({ status: 'error' });
+    }
+});
+
+app.post('/api/feedback/:token', express.json(), async (req, res) => {
+    const rating = Number(req.body?.rating);
+    const comment = typeof req.body?.comment === 'string' ? req.body.comment.trim() : '';
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+    if (comment.length > 500) return res.status(400).json({ error: 'Comment must be 500 characters or fewer' });
+
+    try {
+        const tokenHash = hashFeedbackToken(String(req.params.token || ''));
+        const submittedAt = new Date().toISOString();
+        const rows = await queryAsync(
+            `UPDATE customer_feedback
+             SET rating = ?, comment = ?, used = TRUE, used_at = ?, submitted_at = ?
+             WHERE token = ? AND used = FALSE AND expires_at > CURRENT_TIMESTAMP
+             RETURNING id, ticket_id, customer_id, branch_id, rating, comment, submitted_at`,
+            [rating, comment || null, submittedAt, submittedAt, tokenHash]
+        );
+        const feedback = rows?.[0];
+        if (!feedback) {
+            const stateRows = await queryAsync('SELECT used, expires_at FROM customer_feedback WHERE token = ? LIMIT 1', [tokenHash]);
+            const state = stateRows?.[0];
+            if (!state) return res.status(404).json({ error: 'Feedback link not found' });
+            return res.status(410).json({ error: state.used ? 'Feedback link has already been used' : 'Feedback link has expired' });
+        }
+
+        await queryAsync(
+            `UPDATE tickets SET customer_rating = ?, customer_rating_comment = ?, customer_rated_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            [rating, comment || null, submittedAt, feedback.ticket_id]
+        );
+        io.emit('ticketFeedbackSubmitted', {
+            ticket_id: Number(feedback.ticket_id),
+            customer_rating: rating,
+            customer_rating_comment: comment || null,
+            customer_rated_at: submittedAt
+        });
+        res.json({ success: true, rating });
+    } catch (error) {
+        console.error('Feedback submission failed:', error);
+        res.status(500).json({ error: 'Unable to submit feedback' });
+    }
+});
+
+function getPendingCsatForPhone(phone) {
+    if (!phone) return null;
+    return pendingCsatByPhone.get(String(phone).trim()) || null;
+}
+
+function setPendingCsatForPhone(phone, payload) {
+    if (!phone) return;
+    pendingCsatByPhone.set(String(phone).trim(), payload);
+}
+
+function clearPendingCsatForPhone(phone) {
+    if (!phone) return;
+    pendingCsatByPhone.delete(String(phone).trim());
+}
+
+async function persistTicketCsatRating(ticketId, rating) {
+    if (!ticketId) return null;
+    const ratedAt = new Date().toISOString();
+    const updateSql = isPg
+        ? `UPDATE tickets
+            SET customer_rating = $1,
+                customer_rated_at = $2,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $3`
+        : `UPDATE tickets
+            SET customer_rating = ?,
+                customer_rated_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`;
+    const updateParams = isPg ? [Number(rating), ratedAt, Number(ticketId)] : [Number(rating), ratedAt, Number(ticketId)];
+
+    return new Promise((resolve, reject) => {
+        db.query(updateSql, updateParams, (err, result) => {
+            if (err) return reject(err);
+            resolve(result);
+        });
+    });
+}
+
+async function notifyAndQueueCsatPrompt(ticketId, phone) {
+    if (!phone) return null;
+    const normalizedPhone = String(phone).trim();
+    const pendingPayload = { ticketId: Number(ticketId), phone: normalizedPhone, sentAt: new Date().toISOString() };
+    setPendingCsatForPhone(normalizedPhone, pendingPayload);
+    await sendAutoReply(normalizedPhone, 'We are checking in on your recent support experience. Please reply with a number from 1 to 5 to rate your experience.');
+    return pendingPayload;
 }
 
 function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
     return new Promise((resolve, reject) => {
         if (!phone) return reject(new Error('Missing phone'));
 
-        db.query("SELECT id FROM conversations WHERE phone = ?", [phone], (err, result) => {
+        const selectSql = "SELECT id FROM conversations WHERE phone = ? AND platform = ?";
+        db.query(selectSql, [phone, platform], (err, result) => {
             if (err) return reject(err);
             if (result && result.length > 0) {
                 return resolve(result[0].id);
@@ -3211,7 +4313,7 @@ function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
 
             const insertSql = isPg
                 ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
-                : "INSERT INTO conversations (phone, name, platform) VALUES (?, ?, 'whatsapp')";
+                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
 
             db.query(insertSql, [phone, phone, platform], (insertErr, insertResult) => {
                 if (insertErr) return reject(insertErr);
@@ -3556,7 +4658,7 @@ app.post("/api/send-message", async (req, res) => {
     disableAIForConversation(conversation_id);
     console.log(`📤 Staff message detected for conversation ${conversation_id}, disabling AI immediately`);
 
-    db.query("SELECT phone FROM conversations WHERE id = ?", [conversation_id], async (err, result) => {
+    db.query("SELECT phone, platform FROM conversations WHERE id = ?", [conversation_id], async (err, result) => {
         if (err) return res.sendStatus(500);
         if (!result || result.length === 0) {
             if (phone) {
@@ -3571,49 +4673,18 @@ app.post("/api/send-message", async (req, res) => {
             }
         }
 
-        let targetPhone = result && result.length > 0 ? result[0].phone : phone;
-        if (!targetPhone) {
-            return res.status(400).json({ error: "Missing phone for sending message." });
-        }
+        const row = result && result.length > 0 ? result[0] : null;
+        let targetIdentifier = row?.phone || phone;
+        const targetPlatform = row?.platform || 'whatsapp';
 
-        // Ensure phone is in E.164 format for WhatsApp (add + if missing)
-        if (!targetPhone.startsWith('+')) {
-            targetPhone = '+' + targetPhone.replace(/\D/g, '');
+        if (!targetIdentifier) {
+            return res.status(400).json({ error: "Missing target for sending message." });
         }
 
         try {
-            console.log("Sending WhatsApp message", { conversation_id, targetPhone, message: message.slice(0, 120) });
-            const token = await getWhatsAppToken();
-            const response = await fetch(
-                `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
-                {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${token}`,
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        messaging_product: "whatsapp",
-                        to: targetPhone,
-                        type: "text",
-                        text: { body: message }
-                    })
-                }
-            );
-
-            const data = await response.json();
-            console.log("WhatsApp response:", data);
-
-            if (!response.ok || (data && data.error)) {
-                console.error("WhatsApp API send-message error:", response.status, data);
-                let errorMsg = 'WhatsApp API error';
-                if (data && data.error) {
-                    errorMsg = typeof data.error === 'string' ? data.error : JSON.stringify(data.error);
-                } else if (data) {
-                    errorMsg = JSON.stringify(data);
-                }
-                return res.status(response.ok ? 500 : response.status).json({ error: errorMsg });
-            }
+            console.log("Sending message", { conversation_id, targetIdentifier: targetIdentifier.slice(0, 64), platform: targetPlatform, message: message.slice(0, 120) });
+            const data = await sendPlatformMessage(targetIdentifier, message, targetPlatform);
+            console.log(`${targetPlatform} response:`, data);
 
             // Save to DB
             db.query(
@@ -3796,6 +4867,12 @@ app.post("/api/send-media", upload.single("file"), (req, res) => {
 // Customer Webhook
 // ---------------------------
 app.post("/webhook", async (req, res) => {
+    console.log('⚡ Received webhook request', {
+        path: req.path,
+        method: req.method,
+        bodyKeys: req.body ? Object.keys(req.body) : [],
+        rawBodyPresent: !!req.body
+    });
     const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!msg) return res.sendStatus(200);
 
@@ -3803,10 +4880,23 @@ app.post("/webhook", async (req, res) => {
     const businessPhoneNumberId = metadataPhoneNumberId || process.env.PHONE_NUMBER_ID;
     const msgFrom = msg.from || "";
     const msgTo = msg.to || "";
+    const msgId = msg.id || msg.message_id || "";
     const contactWaId = req.body.entry?.[0]?.changes?.[0]?.value?.contacts?.[0]?.wa_id || "";
-    const isOutgoingWebhook = businessPhoneNumberId && msgFrom === businessPhoneNumberId;
+    const normalizedMsgFrom = normalizeWebhookId(msgFrom);
+    const normalizedBusinessId = normalizeWebhookId(businessPhoneNumberId);
+    const isOutgoingWebhook = normalizedBusinessId && normalizedMsgFrom && normalizedMsgFrom === normalizedBusinessId;
     const sender = isOutgoingWebhook ? 'sent' : 'received';
     const phone = sender === 'sent' ? (msgTo || contactWaId || msgFrom) : msgFrom;
+
+    if (msgId && shouldIgnoreWebhookEvent(msgId, 'whatsapp')) {
+        console.log('⏱️ Ignoring duplicate WhatsApp webhook event', { msgId, phone, platform: 'whatsapp' });
+        return res.sendStatus(200);
+    }
+
+    if (sender === 'sent') {
+        console.log('💡 Ignoring outgoing WhatsApp webhook echo event for sent message', { msgId, phone, platform: 'whatsapp' });
+        return res.sendStatus(200);
+    }
 
     let text = msg.text?.body || "";
 
@@ -3840,10 +4930,7 @@ app.post("/webhook", async (req, res) => {
         text = msg.image?.caption || msg.document?.filename || msg.button?.text || msg.interactive?.type || "[Non-text message]";
     }
 
-    console.log(`\n📩 WEBHOOK MESSAGE RECEIVED:`, {
-        phone,
-        text,
-        sender,
+    logIncomingMessagePayload('whatsapp', phone, sender, text, {
         msgFrom: msg.from,
         msgTo: msg.to,
         contactWaId,
@@ -3851,17 +4938,41 @@ app.post("/webhook", async (req, res) => {
         phoneNumberId: process.env.PHONE_NUMBER_ID,
         businessPhoneNumberId,
         isSent: isOutgoingWebhook,
-        hasAudio: !!msg.audio
+        hasAudio: !!msg.audio,
+        webhook: '/webhook'
     });
 
-    db.query("SELECT * FROM conversations WHERE phone = ?", [phone], async (err, result) => {
+    const pendingCsat = sender === 'received' && phone ? getPendingCsatForPhone(phone) : null;
+    const parsedCsatRating = extractCsatRating(text);
+
+    if (pendingCsat && sender !== 'sent' && phone) {
+        if (parsedCsatRating !== null) {
+            try {
+                await persistTicketCsatRating(pendingCsat.ticketId, parsedCsatRating);
+                clearPendingCsatForPhone(phone);
+                await sendAutoReply(phone, `Thanks for your feedback. We recorded your rating of ${parsedCsatRating}/5.`);
+            } catch (ratingErr) {
+                console.error('CSAT rating update failed:', ratingErr);
+            }
+            return res.sendStatus(200);
+        }
+
+        try {
+            await sendAutoReply(phone, 'Please reply with a number from 1 to 5 to rate your experience.');
+        } catch (clarificationError) {
+            console.error('CSAT clarification failed:', clarificationError);
+        }
+        return res.sendStatus(200);
+    }
+
+    db.query("SELECT * FROM conversations WHERE phone = ? AND platform = 'whatsapp'", [phone], async (err, result) => {
         if (err) return console.log("🔥 REAL DB ERROR:", err);
 
         if (!result || result.length === 0) {
             // Create new conversation
             const insertConvSql = isPg
                 ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
-                : "INSERT INTO conversations (phone, name, platform) VALUES (?, ?, 'whatsapp')";
+                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
             db.query(insertConvSql, [phone, phone, 'whatsapp'], async (err, newConv) => {
                 if (err) return console.log("INSERT ERROR:", err);
                 const convoId = newConv.insertId;
@@ -3914,27 +5025,28 @@ app.post("/webhook", async (req, res) => {
                                 if (isCustomerGreeting(text) && isStaffIdleForThreeMinutes(convoId)) {
                                     enableAIForConversation(convoId);
                                 }
-                                // Only process customer messages for AI response
-                                // Check if this is an order confirmation
-                                const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-                                const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                                if (orderConfirmed && orderConfirmed.orderId) {
-                                    await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
-                                } else {
-                                    const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                    if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                                        const reply = await getMistralReply(text, phone, convoId);
-                                        await sendAutoReply(phone, reply);
-                                    } else {
-                                        console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                                const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
+                                if (isHighRiskAnalysis.shouldEscalate) {
+                                    if (isHighRiskAnalysis.reply) {
+                                        await sendAutoReply(phone, isHighRiskAnalysis.reply);
                                     }
-                                }
-
-                                // Auto-escalate if refund is mentioned
-                                if (text && text.toLowerCase().includes("refund")) {
-                                    db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
-                                        if (err) console.log("ESCALATION INSERT ERROR:", err);
-                                    });
+                                    console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
+                                } else {
+                                    // Only process customer messages for AI response
+                                    // Check if this is an order confirmation
+                                    const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                                    const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+                                    if (orderConfirmed && orderConfirmed.orderId) {
+                                        await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+                                    } else {
+                                        const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
+                                        if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
+                                            const reply = await getMistralReply(text, phone, convoId);
+                                            await sendAutoReply(phone, reply);
+                                        } else {
+                                            console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                                        }
+                                    }
                                 }
 
                                 if (sender !== 'sent') {
@@ -3996,26 +5108,28 @@ app.post("/webhook", async (req, res) => {
                             if (isCustomerGreeting(text)) {
                                 enableAIForConversation(convoId);
                             }
-                            // Only process customer messages for AI response
-                            // Check if this is an order confirmation
-                            const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-                            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                            if (orderConfirmed && orderConfirmed.orderId) {
-                                await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
-                            } else {
-                                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                                    const reply = await getMistralReply(text, phone, convoId);
-                                    await sendAutoReply(phone, reply);
-                                } else {
-                                    console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                            const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
+                            if (isHighRiskAnalysis.shouldEscalate) {
+                                if (isHighRiskAnalysis.reply) {
+                                    await sendAutoReply(phone, isHighRiskAnalysis.reply);
                                 }
-                            }
-
-                            if (text && text.toLowerCase().includes("refund")) {
-                                db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
-                                    if (err) console.log("ESCALATION INSERT ERROR:", err);
-                                });
+                                console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
+                            } else {
+                                // Only process customer messages for AI response
+                                // Check if this is an order confirmation
+                                const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                                const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+                                if (orderConfirmed && orderConfirmed.orderId) {
+                                    await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+                                } else {
+                                    const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
+                                    if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
+                                        const reply = await getMistralReply(text, phone, convoId);
+                                        await sendAutoReply(phone, reply);
+                                    } else {
+                                        console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                                    }
+                                }
                             }
 
                             if (sender !== 'sent') {
@@ -4031,6 +5145,200 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
 });
 
+app.post('/webhook/messenger', async (req, res) => {
+    console.log('⚡ Received webhook request', {
+        path: req.path,
+        method: req.method,
+        bodyKeys: req.body ? Object.keys(req.body) : [],
+        rawBodyPresent: !!req.body
+    });
+    const messagingEvent = req.body.entry?.[0]?.messaging?.[0];
+    if (!messagingEvent) return res.sendStatus(200);
+
+    const message = messagingEvent.message || {};
+    const senderId = messagingEvent.sender?.id;
+    const recipientId = messagingEvent.recipient?.id;
+    const pageId = req.body.entry?.[0]?.id;
+    const messageId = message.mid || message.message_id || '';
+    const normalizedSenderId = normalizeWebhookId(senderId);
+    const normalizedPageId = normalizeWebhookId(pageId);
+    const isOutgoingPageEvent = normalizedSenderId && normalizedPageId && normalizedSenderId === normalizedPageId;
+
+    // Extract message text early for deduplication
+    let messageText = message.text || '';
+    if (!messageText && Array.isArray(message.attachments) && message.attachments.length > 0) {
+        messageText = message.attachments[0].payload?.url || message.attachments[0].type || '[Attachment]';
+    }
+    if (!messageText) {
+        messageText = message.quick_reply?.payload || '[Non-text message]';
+    }
+
+    // Create composite key for deduplication when messageId is missing
+    let compositeKey = null;
+    if (!messageId && senderId && messageText) {
+        const crypto = require('crypto');
+        const hash = crypto.createHash('md5').update(messageText).digest('hex').substring(0, 8);
+        compositeKey = `${senderId}:${recipientId}:${hash}`;
+    }
+
+    if (messageId && shouldIgnoreWebhookEvent(messageId, 'messenger')) {
+        console.log('⏱️ Ignoring duplicate Messenger webhook event', { messageId, senderId, recipientId, platform: 'messenger' });
+        return res.sendStatus(200);
+    }
+
+    if (!messageId && compositeKey && shouldIgnoreWebhookEvent('', 'messenger', compositeKey)) {
+        console.log('⏱️ Ignoring duplicate Messenger webhook event (composite key)', { senderId, recipientId, platform: 'messenger', compositeKey });
+        return res.sendStatus(200);
+    }
+
+    const isEcho = Boolean(message.is_echo) || isOutgoingPageEvent;
+    const platform = 'messenger';
+    const conversationIdValue = isEcho ? recipientId : senderId;
+    const senderType = isEcho ? 'sent' : 'received';
+    let text = messageText; // Use the text we already extracted for deduplication
+
+    if (!conversationIdValue) {
+        return res.sendStatus(200);
+    }
+
+    logIncomingMessagePayload('messenger', conversationIdValue, senderType, text, {
+        senderId,
+        recipientId,
+        isEcho,
+        hasAttachments: Array.isArray(message.attachments) && message.attachments.length > 0,
+        webhook: '/webhook/messenger'
+    });
+
+    if (isEcho) {
+        console.log('💡 Ignoring Messenger echo event for outbound messages to prevent duplicate storage and replies', {
+            senderId,
+            recipientId,
+            text,
+            conversationIdValue
+        });
+        return res.sendStatus(200);
+    }
+
+    const pendingCsat = senderType === 'received' ? getPendingCsatForPhone(conversationIdValue) : null;
+    const parsedCsatRating = extractCsatRating(text);
+
+    if (pendingCsat && senderType !== 'sent' && conversationIdValue) {
+        if (parsedCsatRating !== null) {
+            try {
+                await persistTicketCsatRating(pendingCsat.ticketId, parsedCsatRating);
+                clearPendingCsatForPhone(conversationIdValue);
+                await sendAutoReply(conversationIdValue, `Thanks for your feedback. We recorded your rating of ${parsedCsatRating}/5.`, platform);
+            } catch (ratingErr) {
+                console.error('Messenger CSAT rating update failed:', ratingErr);
+            }
+            return res.sendStatus(200);
+        }
+
+        try {
+            await sendAutoReply(conversationIdValue, 'Please reply with a number from 1 to 5 to rate your experience.', platform);
+        } catch (clarificationError) {
+            console.error('Messenger CSAT clarification failed:', clarificationError);
+        }
+        return res.sendStatus(200);
+    }
+
+    db.query('SELECT * FROM conversations WHERE phone = ? AND platform = ?', [conversationIdValue, platform], async (err, result) => {
+        if (err) {
+            console.error('Messenger webhook DB error:', err);
+            return res.sendStatus(200);
+        }
+
+        const storeMessage = async (convoId) => {
+            if (senderType === 'sent') {
+                db.query(
+                    'INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
+                    [convoId, 'sent', text, null],
+                    (err) => { if (err) console.log('MESSENGER REPLY INSERT ERROR:', err); }
+                );
+                db.query(
+                    'INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
+                    [convoId, 'sent', text, null],
+                    (err) => { if (err) console.log('MESSENGER STAFF_MESSAGE INSERT ERROR:', err); }
+                );
+                emitNewMessageEvent(convoId, { conversation_id: convoId, sender: 'sent', message: text, created_at: new Date().toISOString() });
+            } else {
+                db.query(
+                    'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())',
+                    [convoId, 'received', text],
+                    async (err) => {
+                        if (err) {
+                            console.log('MESSENGER MESSAGE INSERT ERROR:', err);
+                            return;
+                        }
+                        emitNewMessageEvent(convoId, { conversation_id: convoId, sender: 'received', message: text, created_at: new Date().toISOString() });
+
+                        if (isCustomerGreeting(text)) {
+                            enableAIForConversation(convoId);
+                        }
+
+                        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone: conversationIdValue, branchId: null, customerId: null });
+                        if (isHighRiskAnalysis.shouldEscalate) {
+                            if (isHighRiskAnalysis.reply) {
+                                await sendAutoReply(conversationIdValue, isHighRiskAnalysis.reply, platform);
+                            }
+                        } else {
+                            const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text);
+                            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+                            if (orderConfirmed && orderConfirmed.orderId) {
+                                await sendAutoReply(conversationIdValue, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`, platform);
+                            } else {
+                                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
+                                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
+                                    const reply = await getMistralReply(text, conversationIdValue, convoId);
+                                    await sendAutoReply(conversationIdValue, reply, platform);
+                                } else {
+                                    console.log(`AI response skipped for Messenger conversation ${convoId} - agent mode is not auto or agent recently active`);
+                                }
+                            }
+                        }
+                        checkAndCreateTicket(convoId, conversationIdValue, text);
+                    }
+                );
+            }
+        };
+
+        if (!result || result.length === 0) {
+            const insertConvSql = isPg
+                ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
+                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
+            db.query(insertConvSql, [conversationIdValue, conversationIdValue, platform], async (err, newConv) => {
+                if (err) {
+                    console.error('Messenger INSERT ERROR:', err);
+                    return res.sendStatus(200);
+                }
+                const convoId = isPg ? (newConv?.rows?.[0]?.id || newConv?.[0]?.id) : newConv.insertId;
+                if (!convoId) {
+                    console.error('Messenger conversation creation failed');
+                    return res.sendStatus(200);
+                }
+                await storeMessage(convoId);
+            });
+        } else {
+            const convoId = result[0].id;
+            await storeMessage(convoId);
+        }
+    });
+
+    res.sendStatus(200);
+});
+
+app.get('/webhook/messenger', (req, res) => {
+    const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN;
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+        return res.status(200).send(challenge);
+    }
+    res.sendStatus(403);
+});
+
 // ---------------------------
 // Test endpoint to simulate incoming message
 // ---------------------------
@@ -4039,14 +5347,14 @@ app.post("/api/test-message", (req, res) => {
     const phone = req.query.phone || "1234567890";
     const text = req.query.message || "Test message";
 
-    db.query("SELECT * FROM conversations WHERE phone = ?", [phone], async (err, result) => {
+    db.query("SELECT * FROM conversations WHERE phone = ? AND platform = 'whatsapp'", [phone], async (err, result) => {
         if (err) return res.sendStatus(500);
 
         if (!result || result.length === 0) {
             // Create new conversation
             const insertConvSql = isPg
                 ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
-                : "INSERT INTO conversations (phone, name, platform) VALUES (?, ?, 'whatsapp')";
+                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
             db.query(insertConvSql, [phone, phone, 'whatsapp'], (err, newConv) => {
                 if (err) return res.sendStatus(500);
                 const convoId = newConv.insertId;
@@ -4063,18 +5371,26 @@ app.post("/api/test-message", (req, res) => {
                         };
                         emitNewMessageEvent(convoId, messageData);
 
-                        // Check if this is an order confirmation
-                        const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-                        const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                        if (orderConfirmed && orderConfirmed.orderId) {
-                            await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+                        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
+                        if (isHighRiskAnalysis.shouldEscalate) {
+                            if (isHighRiskAnalysis.reply) {
+                                await sendAutoReply(phone, isHighRiskAnalysis.reply);
+                            }
+                            console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
                         } else {
-                            // Check if AI should respond
-                            if (aiAutoAllowed && shouldAIRespond(convoId)) {
-                                const reply = await getMistralReply(text, phone, convoId);
-                                await sendAutoReply(phone, reply);
+                            // Check if this is an order confirmation
+                            const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+                            if (orderConfirmed && orderConfirmed.orderId) {
+                                await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                             } else {
-                                console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                                // Check if AI should respond
+                                if (aiAutoAllowed && shouldAIRespond(convoId)) {
+                                    const reply = await getMistralReply(text, phone, convoId);
+                                    await sendAutoReply(phone, reply);
+                                } else {
+                                    console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                                }
                             }
                         }
                         res.json({ success: true, conversation_id: convoId });
@@ -4099,17 +5415,25 @@ app.post("/api/test-message", (req, res) => {
                     if (isCustomerGreeting(text) && isStaffIdleForThreeMinutes(convoId)) {
                         enableAIForConversation(convoId);
                     }
-                    const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-                    const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                    if (orderConfirmed && orderConfirmed.orderId) {
-                        await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+                    const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
+                    if (isHighRiskAnalysis.shouldEscalate) {
+                        if (isHighRiskAnalysis.reply) {
+                            await sendAutoReply(phone, isHighRiskAnalysis.reply);
+                        }
+                        console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
                     } else {
-                        const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                        if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                            const reply = await getMistralReply(text, phone, convoId);
-                            await sendAutoReply(phone, reply);
+                        const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                        const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+                        if (orderConfirmed && orderConfirmed.orderId) {
+                            await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                         } else {
-                            console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                            const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
+                            if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
+                                const reply = await getMistralReply(text, phone, convoId);
+                                await sendAutoReply(phone, reply);
+                            } else {
+                                console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
+                            }
                         }
                     }
                     res.json({ success: true, conversation_id: convoId });
@@ -4188,23 +5512,24 @@ app.post('/api/tickets', upload.array('files'), (req, res, next) => {
     if (!req.files || req.files.length === 0) return next();
     try{
         const { ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags } = req.body || {};
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
         const tagsText = tags ? (Array.isArray(tags) ? JSON.stringify(tags) : tags) : null;
         const slaDueDate = req.body.sla_due ? new Date(req.body.sla_due) : computeSlaDue(assignee, ticket_type);
         const slaDue = slaDueDate.toISOString().slice(0, 19).replace('T', ' ');
         const attachments = (req.files || []).map(f => ({ originalname: f.originalname, filename: f.filename, path: f.path, size: f.size }));
         const insertSql = isPg
-            ? `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, attachments, sla_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
-            : `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, attachments, sla_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            ? `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, attachments, sla_due, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+            : `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, attachments, sla_due, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
         db.query(
             insertSql,
-            [ticket_type || null, subject || null, customer_name || null, customer_phone || null, assignee || null, priority || null, status || 'Open', content || null, tagsText, JSON.stringify(attachments), slaDue],
+            [ticket_type || null, subject || null, customer_name || null, customer_phone || null, assignee || null, priority || null, status || 'Open', content || null, tagsText, JSON.stringify(attachments), slaDue, branchId > 0 ? branchId : null],
             (err, result) => {
                 if (err) {
                     console.error('Error inserting ticket with attachments:', err);
                     return res.status(500).json({ error: 'Failed to save ticket' });
                 }
                 const ticketId = result?.insertId ?? (Array.isArray(result) && result[0]?.id) ?? result?.id ?? null;
-                const ticket = { id: ticketId, ticket_type: ticket_type || null, subject, customer_name, customer_phone, assignee, priority, status: status || 'Open', content, tags: tagsText, attachments, sla_due: slaDueDate.toISOString(), created_at: new Date().toISOString() };
+                const ticket = { id: ticketId, ticket_type: ticket_type || null, subject, customer_name, customer_phone, assignee, priority, status: status || 'Open', content, tags: tagsText, attachments, sla_due: slaDueDate.toISOString(), created_at: new Date().toISOString(), branch_id: branchId > 0 ? branchId : null };
                 io.emit('ticketCreated', ticket);
                 res.json({ id: ticketId, success: true });
             }
@@ -4219,15 +5544,16 @@ app.post('/api/tickets', upload.array('files'), (req, res, next) => {
 app.post("/api/tickets", (req, res) => {
     // Accept richer ticket fields from the dashboard modal (JSON submission)
     const { ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags } = req.body || {};
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
     const tagsText = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
     const slaDueDate = req.body.sla_due ? new Date(req.body.sla_due) : computeSlaDue(assignee, ticket_type);
     const slaDue = slaDueDate.toISOString().slice(0, 19).replace('T', ' ');
     const insertSql = isPg
-        ? `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, sla_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
-        : `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, sla_due) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        ? `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, sla_due, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
+        : `INSERT INTO tickets (ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, sla_due, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
     db.query(
         insertSql,
-        [ticket_type || null, subject || null, customer_name || null, customer_phone || null, assignee || null, priority || null, status || 'Open', content || null, tagsText, slaDue],
+        [ticket_type || null, subject || null, customer_name || null, customer_phone || null, assignee || null, priority || null, status || 'Open', content || null, tagsText, slaDue, branchId > 0 ? branchId : null],
         (err, result) => {
             if (err) {
                 console.error('Error inserting ticket:', err);
@@ -4247,7 +5573,8 @@ app.post("/api/tickets", (req, res) => {
                 tags: tagsText,
                 sla_due: slaDueDate.toISOString(),
                 created_at: new Date().toISOString(),
-                escalated: 0
+                escalated: 0,
+                branch_id: branchId > 0 ? branchId : null
             };
             io.emit("ticketCreated", ticket);
             res.json({ id: ticketId, success: true });
@@ -4256,7 +5583,10 @@ app.post("/api/tickets", (req, res) => {
 });
 
 app.get("/api/tickets", (req, res) => {
-    db.query("SELECT * FROM tickets ORDER BY created_at DESC", (err, results) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const sql = branchId > 0 ? 'SELECT * FROM tickets WHERE branch_id = ? ORDER BY created_at DESC' : 'SELECT * FROM tickets ORDER BY created_at DESC';
+    const params = branchId > 0 ? [branchId] : [];
+    db.query(sql, params, (err, results) => {
         if (err) {
             console.error('Error fetching tickets:', err);
             return res.status(500).json({ error: 'Failed to fetch tickets' });
@@ -4267,7 +5597,10 @@ app.get("/api/tickets", (req, res) => {
 
 app.delete("/api/tickets/:id", (req, res) => {
     const { id } = req.params;
-    db.query("DELETE FROM tickets WHERE id = ?", [id], (err) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const sql = branchId > 0 ? 'DELETE FROM tickets WHERE id = ? AND branch_id = ?' : 'DELETE FROM tickets WHERE id = ?';
+    const params = branchId > 0 ? [id, branchId] : [id];
+    db.query(sql, params, (err) => {
         if (err) {
             console.error('Error deleting ticket:', err);
             return res.status(500).json({ error: 'Failed to delete ticket' });
@@ -4284,8 +5617,11 @@ app.post('/api/tickets/delete', (req, res) => {
     // ensure numeric ids
     const nums = ids.map(i => Number(i)).filter(n => !Number.isNaN(n));
     if (nums.length === 0) return res.status(400).json({ error: 'No valid ids' });
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
     const placeholders = nums.map(() => '?').join(',');
-    db.query(`DELETE FROM tickets WHERE id IN (${placeholders})`, nums, (err, result) => {
+    const sql = branchId > 0 ? `DELETE FROM tickets WHERE id IN (${placeholders}) AND branch_id = ?` : `DELETE FROM tickets WHERE id IN (${placeholders})`;
+    const params = branchId > 0 ? [...nums, branchId] : nums;
+    db.query(sql, params, (err, result) => {
         if (err) {
             console.error('Error bulk deleting tickets:', err);
             return res.status(500).json({ error: 'Failed to delete tickets' });
@@ -4335,17 +5671,75 @@ app.post("/api/escalate-ticket", (req, res) => {
 // ---------------------------
 // Resolve Ticket
 // ---------------------------
-app.post("/api/resolve-ticket", (req, res) => {
-    const { ticket_id } = req.body;
+app.post('/api/resolve-ticket', express.json(), express.urlencoded({ extended: true }), (req, res) => {
+    const payload = req.body || {};
+    const ticketId = payload.ticket_id ?? payload.ticketId ?? req.body?.ticket_id ?? req.body?.ticketId;
+    const resolutionNotes = payload.resolutionNotes || payload.resolution_notes || payload.resolutionNotes || '';
+    const resolutionCategory = payload.resolutionCategory || payload.resolution_category || null;
+    const notifyCustomer = Boolean(payload.notifyCustomer ?? payload.notify_customer ?? false);
+    const customerRating = Number(payload.customerRating ?? payload.customer_rating ?? 0) || null;
+    const customerComment = payload.customerComment || payload.customer_comment || null;
+    const resolvedAt = new Date().toISOString();
+
     if (!req.session || !req.session.user) return res.status(401).json({ error: 'not_logged_in' });
+    if (!ticketId) return res.status(400).json({ error: 'Missing ticket_id' });
+
+    const resolverId = req.session.userId || req.session.user?.id || null;
     const resolverName = req.session.user && req.session.user.name ? req.session.user.name : 'Staff';
-    db.query("UPDATE tickets SET status = 'Resolved', sla_due = NULL, escalated = ? WHERE id = ?", [false, ticket_id], (err) => {
+    const updateSql = isPg
+        ? `UPDATE tickets
+            SET status = 'Resolved',
+                resolved_at = $1,
+                resolved_by = $2,
+                resolution_notes = $3,
+                resolution_category = $4,
+                customer_rating = COALESCE($5, customer_rating),
+                customer_rating_comment = $6,
+                customer_rated_at = CASE WHEN $5 IS NOT NULL THEN $7 ELSE customer_rated_at END,
+                sla_due = NULL,
+                escalated = FALSE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $8`
+        : `UPDATE tickets
+            SET status = 'Resolved',
+                resolved_at = ?,
+                resolved_by = ?,
+                resolution_notes = ?,
+                resolution_category = ?,
+                customer_rating = COALESCE(?, customer_rating),
+                customer_rating_comment = ?,
+                customer_rated_at = CASE WHEN ? IS NOT NULL THEN ? ELSE customer_rated_at END,
+                sla_due = NULL,
+                escalated = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`;
+
+    const updateParams = isPg
+        ? [resolvedAt, resolverId, resolutionNotes, resolutionCategory, customerRating, customerComment, resolvedAt, ticketId]
+        : [resolvedAt, resolverId, resolutionNotes, resolutionCategory, customerRating, customerComment, customerRating, resolvedAt, ticketId];
+
+    db.query(updateSql, updateParams, async (err) => {
         if (err) {
             console.error('Error resolving ticket:', err);
-            return res.status(500).json({ error: 'Failed to resolve ticket' });
+            return res.status(500).json({ error: 'Failed to resolve ticket', details: err.message || null });
         }
-        io.emit("ticketResolved", { ticket_id, resolved_by: resolverName });
-        res.json({ success: true, resolved_by: resolverName });
+        if (notifyCustomer) {
+            try {
+                await createOneTimeFeedbackRequest(ticketId, resolverId);
+            } catch (phoneErr) {
+                console.error('Error queueing CSAT prompt:', phoneErr);
+            }
+
+            io.emit('staffNotification', {
+                message: 'Your support request has been resolved. Please rate your experience.',
+                from: resolverName,
+                type: 'ticket-resolution',
+                ticket_id: Number(ticketId),
+                time: new Date().toISOString()
+            });
+        }
+        io.emit('ticketResolved', { ticket_id: Number(ticketId), resolved_by: resolverName, resolved_at: resolvedAt, resolution_notes: resolutionNotes, resolution_category: resolutionCategory, notify_customer: notifyCustomer });
+        res.json({ success: true, resolved_by: resolverName, resolved_at: resolvedAt, resolution_notes: resolutionNotes, resolution_category: resolutionCategory, notify_customer: notifyCustomer });
     });
 });
 
@@ -4607,7 +6001,10 @@ app.get('/api/orders-summary/:phone', (req, res) => {
 });
 
 app.get('/api/dashboard-stats', (req, res) => {
-    db.query('SELECT COUNT(*) AS orders FROM orders', (err, results) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const sql = branchId > 0 ? 'SELECT COUNT(*) AS orders FROM orders WHERE branch_id = ?' : 'SELECT COUNT(*) AS orders FROM orders';
+    const params = branchId > 0 ? [branchId] : [];
+    db.query(sql, params, (err, results) => {
         if (err) {
             console.error('Error fetching dashboard stats:', err);
             return res.status(500).json({ error: "Database error" });
@@ -4617,20 +6014,22 @@ app.get('/api/dashboard-stats', (req, res) => {
 });
 
 app.get('/api/dashboard-revenue', (req, res) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const branchClause = branchId > 0 ? (isPg ? ` WHERE branch_id = ${branchId}` : ` WHERE branch_id = ${branchId}`) : '';
     const query = isPg
         ? `
             SELECT
               COALESCE(SUM(CASE WHEN order_date >= DATE_TRUNC('month', CURRENT_DATE) THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS revenue,
               COALESCE(SUM(CASE WHEN order_date >= CURRENT_DATE THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS today,
               COALESCE(SUM(CASE WHEN order_date >= CURRENT_DATE - INTERVAL '1 day' AND order_date < CURRENT_DATE THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS yesterday
-            FROM orders
+            FROM orders${branchClause}
         `
         : `
             SELECT
               COALESCE(SUM(CASE WHEN order_date >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS revenue,
               COALESCE(SUM(CASE WHEN order_date >= CURDATE() THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS today,
               COALESCE(SUM(CASE WHEN order_date >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND order_date < CURDATE() THEN COALESCE(total_amount, amount, 0) ELSE 0 END), 0) AS yesterday
-            FROM orders
+            FROM orders${branchClause}
         `;
 
     db.query(query, (err, results) => {
@@ -4660,11 +6059,84 @@ app.post('/api/dashboard-snapshot', express.json(), (req, res) => {
     res.json({ success: true, data: dashboardSnapshots.get(name) });
 });
 
+// Voucher management APIs
+app.get('/api/vouchers', isAuthenticated, async (req, res) => {
+    try {
+        const vouchers = listVouchers();
+        const stats = getVoucherStats();
+        return res.json({ vouchers, stats });
+    } catch (error) {
+        console.error('GET /api/vouchers error', error);
+        return res.status(500).json({ error: 'Unable to load vouchers' });
+    }
+});
+
+app.post('/api/vouchers', isAuthenticated, async (req, res) => {
+    try {
+        const payload = req.body || {};
+        if (!payload.type) return res.status(400).json({ error: 'Voucher type is required.' });
+        if (!payload.value && payload.value !== 0) return res.status(400).json({ error: 'Voucher value is required.' });
+        const created = createVoucher(payload);
+        return res.json(created);
+    } catch (error) {
+        console.error('POST /api/vouchers error', error);
+        return res.status(500).json({ error: error.message || 'Unable to create voucher' });
+    }
+});
+
+app.patch('/api/vouchers/:id', isAuthenticated, async (req, res) => {
+    try {
+        const voucher = updateVoucher(req.params.id, req.body || {});
+        return res.json({ success: true, voucher, message: 'Voucher updated successfully.' });
+    } catch (error) {
+        console.error('PATCH /api/vouchers/:id error', error);
+        return res.status(404).json({ error: error.message || 'Voucher not found.' });
+    }
+});
+
+app.delete('/api/vouchers/:id', isAuthenticated, async (req, res) => {
+    try {
+        deleteVoucher(req.params.id);
+        return res.json({ success: true, message: 'Voucher deleted successfully.' });
+    } catch (error) {
+        console.error('DELETE /api/vouchers/:id error', error);
+        return res.status(500).json({ error: error.message || 'Unable to delete voucher' });
+    }
+});
+
+app.post('/api/vouchers/validate', express.json(), async (req, res) => {
+    try {
+        const { code, subtotal } = req.body || {};
+        if (!code) return res.status(400).json({ error: 'Voucher code is required.' });
+        const subtotalValue = Number(subtotal || 0);
+        const validation = validateVoucher(code, subtotalValue);
+        if (!validation.valid) return res.status(400).json(validation);
+        const redeemed = redeemVoucher(code, subtotalValue);
+        if (!redeemed.valid) return res.status(400).json(redeemed);
+        return res.json({ success: true, voucher: redeemed.voucher, pricing: redeemed.pricing, message: 'Voucher applied successfully.' });
+    } catch (error) {
+        console.error('POST /api/vouchers/validate error', error);
+        return res.status(500).json({ error: 'Unable to validate voucher' });
+    }
+});
+
+app.get('/api/vouchers/stats', isAuthenticated, async (req, res) => {
+    try {
+        return res.json(getVoucherStats());
+    } catch (error) {
+        console.error('GET /api/vouchers/stats error', error);
+        return res.status(500).json({ error: 'Unable to load voucher stats' });
+    }
+});
+
 // Get all orders (for Orders page)
 app.get('/api/orders', (req, res) => {
-    db.query(
-        'SELECT id, order_id, customer_name, phone, product, amount, COALESCE(total_amount, amount) AS total_amount, status, order_date FROM orders ORDER BY order_date DESC',
-        (err, results) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const sql = branchId > 0
+        ? 'SELECT id, order_id, customer_name, phone, product, amount, COALESCE(total_amount, amount) AS total_amount, status, order_date FROM orders WHERE branch_id = ? ORDER BY order_date DESC'
+        : 'SELECT id, order_id, customer_name, phone, product, amount, COALESCE(total_amount, amount) AS total_amount, status, order_date FROM orders ORDER BY order_date DESC';
+    const params = branchId > 0 ? [branchId] : [];
+    db.query(sql, params, (err, results) => {
             if (err) {
                 console.error('Error fetching orders:', err);
                 return res.status(500).json({ error: "Database error" });
@@ -4750,7 +6222,7 @@ async function validateOrderItems(items = []) {
 
 // Create new order
 app.post('/api/orders', async (req, res) => {
-    const { customerName, product, menuItemId, quantity, amount, status, items, phone } = req.body;
+    const { customerName, product, menuItemId, quantity, amount, status, items, phone, voucherCode, voucherDiscount, voucherType, finalTotal, subtotal } = req.body;
 
     if (!customerName) {
         return res.status(400).json({ error: 'Missing required field: customerName' });
@@ -4773,6 +6245,13 @@ app.post('/api/orders', async (req, res) => {
     const now = new Date();
     const orderAmount = validation.total;
     const orderProduct = validation.productDisplay || String(product || '').trim();
+    const voucherFields = prepareVoucherOrderPayload({
+        voucherCode,
+        voucherType,
+        voucherDiscount,
+        subtotal: subtotal ?? orderAmount,
+        finalTotal: finalTotal ?? orderAmount
+    });
 
     // If a table number was provided, try to mark it occupied first (fail if not vacant)
     const tableNumber = req.body.tableNumber || null;
@@ -4800,13 +6279,14 @@ app.post('/api/orders', async (req, res) => {
         }
     }
 
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
     const insertSql = isPg
-        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id'
-        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
+        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, voucher_code, discount_type, discount_amount, subtotal, final_total, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id'
+        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, voucher_code, discount_type, discount_amount, subtotal, final_total, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
     db.query(
         insertSql,
-        [orderId, customerName, phone || null, orderProduct, orderAmount, orderAmount, status || 'pending', now],
+        [orderId, customerName, phone || null, orderProduct, orderAmount, orderAmount, status || 'pending', now, voucherFields.voucher_code, voucherFields.discount_type, voucherFields.discount_amount, voucherFields.subtotal, voucherFields.final_total, branchId > 0 ? branchId : null],
         async (err, result) => {
             if (err) {
                 console.error('Error creating order:', err);
@@ -4846,15 +6326,15 @@ app.post('/api/orders', async (req, res) => {
 app.put('/api/orders/:orderId', isAuthenticated, (req, res) => {
     const { orderId } = req.params;
     const { status } = req.body;
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
     
     if (!status) {
         return res.status(400).json({ error: "Status is required" });
     }
 
-    db.query(
-        'UPDATE orders SET status = ? WHERE order_id = ?',
-        [status, orderId],
-        (err, result) => {
+    const sql = branchId > 0 ? 'UPDATE orders SET status = ? WHERE order_id = ? AND branch_id = ?' : 'UPDATE orders SET status = ? WHERE order_id = ?';
+    const params = branchId > 0 ? [status, orderId, branchId] : [status, orderId];
+    db.query(sql, params, (err, result) => {
             if (err) {
                 console.error('Error updating order:', err);
                 return res.status(500).json({ error: "Database error" });
@@ -5363,7 +6843,23 @@ app.post('/api/settings', (req, res) => {
         data.theme || 'Light'
     ], (err) => {
         if (err) return res.sendStatus(500);
-        res.sendStatus(200);
+        
+        // Also update staff's full_name if displayName is provided
+        if (data.displayName) {
+            const updateStaffQuery = 'UPDATE staffs SET full_name = ? WHERE id = ?';
+            db.query(updateStaffQuery, [data.displayName, userId], (err2) => {
+                if (err2) {
+                    console.error('Error updating staff full_name:', err2);
+                }
+                // Update session with new name
+                if (req.session.user) {
+                    req.session.user.name = data.displayName;
+                }
+                res.sendStatus(200);
+            });
+        } else {
+            res.sendStatus(200);
+        }
     });
 });
 
@@ -5541,6 +7037,88 @@ io.on("connection", (socket) => {
 
     socket.on('voice:getChannels', () => {
         socket.emit('voice:channels', getVoiceChannelList());
+    });
+
+    socket.on('call:start', (data) => {
+        if (!data || !data.recipientId || !data.callId) return;
+        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.recipientId));
+        if (!recipient?.socketId) {
+            socket.emit('call:error', { message: 'Recipient is not online.' });
+            return;
+        }
+        io.to(recipient.socketId).emit('call:incoming', {
+            ...data,
+            fromUserId: data.caller?.userId || socket.id
+        });
+    });
+
+    socket.on('call:accept', (data) => {
+        if (!data || !data.callId || !data.toUserId) return;
+        const callerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        if (callerSocket?.socketId) {
+            io.to(callerSocket.socketId).emit('call:accepted', {
+                callId: data.callId,
+                fromUserId: data.fromUserId || socket.id
+            });
+        }
+    });
+
+    socket.on('call:decline', (data) => {
+        if (!data || !data.callId || !data.toUserId) return;
+        const callerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        if (callerSocket?.socketId) {
+            io.to(callerSocket.socketId).emit('call:declined', {
+                callId: data.callId,
+                fromUserId: data.fromUserId || socket.id
+            });
+        }
+    });
+
+    socket.on('call:end', (data) => {
+        if (!data || !data.callId || !data.toUserId) return;
+        const peerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        if (peerSocket?.socketId) {
+            io.to(peerSocket.socketId).emit('call:ended', {
+                callId: data.callId,
+                fromUserId: data.fromUserId || socket.id
+            });
+        }
+    });
+
+    socket.on('webrtc:offer', (data) => {
+        if (!data || !data.toUserId || !data.callId || !data.offer) return;
+        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        if (recipient?.socketId) {
+            io.to(recipient.socketId).emit('webrtc:offer', {
+                callId: data.callId,
+                offer: data.offer,
+                fromUserId: data.fromUserId || socket.id
+            });
+        }
+    });
+
+    socket.on('webrtc:answer', (data) => {
+        if (!data || !data.toUserId || !data.callId || !data.answer) return;
+        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        if (recipient?.socketId) {
+            io.to(recipient.socketId).emit('webrtc:answer', {
+                callId: data.callId,
+                answer: data.answer,
+                fromUserId: data.fromUserId || socket.id
+            });
+        }
+    });
+
+    socket.on('webrtc:icecandidate', (data) => {
+        if (!data || !data.toUserId || !data.callId || !data.candidate) return;
+        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        if (recipient?.socketId) {
+            io.to(recipient.socketId).emit('webrtc:icecandidate', {
+                callId: data.callId,
+                candidate: data.candidate,
+                fromUserId: data.fromUserId || socket.id
+            });
+        }
     });
 
     socket.on('call:register', (data) => {
@@ -6132,13 +7710,15 @@ setHandoffCallback((conversationId) => {
 // Add endpoint to fetch analytics data
 app.get('/api/analytics', isAuthenticated, async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
         const [countsRows] = await db.promise().query(`
             SELECT
                 (SELECT COUNT(*) FROM conversations) AS chats,
                 (SELECT COUNT(*) FROM tickets) AS tickets,
-                (SELECT COUNT(*) FROM tickets WHERE escalated = TRUE) AS escalatedTickets,
+                0 AS escalatedTickets,
                 (SELECT COUNT(*) FROM receipts) AS receipts,
-                (SELECT COUNT(*) FROM receipts WHERE escalated = TRUE) AS escalatedReceipts
+                0 AS escalatedReceipts,
+                (SELECT COUNT(*) FROM resolved) AS resolvedChats
         `);
 
         const [feedbackRows] = await db.promise().query(`
@@ -6148,6 +7728,116 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
                 SUM(CASE WHEN rating >= 4 THEN 1 ELSE 0 END) AS positive
             FROM ai_feedback
             WHERE rating IS NOT NULL
+        `);
+        const branchFilter = branchId > 0 ? ` WHERE branch_id = ${branchId}` : '';
+        const branchConversationFilter = branchId > 0 ? ` WHERE c.branch_id = ${branchId}` : '';
+        const branchOrdersFilter = branchId > 0 ? ` AND c.branch_id = ${branchId}` : '';
+        const [csatRows] = await db.promise().query(`
+            SELECT COUNT(*) AS count,
+                AVG(customer_rating) AS average_rating,
+                SUM(CASE WHEN customer_rating = 5 THEN 1 ELSE 0 END) AS five_star,
+                SUM(CASE WHEN customer_rating = 4 THEN 1 ELSE 0 END) AS four_star,
+                SUM(CASE WHEN customer_rating = 3 THEN 1 ELSE 0 END) AS three_star,
+                SUM(CASE WHEN customer_rating = 2 THEN 1 ELSE 0 END) AS two_star,
+                SUM(CASE WHEN customer_rating = 1 THEN 1 ELSE 0 END) AS one_star
+            FROM tickets${branchFilter}${branchFilter ? ' AND' : ' WHERE'} customer_rating IS NOT NULL
+        `);
+
+        const [channelRows] = await db.promise().query(`
+            SELECT COALESCE(platform, 'unknown') AS channel, COUNT(*) AS count
+            FROM conversations${branchFilter}
+            GROUP BY channel
+            ORDER BY count DESC
+        `);
+
+        const [intentRows] = await db.promise().query(`
+            SELECT COALESCE(e.detected_intent, 'Unclassified') AS intent, COUNT(*) AS count
+            FROM escalations e
+            JOIN conversations c ON c.id = e.conversation_id
+            ${branchConversationFilter}
+            GROUP BY intent
+            ORDER BY count DESC
+            LIMIT 10
+        `);
+
+        const [issueRows] = await db.promise().query(isPg ? `
+            SELECT issue, COUNT(*) AS count FROM (
+                SELECT CASE
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%refund%' THEN 'Refund'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%complaint%' THEN 'Complaint'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%cancel%' THEN 'Cancellation'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%delivery%' THEN 'Delivery'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%payment%' THEN 'Payment issue'
+                    ELSE 'Other'
+                END AS issue
+                FROM tickets${branchFilter}
+            ) AS ticket_issues
+            GROUP BY issue
+            ORDER BY count DESC
+            LIMIT 5
+        ` : `
+            SELECT issue, COUNT(*) AS count FROM (
+                SELECT CASE
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%refund%' THEN 'Refund'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%complaint%' THEN 'Complaint'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%cancel%' THEN 'Cancellation'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%delivery%' THEN 'Delivery'
+                    WHEN LOWER(COALESCE(subject, '')) LIKE '%payment%' THEN 'Payment issue'
+                    ELSE 'Other'
+                END AS issue
+                FROM tickets${branchFilter}
+            ) AS ticket_issues
+            GROUP BY issue
+            ORDER BY count DESC
+            LIMIT 5
+        `);
+
+        const [escalationRows] = await db.promise().query(`
+            SELECT COUNT(*) AS count
+            FROM escalations e
+            JOIN conversations c ON c.id = e.conversation_id
+            ${branchConversationFilter}
+        `);
+
+        const [revenueSavedRows] = await db.promise().query(isPg ? `
+            SELECT
+              COUNT(*) FILTER (WHERE COALESCE(o.status, '') <> 'cancelled') AS prevented_cancellations,
+              COALESCE(SUM(CASE WHEN COALESCE(o.status, '') <> 'cancelled' THEN COALESCE(o.total_amount, o.amount, 0) ELSE 0 END), 0) AS prevented_cancellations_amount,
+              COUNT(*) AS recovered_orders,
+              COALESCE(SUM(COALESCE(o.total_amount, o.amount, 0)), 0) AS recovered_amount
+            FROM orders o
+            JOIN conversations c ON c.id = o.conversation_id
+            WHERE c.id IN (
+              SELECT conversation_id FROM escalations
+              UNION
+              SELECT conversation_id FROM refunds
+              UNION
+              SELECT conversation_id FROM delivery_issues
+            )${branchOrdersFilter}
+        ` : `
+            SELECT
+              SUM(CASE WHEN COALESCE(o.status, '') <> 'cancelled' THEN 1 ELSE 0 END) AS prevented_cancellations,
+              COALESCE(SUM(CASE WHEN COALESCE(o.status, '') <> 'cancelled' THEN COALESCE(o.total_amount, o.amount, 0) ELSE 0 END), 0) AS prevented_cancellations_amount,
+              COUNT(*) AS recovered_orders,
+              COALESCE(SUM(COALESCE(o.total_amount, o.amount, 0)), 0) AS recovered_amount
+            FROM orders o
+            JOIN conversations c ON c.id = o.conversation_id
+            WHERE c.id IN (
+              SELECT conversation_id FROM escalations
+              UNION
+              SELECT conversation_id FROM refunds
+              UNION
+              SELECT conversation_id FROM delivery_issues
+            )${branchOrdersFilter}
+        `);
+
+        const [topAgentRows] = await db.promise().query(`
+            SELECT u.name, COUNT(*) AS messages_handled
+            FROM replies r
+            JOIN users u ON u.id = r.user_id
+            GROUP BY u.id, u.name
+            ORDER BY messages_handled DESC
+            LIMIT 1
         `);
 
         let avgResp = { avg_response_seconds: null };
@@ -6193,6 +7883,16 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
 
         const summary = (Array.isArray(countsRows) ? countsRows[0] : countsRows) || {};
         const fb = (Array.isArray(feedbackRows) ? feedbackRows[0] : feedbackRows) || {};
+        const csat = (Array.isArray(csatRows) ? csatRows[0] : csatRows) || {};
+        const channels = Array.isArray(channelRows) ? channelRows.map((row) => ({ channel: row.channel, count: Number(row.count || 0) })) : [];
+        const intents = Array.isArray(intentRows) ? intentRows.map((row) => ({ intent: row.intent, count: Number(row.count || 0) })) : [];
+        const issueCategories = Array.isArray(issueRows) ? issueRows.map((row) => ({ issue: row.issue, count: Number(row.count || 0) })) : [];
+        const escalationCount = Number((Array.isArray(escalationRows) ? escalationRows[0] : escalationRows)?.count || 0);
+        const revenueSaved = (Array.isArray(revenueSavedRows) ? revenueSavedRows[0] : revenueSavedRows) || {};
+        const topAgent = Array.isArray(topAgentRows) && topAgentRows[0] ? {
+            name: topAgentRows[0].name,
+            messagesHandled: Number(topAgentRows[0].messages_handled || 0)
+        } : null;
 
         const numChats = Number(summary.chats) || 0;
         const numResolvedChats = Number(summary.resolvedChats) || 0;
@@ -6203,7 +7903,9 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
             numEscalatedTickets: Number(summary.escalatedTickets) || 0,
             numReceipts: Number(summary.receipts) || 0,
             numEscalatedReceipts: Number(summary.escalatedReceipts) || 0,
-            numEscalatedChats: Number(summary.escalatedChats) || 0,
+            numEscalatedChats: Number(summary.numEscalatedChats || summary.escalatedChats || 0),
+            escalationCount,
+            escalationRate: numChats ? escalationCount / numChats : 0,
             numResolvedChats,
             activeChats: Math.max(0, numChats - numResolvedChats),
             avgResponseSeconds: avgResp.avg_response_seconds != null ? Number(avgResp.avg_response_seconds) : null,
@@ -6211,7 +7913,27 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
             resolutionRate: numChats ? (numResolvedChats / numChats) : 0,
             aiFeedbackCount: Number(fb.count) || 0,
             aiFeedbackAvg: fb.avg_rating != null ? Number(fb.avg_rating) : null,
-            aiFeedbackPositive: Number(fb.positive) || 0
+            aiFeedbackPositive: Number(fb.positive) || 0,
+            aiAccuracy: fb.avg_rating != null ? Number(fb.avg_rating) : null,
+            channelDistribution: channels,
+            intentDistribution: intents,
+            issueCategories,
+            revenueSaved: {
+                preventedCancellations: Number(revenueSaved.prevented_cancellations || 0),
+                preventedCancellationsAmount: Number(revenueSaved.prevented_cancellations_amount || 0),
+                recoveredOrders: Number(revenueSaved.recovered_orders || 0),
+                recoveredAmount: Number(revenueSaved.recovered_amount || 0)
+            },
+            topAgent,
+            csatCount: Number(csat.count) || 0,
+            csatAverage: csat.average_rating != null ? Number(csat.average_rating) : null,
+            csatDistribution: {
+                5: Number(csat.five_star) || 0,
+                4: Number(csat.four_star) || 0,
+                3: Number(csat.three_star) || 0,
+                2: Number(csat.two_star) || 0,
+                1: Number(csat.one_star) || 0
+            }
         });
     } catch (error) {
         console.error('Error fetching analytics data:', error);
@@ -6221,11 +7943,13 @@ app.get('/api/analytics', isAuthenticated, async (req, res) => {
 
 app.get('/api/my-metrics', isAuthenticated, async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const branchClause = branchId > 0 ? ` WHERE branch_id = ${branchId}` : '';
         const statsRows = await db.promise().query(`
             SELECT
                 COUNT(*) AS tickets,
                 SUM(CASE WHEN LOWER(status) = 'resolved' THEN 1 ELSE 0 END) AS resolvedChats
-            FROM tickets
+            FROM tickets${branchClause}
         `);
 
         const stats = (Array.isArray(statsRows) ? statsRows[0] : statsRows) || { tickets: 0, resolvedChats: 0 };
@@ -6245,17 +7969,19 @@ app.get('/api/my-metrics', isAuthenticated, async (req, res) => {
 // API endpoint for ticket counts by time period
 app.get('/api/tickets-by-period', async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const branchClause = branchId > 0 ? ` WHERE branch_id = ${branchId}` : '';
         const ticketCountsSql = isPg
             ? `SELECT
                     COUNT(*) FILTER (WHERE created_at >= date_trunc('day', now())) AS daily,
                     COUNT(*) FILTER (WHERE created_at >= date_trunc('week', now())) AS weekly,
                     COUNT(*) FILTER (WHERE created_at >= date_trunc('month', now())) AS monthly
-                FROM tickets`
+                FROM tickets${branchClause}`
             : `SELECT
                     SUM(created_at >= CURDATE()) AS daily,
                     SUM(created_at >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)) AS weekly,
                     SUM(created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS monthly
-                FROM tickets`;
+                FROM tickets${branchClause}`;
         const rows = await db.promise().query(ticketCountsSql);
 
         const counts = (Array.isArray(rows) ? rows[0] : rows) || { daily: 0, weekly: 0, monthly: 0 };
@@ -6276,10 +8002,12 @@ app.get('/api/tickets-monthly', async (req, res) => {
     try {
         const now = new Date();
         const year = now.getFullYear();
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const branchClause = branchId > 0 ? ` AND branch_id = ${branchId}` : '';
 
         const sql = isPg
-            ? `SELECT TO_CHAR(created_at, 'YYYY-MM') AS ym, COUNT(*) AS total FROM tickets WHERE created_at >= DATE_TRUNC('year', CURRENT_DATE) AND created_at < DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year' GROUP BY ym ORDER BY ym`
-            : `SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym, COUNT(*) AS total FROM tickets WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01') AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR) GROUP BY ym ORDER BY ym`;
+            ? `SELECT TO_CHAR(created_at, 'YYYY-MM') AS ym, COUNT(*) AS total FROM tickets WHERE created_at >= DATE_TRUNC('year', CURRENT_DATE) AND created_at < DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year'${branchClause} GROUP BY ym ORDER BY ym`
+            : `SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym, COUNT(*) AS total FROM tickets WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01') AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR)${branchClause} GROUP BY ym ORDER BY ym`;
 
         const rows = await db.promise().query(sql);
         const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -6306,17 +8034,19 @@ app.get('/api/tickets-monthly', async (req, res) => {
 // API endpoint for message counts by time period (received messages only)
 app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const branchClause = branchId > 0 ? ` AND conversation_id IN (SELECT id FROM conversations WHERE branch_id = ${branchId})` : '';
         const messageCountsSql = isPg
             ? `SELECT
                     SUM(CASE WHEN sender <> 'sent' AND created_at::date = CURRENT_DATE THEN 1 ELSE 0 END) AS daily,
                     SUM(CASE WHEN sender <> 'sent' AND DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE) THEN 1 ELSE 0 END) AS weekly,
                     SUM(CASE WHEN sender <> 'sent' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END) AS monthly
-                FROM messages`
+                FROM messages WHERE 1=1${branchClause}`
             : `SELECT
                     SUM(CASE WHEN sender <> 'sent' AND DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS daily,
                     SUM(CASE WHEN sender <> 'sent' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) THEN 1 ELSE 0 END) AS weekly,
                     SUM(CASE WHEN sender <> 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS monthly
-                FROM messages`;
+                FROM messages WHERE 1=1${branchClause}`;
 
         const rows = await db.promise().query(messageCountsSql);
         const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
@@ -6334,17 +8064,19 @@ app.get('/api/messages-by-period', isAuthenticated, async (req, res) => {
 
 app.get('/api/outward-messages-by-period', isAuthenticated, async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const branchClause = branchId > 0 ? ` AND conversation_id IN (SELECT id FROM conversations WHERE branch_id = ${branchId})` : '';
         const messageCountsSql = isPg
             ? `SELECT
                     SUM(CASE WHEN sender = 'sent' AND created_at::date = CURRENT_DATE THEN 1 ELSE 0 END) AS daily,
                     SUM(CASE WHEN sender = 'sent' AND DATE_TRUNC('week', created_at) = DATE_TRUNC('week', CURRENT_DATE) THEN 1 ELSE 0 END) AS weekly,
                     SUM(CASE WHEN sender = 'sent' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE) THEN 1 ELSE 0 END) AS monthly
-                FROM messages`
+                FROM messages WHERE 1=1${branchClause}`
             : `SELECT
                     SUM(CASE WHEN sender = 'sent' AND DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS daily,
                     SUM(CASE WHEN sender = 'sent' AND YEARWEEK(created_at, 1) = YEARWEEK(CURDATE(), 1) THEN 1 ELSE 0 END) AS weekly,
                     SUM(CASE WHEN sender = 'sent' AND YEAR(created_at) = YEAR(CURDATE()) AND MONTH(created_at) = MONTH(CURDATE()) THEN 1 ELSE 0 END) AS monthly
-                FROM messages`;
+                FROM messages WHERE 1=1${branchClause}`;
 
         const rows = await db.promise().query(messageCountsSql);
         const counts = rows[0] || { daily: 0, weekly: 0, monthly: 0 };
@@ -6362,25 +8094,27 @@ app.get('/api/outward-messages-by-period', isAuthenticated, async (req, res) => 
 
 app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const branchClause = branchId > 0 ? ` AND conversation_id IN (SELECT id FROM conversations WHERE branch_id = ${branchId})` : '';
         const sql = isPg ? `
             SELECT TO_CHAR(created_at, 'YYYY-MM') AS ym,
                 SUM(CASE WHEN LOWER(sender) ~ 'ai|bot|assistant' OR (user_id IS NULL AND LOWER(sender) = 'sent') THEN 1 ELSE 0 END) AS ai_count,
                 SUM(CASE WHEN user_id IS NOT NULL OR LOWER(sender) ~ 'agent|staff|sent_by_agent' THEN 1 ELSE 0 END) AS staff_count
             FROM (
-                SELECT sender, created_at, NULL AS user_id FROM messages
+                SELECT sender, created_at, NULL AS user_id, conversation_id FROM messages
                 UNION
-                SELECT sender, created_at, user_id FROM replies
+                SELECT sender, created_at, user_id, conversation_id FROM replies
                 UNION
-                SELECT sender, created_at, user_id FROM ai_messages
+                SELECT sender, created_at, user_id, conversation_id FROM ai_messages
                 UNION
-                SELECT sender, created_at, user_id FROM staff_messages
+                SELECT sender, created_at, user_id, conversation_id FROM staff_messages
                 UNION
-                SELECT sender, created_at, user_id FROM "ai replies"
+                SELECT sender, created_at, user_id, conversation_id FROM "ai replies"
                 UNION
-                SELECT sender, created_at, user_id FROM "staff replies"
+                SELECT sender, created_at, user_id, conversation_id FROM "staff replies"
             ) AS all_msgs
             WHERE created_at >= DATE_TRUNC('year', CURRENT_DATE)
-                AND created_at < DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year'
+                AND created_at < DATE_TRUNC('year', CURRENT_DATE) + INTERVAL '1 year'${branchClause}
             GROUP BY ym
             ORDER BY ym;
         ` : `
@@ -6388,20 +8122,20 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
                 SUM(CASE WHEN LOWER(sender) REGEXP 'ai|bot|assistant' OR (user_id IS NULL AND LOWER(sender) = 'sent') THEN 1 ELSE 0 END) AS ai_count,
                 SUM(CASE WHEN user_id IS NOT NULL OR LOWER(sender) REGEXP 'agent|staff|sent_by_agent' THEN 1 ELSE 0 END) AS staff_count
             FROM (
-                SELECT sender, created_at, NULL AS user_id FROM messages
+                SELECT sender, created_at, NULL AS user_id, conversation_id FROM messages
                 UNION
-                SELECT sender, created_at, user_id FROM replies
+                SELECT sender, created_at, user_id, conversation_id FROM replies
                 UNION
-                SELECT sender, created_at, user_id FROM ai_messages
+                SELECT sender, created_at, user_id, conversation_id FROM ai_messages
                 UNION
-                SELECT sender, created_at, user_id FROM staff_messages
+                SELECT sender, created_at, user_id, conversation_id FROM staff_messages
                 UNION ALL
-                SELECT sender, created_at, user_id FROM \`ai replies\`
+                SELECT sender, created_at, user_id, conversation_id FROM \`ai replies\`
                 UNION ALL
-                SELECT sender, created_at, user_id FROM \`staff replies\`
+                SELECT sender, created_at, user_id, conversation_id FROM \`staff replies\`
             ) AS all_msgs
             WHERE created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01')
-                AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR)
+                AND created_at < DATE_ADD(DATE_FORMAT(CURDATE(), '%Y-01-01'), INTERVAL 1 YEAR)${branchClause}
             GROUP BY ym
             ORDER BY ym;
         `;
@@ -6441,6 +8175,7 @@ app.get('/api/messages-monthly', isAuthenticated, async (req, res) => {
 // Daily AI vs staff messages for the current month (or specific month via ?month=YYYY-MM)
 app.get('/api/messages-daily', isAuthenticated, async (req, res) => {
     try {
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
         const monthParam = (req.query.month || '').trim();
         const now = new Date();
         const year = monthParam ? Number(monthParam.split('-')[0]) : now.getFullYear();
@@ -6450,17 +8185,18 @@ app.get('/api/messages-daily', isAuthenticated, async (req, res) => {
 
         const startStr = startDate.toISOString();
         const endStr = endDate.toISOString();
+        const branchClause = branchId > 0 ? ` AND conversation_id IN (SELECT id FROM conversations WHERE branch_id = ${branchId})` : '';
 
         const sql = isPg ? `
             SELECT DATE(created_at) AS dt,
                 SUM(CASE WHEN table_source = 'ai' THEN 1 ELSE 0 END) AS ai_count,
                 SUM(CASE WHEN table_source = 'staff' THEN 1 ELSE 0 END) AS staff_count
             FROM (
-                SELECT created_at, 'ai' AS table_source FROM ai_messages
+                SELECT created_at, conversation_id, 'ai' AS table_source FROM ai_messages
                 UNION ALL
-                SELECT created_at, 'staff' AS table_source FROM staff_messages
+                SELECT created_at, conversation_id, 'staff' AS table_source FROM staff_messages
             ) AS all_msgs
-            WHERE created_at >= $1 AND created_at < $2
+            WHERE created_at >= $1 AND created_at < $2${branchClause}
             GROUP BY DATE(created_at)
             ORDER BY DATE(created_at)
         ` : `
@@ -6468,11 +8204,11 @@ app.get('/api/messages-daily', isAuthenticated, async (req, res) => {
                 SUM(CASE WHEN table_source = 'ai' THEN 1 ELSE 0 END) AS ai_count,
                 SUM(CASE WHEN table_source = 'staff' THEN 1 ELSE 0 END) AS staff_count
             FROM (
-                SELECT created_at, 'ai' AS table_source FROM ai_messages
+                SELECT created_at, conversation_id, 'ai' AS table_source FROM ai_messages
                 UNION ALL
-                SELECT created_at, 'staff' AS table_source FROM staff_messages
+                SELECT created_at, conversation_id, 'staff' AS table_source FROM staff_messages
             ) AS all_msgs
-            WHERE created_at >= ? AND created_at < ?
+            WHERE created_at >= ? AND created_at < ?${branchClause}
             GROUP BY DATE(created_at)
             ORDER BY DATE(created_at)
         `;
@@ -6702,7 +8438,6 @@ app.post('/debug/assign-escalation', (req, res) => {
     if (!conversationId) return res.status(400).json({ error: 'conversationId required' });
 
     let assignedStaffId = data.assignedStaffId || data.assigned_staff_id || null;
-    // pick first available online staff if none provided
     if (!assignedStaffId) {
         const firstRec = Array.from(onlineAgents.values()).find(a => a && a.role === 'agent');
         assignedStaffId = firstRec ? firstRec.userId : null;
@@ -6710,21 +8445,42 @@ app.post('/debug/assign-escalation', (req, res) => {
 
     const customerName = data.customerName || `Debug:${conversationId}`;
 
-    // (previously selected an audio file to play for handoffs; removed per request)
+    const legacyUpsertSql = isPg
+        ? `INSERT INTO escalations (conversation_id, customer_name, escalated_at, alarm_active, status)
+            VALUES (?, ?, CURRENT_TIMESTAMP, TRUE, ?)
+            ON CONFLICT (conversation_id) DO UPDATE SET
+                customer_name = EXCLUDED.customer_name,
+                escalated_at = CURRENT_TIMESTAMP,
+                alarm_active = TRUE,
+                status = EXCLUDED.status`
+        : `INSERT INTO escalations (conversation_id, customer_name, escalated_at, alarm_active, status)
+            VALUES (?, ?, NOW(), 1, ?)
+            ON DUPLICATE KEY UPDATE
+                customer_name = VALUES(customer_name),
+                escalated_at = CURRENT_TIMESTAMP,
+                alarm_active = 1,
+                status = VALUES(status)`;
 
-    // Upsert escalation row for visibility (best-effort)
-    const upsertSql = isPg
-        ? `INSERT INTO escalations (conversation_id, customer_name, alarm_active, assigned_staff_id) VALUES (?, ?, TRUE, ?) ON CONFLICT (conversation_id) DO UPDATE SET escalated_at = CURRENT_TIMESTAMP, alarm_active = TRUE, snoozed_until = NULL, claimed_by = NULL, claim_time = NULL, assigned_staff_id = ?`
-        : `INSERT INTO escalations (conversation_id, customer_name, alarm_active, assigned_staff_id) VALUES (?, ?, 1, ?) ON DUPLICATE KEY UPDATE escalated_at = CURRENT_TIMESTAMP, alarm_active = 1, snoozed_until = NULL, claimed_by = NULL, claim_time = NULL, assigned_staff_id = ?`;
+    db.query(legacyUpsertSql, [conversationId, customerName, 'Escalated'], (uErr) => {
+        if (uErr) {
+            console.log('Debug escalation upsert error:', uErr);
+        }
 
-    db.query(upsertSql, [conversationId, customerName, assignedStaffId, assignedStaffId], (uErr) => {
-        if (uErr) console.log('Debug escalation upsert error:', uErr);
+        const escalationPayload = {
+            conversationId,
+            customerName,
+            assignedStaffId,
+            detectedIntent: data.detectedIntent || 'High-risk intent detected',
+            escalationReason: data.escalationReason || 'Escalated for manual review',
+            confidence: Number(data.confidence ?? 0.99),
+            status: data.status || 'Escalated',
+            timestamp: new Date().toISOString()
+        };
 
-        // Emit global escalationRaised and legacy handoffAlert
-        io.emit('escalationRaised', { conversationId, customerName, assignedStaffId });
+        io.emit('escalationRaised', escalationPayload);
+        io.emit('highRiskEscalated', escalationPayload);
         io.emit('handoffAlert', { conversationId });
 
-        // Notify assigned staff socket if online; otherwise broadcast to all online agents
         let assignedSocketId = null;
         if (assignedStaffId) {
             for (const [sockId, rec] of onlineAgents.entries()) {
@@ -6733,18 +8489,16 @@ app.post('/debug/assign-escalation', (req, res) => {
                     break;
                 }
             }
-                if (assignedSocketId) {
-                    io.to(assignedSocketId).emit('escalationAssigned', { conversationId, customerName, assignedStaffId });
-                } else {
-                    // fallback: broadcast to all online agents
-                    for (const [sockId, rec] of onlineAgents.entries()) {
-                        if (rec && rec.role === 'agent') {
-                            io.to(sockId).emit('escalationAssigned', { conversationId, customerName, assignedStaffId });
-                        }
+            if (assignedSocketId) {
+                io.to(assignedSocketId).emit('escalationAssigned', { conversationId, customerName, assignedStaffId });
+            } else {
+                for (const [sockId, rec] of onlineAgents.entries()) {
+                    if (rec && rec.role === 'agent') {
+                        io.to(sockId).emit('escalationAssigned', { conversationId, customerName, assignedStaffId });
                     }
                 }
+            }
         } else {
-            // no assigned staff provided: broadcast to all online agents
             for (const [sockId, rec] of onlineAgents.entries()) {
                 if (rec && rec.role === 'agent') {
                     io.to(sockId).emit('escalationAssigned', { conversationId, customerName, assignedStaffId: null });

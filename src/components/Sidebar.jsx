@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
+import { getSettings } from '../services/settingsService';
 
 const menuItems = [
   { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -17,7 +18,17 @@ const menuItems = [
       { to: '/orders/tables', label: 'Tables' }
     ]
   },
-  { to: '/inbox', label: 'Inbox', icon: <path d="M4 6h16v12H4zM4 6l8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  {
+    to: '/inbox',
+    label: 'Inbox',
+    icon: <path d="M4 6h16v12H4zM4 6l8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />,
+    children: [
+      { to: '/inbox', label: 'Whatsapp' },
+      { to: '/inbox/messenger', label: 'Messenger' },
+      { to: '/inbox/chat', label: 'Web chat' }
+    ]
+  },
+  { to: '/vouchers', label: 'Vouchers', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
   { to: '/tracking', label: 'Tracking', icon: <path d="M12 4a7 7 0 0 1 7 7c0 4.5-4.5 8.5-7 9-2.5-.5-7-4.5-7-9a7 7 0 0 1 7-7Zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
   { to: '/settings', label: 'Settings', icon: <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 3.5-.9-.4a7.9 7.9 0 0 0-.4-1l.5-.8-1.4-1.4-.8.4a7.4 7.4 0 0 0-1-.4L15 4h-2l-.4 1a7.4 7.4 0 0 0-1 .4l-.8-.5-1.4 1.4.5.8a7.9 7.9 0 0 0-.4 1L4 12v2l.9.4c.1.3.2.7.4 1l-.5.8 1.4 1.4.8-.5c.3.2.7.3 1 .4L13 20h2l.4-1c.3-.1.7-.2 1-.4l.8.5 1.4-1.4-.5-.8c.2-.3.3-.7.4-1l.9-.4v-2Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /> }
 ];
@@ -26,6 +37,32 @@ function Sidebar() {
   const { sidebarToggle, closeSidebar } = useSidebar();
   const location = useLocation();
   const [isHovered, setIsHovered] = useState(false);
+  const [layout, setLayout] = useState(() => {
+    const currentSettings = getSettings();
+    return {
+      position: currentSettings.sidebarPosition || 'left',
+      width: currentSettings.sidebarWidth || 'standard'
+    };
+  });
+
+  useEffect(() => {
+    const syncLayout = () => {
+      const currentSettings = getSettings();
+      setLayout({
+        position: currentSettings.sidebarPosition || 'left',
+        width: currentSettings.sidebarWidth || 'standard'
+      });
+    };
+
+    syncLayout();
+    window.addEventListener('storage', syncLayout);
+    window.addEventListener('settings:updated', syncLayout);
+
+    return () => {
+      window.removeEventListener('storage', syncLayout);
+      window.removeEventListener('settings:updated', syncLayout);
+    };
+  }, []);
 
   const isActivePath = (to) => {
     if (to === '/orders') {
@@ -34,31 +71,41 @@ function Sidebar() {
     return location.pathname === to || location.pathname.startsWith(`${to}/`);
   };
 
-  const isCollapsed = sidebarToggle && !isHovered;
-  const showExpandedContent = !sidebarToggle || isHovered;
+  const isCollapsedLayout = layout.position === 'collapsed';
+  const isCollapsed = isCollapsedLayout || (sidebarToggle && !isHovered);
+  const showExpandedContent = !isCollapsedLayout && (!sidebarToggle || isHovered);
+
+  const widthClassMap = {
+    narrow: { desktop: 'lg:w-[160px]', mobile: 'max-w-[160px]' },
+    standard: { desktop: 'lg:w-[220px]', mobile: 'max-w-[220px]' },
+    wide: { desktop: 'lg:w-[280px]', mobile: 'max-w-[280px]' }
+  };
+
+  const widthClass = widthClassMap[layout.width] || widthClassMap.standard;
+  const positionClass = layout.position === 'right' ? 'right-0 lg:right-0 lg:left-auto' : 'left-0 lg:left-0';
 
   return (
     <>
       <aside
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
-        className={`${sidebarToggle ? 'translate-x-0' : '-translate-x-full'} ${isCollapsed ? 'lg:w-[90px]' : 'lg:w-[290px]'} fixed left-0 top-0 z-[60] flex h-dvh w-[85vw] max-w-[290px] flex-col overflow-y-hidden border-r border-gray-200 bg-white px-3 shadow-xl transition-[width,transform] duration-300 ease-linear dark:border-gray-800 dark:bg-black sm:px-4 lg:static lg:h-screen lg:w-[290px] lg:translate-x-0 lg:shadow-none`}
+        className={`${sidebarToggle ? 'translate-x-0' : '-translate-x-full'} ${isCollapsed ? 'lg:w-[90px]' : widthClass.desktop} fixed ${positionClass} top-0 z-[60] flex h-dvh w-[85vw] ${widthClass.mobile} flex-col overflow-y-hidden border-r border-gray-200 bg-white px-3 shadow-xl transition-[width,transform] duration-300 ease-linear dark:border-gray-800 dark:bg-black sm:px-4 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:flex-none lg:shadow-none`}
       >
         <div className={`flex items-center pb-5 pt-6 sm:pb-7 sm:pt-8 ${showExpandedContent ? 'justify-start' : 'justify-center'}`}>
           <NavLink to="/dashboard" onClick={closeSidebar} className="flex w-full items-center gap-3">
             {showExpandedContent ? (
               <div className="min-w-0">
-                <div className="text-base font-semibold text-gray-900 dark:text-white">LiveSupport</div>
+                <div className="text-base font-semibold text-gray-900 dark:text-white">Averon</div>
                 <div className="text-[12px] uppercase tracking-[0.16em] text-gray-500 dark:text-gray-400">Support Console</div>
               </div>
             ) : (
-              <div className="text-xs font-bold text-gray-700 dark:text-gray-300">LS</div>
+              <div className="text-xs font-bold text-gray-700 dark:text-gray-300">AV</div>
             )}
           </NavLink>
         </div>
 
-        <div className="flex flex-col overflow-y-auto duration-300 ease-linear no-scrollbar">
-          <nav>
+        <div className="flex flex-1 flex-col overflow-y-auto duration-300 ease-linear no-scrollbar custom-scrollbar">
+          <nav className="flex-1">
             <div>
               <h3 className="mb-4 text-xs uppercase leading-[20px] text-gray-400">
                 <span className={`${showExpandedContent ? '' : 'lg:hidden'}`}>MENU</span>

@@ -13,12 +13,24 @@ export default defineConfig({
         target: backendTarget,
         changeOrigin: true
       },
+      '/login': {
+        target: backendTarget,
+        changeOrigin: true
+      },
+      '/logout': {
+        target: backendTarget,
+        changeOrigin: true
+      },
       '/socket.io': {
         target: backendTarget,
         ws: true,
         changeOrigin: true
       },
       '/webhook': {
+        target: backendTarget,
+        changeOrigin: true
+      },
+      '/auth': {
         target: backendTarget,
         changeOrigin: true
       }

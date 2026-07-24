@@ -23,7 +23,9 @@ function SettingsPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'agent' });
+  const [branches, setBranches] = useState([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'agent', branchId: '' });
   const [createMessage, setCreateMessage] = useState('');
   const [createMessageColor, setCreateMessageColor] = useState('');
   const [avatarPreview, setAvatarPreview] = useState('');
@@ -74,6 +76,30 @@ function SettingsPage() {
     checkAdmin();
   }, []);
 
+  useEffect(() => {
+    if (!isAdmin) return;
+
+    let ignore = false;
+    async function loadBranches() {
+      try {
+        setBranchesLoading(true);
+        const res = await fetch('/api/branches', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('Failed to load branches');
+        const data = await res.json();
+        if (!ignore) setBranches(Array.isArray(data) ? data : []);
+      } catch (e) {
+        if (!ignore) setBranches([]);
+      } finally {
+        if (!ignore) setBranchesLoading(false);
+      }
+    }
+
+    loadBranches();
+    return () => {
+      ignore = true;
+    };
+  }, [isAdmin]);
+
   const handleSaveSettings = () => {
     const normalizedSettings = {
       ...settings,
@@ -100,8 +126,27 @@ function SettingsPage() {
           }
         }
 
-        // Save other settings
+        // Save other settings to localStorage
         await saveSettings(normalizedSettings);
+        
+        // Save settings to API (includes displayName update to staff profile)
+        try {
+          const apiRes = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(normalizedSettings)
+          });
+          if (apiRes.ok) {
+            // Dispatch event to refresh profile name in UI
+            window.dispatchEvent(new Event('profile:updated'));
+          } else {
+            console.warn('API settings save failed', apiRes.statusText);
+          }
+        } catch (apiErr) {
+          console.error('Error saving settings to API:', apiErr);
+        }
+        
         success('Settings saved successfully');
       } catch (e) {
         console.error('Error saving settings/avatar', e);
@@ -219,7 +264,8 @@ function SettingsPage() {
           name: newUser.name,
           email: newUser.email,
           password: newUser.password,
-          role: newUser.role
+          role: newUser.role,
+          branchId: newUser.branchId ? Number(newUser.branchId) : null
         })
       });
       if (!res.ok) {
@@ -231,7 +277,7 @@ function SettingsPage() {
         return;
       }
       const data = await res.json().catch(() => null);
-      setNewUser({ name: '', email: '', password: '', role: 'agent' });
+      setNewUser({ name: '', email: '', password: '', role: 'agent', branchId: '' });
       setCreateMessage(`User created${data?.id ? ` (id: ${data.id})` : ''}`);
       setCreateMessageColor('text-green-600');
       setTimeout(() => setCreateMessage(''), 4000);
@@ -251,6 +297,24 @@ function SettingsPage() {
   const handleFontSizeChange = (size) => {
     setSettings({ ...settings, fontSize: size });
     applyFontSize(size);
+  };
+
+  const handleSidebarPositionChange = (position) => {
+    const nextSettings = { ...settings, sidebarPosition: position };
+    setSettings(nextSettings);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('sidebarPosition', position);
+      window.dispatchEvent(new Event('settings:updated'));
+    }
+  };
+
+  const handleSidebarWidthChange = (width) => {
+    const nextSettings = { ...settings, sidebarWidth: width };
+    setSettings(nextSettings);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('sidebarWidth', width);
+      window.dispatchEvent(new Event('settings:updated'));
+    }
   };
 
   const handleZoomChange = (zoom) => {
@@ -283,112 +347,159 @@ function SettingsPage() {
     { value: 'wide', label: 'Wide (280px)' }
   ];
 
-  const renderNavButton = (id, label) => (
+  const renderNavButton = (id, label, description, icon) => (
     <button
       key={id}
       onClick={() => setActiveSection(id)}
-      className={`w-full whitespace-nowrap rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-all sm:px-4 sm:py-3 sm:text-base ${
+      className={`group flex min-w-[148px] items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all lg:min-w-0 ${
         activeSection === id
-          ? 'bg-indigo-600 text-white shadow-md'
-          : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+          ? 'border-brand-200 bg-brand-50 text-brand-700 shadow-theme-xs dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300'
+          : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-50 dark:text-slate-400 dark:hover:border-slate-800 dark:hover:bg-slate-800/60'
       }`}
     >
-      {label}
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${activeSection === id ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500 group-hover:text-brand-600 dark:bg-slate-800 dark:text-slate-400'}`}>
+        {icon}
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-semibold">{label}</span>
+        <span className="mt-0.5 hidden truncate text-[11px] text-slate-400 lg:block">{description}</span>
+      </span>
     </button>
   );
 
+  const navIcon = (path) => <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path} /></svg>;
+
+  const Toggle = ({ checked, onChange, label }) => (
+    <button type="button" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)} className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${checked ? 'bg-brand-600' : 'bg-slate-200 dark:bg-slate-700'}`}>
+      <span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+    </button>
+  );
+
+  const sectionMeta = {
+    account: { eyebrow: 'Workspace identity', title: 'Account settings', description: 'Keep your profile and workspace targets in sync.' },
+    notifications: { eyebrow: 'Signal control', title: 'Notifications', description: 'Tune the moments that deserve your attention.' },
+    chat: { eyebrow: 'Conversation layer', title: 'Chat settings', description: 'Shape the first response your customers receive.' },
+    ai: { eyebrow: 'Automation center', title: 'AI settings', description: 'Set the guardrails for your support copilot.' },
+    appearance: { eyebrow: 'Interface system', title: 'Appearance', description: 'Make the workspace feel like your own.' },
+    'admin-users': { eyebrow: 'Access control', title: 'Manage users', description: 'Review roles, access, and active operators.' }
+  };
+  const currentMeta = sectionMeta[activeSection] || sectionMeta.account;
+
   return (
-    <div className="flex min-h-dvh overflow-hidden bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="flex h-screen overflow-hidden bg-[#f8fafc] text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
+        <main className="flex-1 overflow-y-auto">
+          <div className="flex min-h-full flex-col overflow-hidden lg:flex-row">
+            <aside className="border-b border-slate-200/80 bg-white/80 dark:border-slate-800 dark:bg-slate-900/80 lg:w-[278px] lg:border-b-0 lg:border-r lg:sticky lg:top-0 lg:h-screen">
+              <div className="flex h-full flex-col overflow-hidden">
+                <div className="border-b border-slate-200/80 px-5 py-5 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-brand-600">Control room</p>
+                      <h3 className="mt-1 text-lg font-bold tracking-tight text-slate-900 dark:text-white">Settings</h3>
+                    </div>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">{navIcon('M12 3v18M3 12h18')}</span>
+                  </div>
+                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.12)]" />
+                    <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">Workspace is live</span>
+                  </div>
+                </div>
+                <nav className="flex gap-2 overflow-x-auto p-3 lg:flex-col lg:overflow-auto lg:p-4">
+                  {renderNavButton('account', 'Account', 'Profile & targets', navIcon('M20 21a8 8 0 0 0-16 0M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8'))}
+                  {renderNavButton('notifications', 'Notifications', 'Alerts & sounds', navIcon('M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4'))}
+                  {renderNavButton('chat', 'Chat settings', 'Customer experience', navIcon('M21 11.5a8.4 8.4 0 0 1-9 8.3 9.6 9.6 0 0 1-4-.8L3 21l1.8-4.5A8 8 0 1 1 21 11.5Z'))}
+                  {renderNavButton('ai', 'AI settings', 'Automation rules', navIcon('M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z'))}
+                  {renderNavButton('appearance', 'Appearance', 'Look & layout', navIcon('M12 3v18M3 12h18M7 3v4M17 17v4M3 7h4M17 7h4'))}
+                  {isAdmin && renderNavButton('admin-users', 'Admin users', 'Team permissions', navIcon('M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8'))}
+                </nav>
+                <div className="hidden border-t border-slate-200/80 p-5 lg:block dark:border-slate-800">
+                  <p className="text-xs font-semibold text-slate-500">Need a hand?</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">Your workspace preferences are saved locally and synced when you save.</p>
+                </div>
+              </div>
+            </aside>
 
-        {/* Settings Container */}
-        <div className="flex flex-1 flex-col overflow-hidden lg:flex-row">
-          {/* Sidebar */}
-          <div className="border-b border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-900 lg:w-64 lg:border-b-0 lg:border-r lg:overflow-y-auto">
-            <div className="border-b border-gray-200 p-4 sm:p-6 dark:border-slate-800">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Settings</h3>
-            </div>
-            <nav className="flex gap-2 overflow-x-auto px-3 py-3 lg:flex-col lg:overflow-visible lg:px-4 lg:py-4">
-              {renderNavButton('account', 'Account')}
-              {renderNavButton('notifications', 'Notifications')}
-              {renderNavButton('chat', 'Chat Settings')}
-              {renderNavButton('ai', 'AI Settings')}
-              {renderNavButton('appearance', 'Appearance')}
-              {isAdmin && renderNavButton('admin-users', 'Admin Users')}
-            </nav>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-4xl p-3 sm:p-6 lg:p-8">
+            <div className="flex-1 overflow-y-auto">
+              <div className="mx-auto w-full max-w-6xl p-4 sm:p-7 lg:p-10">
+                <header className="mb-7 flex flex-col gap-5 border-b border-slate-200/80 pb-7 sm:flex-row sm:items-end sm:justify-between dark:border-slate-800">
+                <div>
+                  <div className="mb-3 flex items-center gap-2 text-xs font-medium text-slate-400"><span>Workspace</span><span>/</span><span className="text-brand-600">{currentMeta.title}</span></div>
+                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-brand-600">{currentMeta.eyebrow}</p>
+                  <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900 dark:text-white">{currentMeta.title}</h1>
+                  <p className="mt-2 max-w-xl text-sm text-slate-500 dark:text-slate-400">{currentMeta.description}</p>
+                </div>
+                <div className="flex items-center gap-2 self-start rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 shadow-theme-xs dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 sm:self-auto">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" /> All systems operational
+                </div>
+              </header>
               {/* Account Section */}
               {activeSection === 'account' && (
                 <div>
-                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Account Settings</h2>
-
-                  <div className="mb-6 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6">
-                    <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+                  <div className="mb-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_280px]">
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03] sm:p-7">
+                    <div className="mb-7 grid grid-cols-1 gap-7 lg:grid-cols-[190px_minmax(0,1fr)]">
                       <div className="flex flex-col items-center lg:items-start">
-                        <div className="mb-4 flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-indigo-100 text-2xl font-bold text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-200">
+                        <div className="relative mb-4 flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl bg-brand-50 text-2xl font-bold text-brand-600 ring-8 ring-brand-50/60 dark:bg-brand-500/10 dark:text-brand-300 dark:ring-brand-500/5">
                           {avatarPreview ? (
                             <img src={avatarPreview} alt="Avatar preview" className="h-full w-full object-cover" />
                           ) : (
                             <span>{(settings.displayName || 'User')[0].toUpperCase()}</span>
                           )}
                         </div>
-                        <label className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700">
-                          Upload Avatar
+                        <label className="cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition-colors hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                          Change avatar
                           <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                         </label>
                       </div>
 
                       <div className="space-y-4">
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Display Name</label>
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Display name</label>
                           <input
                             type="text"
                             value={settings.displayName}
                             onChange={(e) => setSettings({ ...settings, displayName: e.target.value })}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-900"
                             placeholder="Enter your name"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Email address</label>
                           <input
                             type="email"
                             value={settings.email}
                             onChange={(e) => setSettings({ ...settings, email: e.target.value })}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-900"
                             placeholder="Enter your email"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Monthly Sales Target ($)</label>
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Monthly sales target ($)</label>
                           <input
                             type="number"
                             min="0"
                             step="100"
                             value={settings.monthlyTargetAmount ?? 20000}
                             onChange={(e) => setSettings({ ...settings, monthlyTargetAmount: Number(e.target.value || 0) })}
-                            className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-900"
                             placeholder="20000"
                           />
-                          <p className="text-xs text-slate-500 mt-1">This value is used by the monthly target gauge on the dashboard.</p>
+                          <p className="mt-1.5 text-xs text-slate-400">Used by the monthly target gauge on the dashboard.</p>
                         </div>
 
                         <div>
-                          <label className="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                          <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">Password</label>
                           <div className="relative">
                             <input
                               type={showPassword ? 'text' : 'password'}
                               placeholder="Enter new password (leave blank to keep current)"
                               onChange={(e) => setPasswordChanged(e.target.value.length > 0)}
-                              className="w-full px-3 py-2 pr-10 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                              className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 pr-10 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-900"
                             />
                             <button
                               type="button"
@@ -411,17 +522,27 @@ function SettingsPage() {
                               )}
                             </button>
                           </div>
-                          <p className="text-xs text-slate-500 mt-1">Leave blank if you don't want to change password</p>
+                          <p className="mt-1.5 text-xs text-slate-400">Leave blank to keep your current password.</p>
                         </div>
                       </div>
                     </div>
 
+                    <div className="flex items-center justify-between border-t border-slate-100 pt-5 dark:border-slate-800">
+                    <span className="text-xs text-slate-400">Last synced just now</span>
                     <button
                       onClick={handleSaveSettings}
-                      className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
+                      className="rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-brand-700 focus:outline-none focus:ring-4 focus:ring-brand-500/20"
                     >
-                      Save Changes
+                      Save changes
                     </button>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03]">
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Profile health</p>
+                    <div className="mt-4 flex items-end justify-between"><span className="text-3xl font-bold text-slate-900 dark:text-white">82%</span><span className="text-xs font-semibold text-emerald-600">Good standing</span></div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full w-[82%] rounded-full bg-brand-500" /></div>
+                    <p className="mt-3 text-xs leading-5 text-slate-400">Complete your profile to help teammates identify you faster.</p>
+                  </div>
                   </div>
                 </div>
               )}
@@ -429,12 +550,10 @@ function SettingsPage() {
               {/* Notifications Section */}
               {activeSection === 'notifications' && (
                 <div>
-                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Notification Settings</h2>
-
-                  <div className="space-y-4 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6 sm:space-y-6">
+                  <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03] dark:text-slate-100 sm:p-7 sm:space-y-6">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
-                        <label className="font-medium text-slate-900 dark:text-slate-100">Message Alerts</label>
+                        <label className="font-semibold text-slate-900 dark:text-slate-100">Message alerts</label>
                         <p className="text-sm text-slate-500 dark:text-slate-400">Receive alerts for new messages</p>
                       </div>
                       <label className="flex items-center cursor-pointer">
@@ -450,7 +569,7 @@ function SettingsPage() {
                     <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <label className="font-medium text-slate-900">Ticket Alerts</label>
+                          <label className="font-semibold text-slate-900 dark:text-slate-100">Ticket alerts</label>
                           <p className="text-sm text-slate-500">Receive alerts for new tickets</p>
                         </div>
                         <label className="flex items-center cursor-pointer">
@@ -467,7 +586,7 @@ function SettingsPage() {
                     <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <label className="font-medium text-slate-900">Sound Notifications</label>
+                          <label className="font-semibold text-slate-900 dark:text-slate-100">Sound notifications</label>
                           <p className="text-sm text-slate-500">Play sound for notifications</p>
                         </div>
                         <label className="flex items-center cursor-pointer">
@@ -484,9 +603,9 @@ function SettingsPage() {
                     <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <button
                         onClick={handleSaveSettings}
-                        className="w-full rounded-lg bg-indigo-600 px-6 py-2 font-medium text-white transition-colors hover:bg-indigo-700 sm:w-auto"
+                        className="rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-theme-xs transition hover:bg-brand-700 sm:w-auto"
                       >
-                        Save Changes
+                        Save changes
                       </button>
                     </div>
                   </div>
@@ -496,9 +615,7 @@ function SettingsPage() {
               {/* Chat Section */}
               {activeSection === 'chat' && (
                 <div>
-                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Chat Settings</h2>
-
-                  <div className="space-y-4 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6 sm:space-y-6">
+                  <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03] dark:text-slate-100 sm:p-7 sm:space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-100 mb-2">Auto Reply</label>
                       <textarea
@@ -534,9 +651,7 @@ function SettingsPage() {
               {/* AI Settings Section */}
               {activeSection === 'ai' && (
                 <div>
-                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">AI Settings</h2>
-
-                  <div className="space-y-4 rounded-lg bg-white p-4 shadow sm:p-6 sm:space-y-6">
+                  <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03] sm:p-7 sm:space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-slate-900 mb-4">Autopilot Mode</label>
                       <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -598,9 +713,7 @@ function SettingsPage() {
               {/* Appearance Section */}
               {activeSection === 'appearance' && (
                 <div>
-                  <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Appearance</h2>
-
-                  <div className="space-y-4 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6 sm:space-y-6">
+                  <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03] dark:text-slate-100 sm:p-7 sm:space-y-6">
                     <div>
                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-100 mb-2">Theme</label>
                       <select
@@ -617,7 +730,7 @@ function SettingsPage() {
                       <label className="block text-sm font-medium text-slate-700 mb-2">Sidebar Position</label>
                       <select
                         value={settings.sidebarPosition}
-                        onChange={(e) => setSettings({ ...settings, sidebarPosition: e.target.value })}
+                        onChange={(e) => handleSidebarPositionChange(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         {SIDEBAR_POSITIONS.map((pos) => (
@@ -632,7 +745,7 @@ function SettingsPage() {
                       <label className="block text-sm font-medium text-slate-700 mb-2">Sidebar Width</label>
                       <select
                         value={settings.sidebarWidth}
-                        onChange={(e) => setSettings({ ...settings, sidebarWidth: e.target.value })}
+                        onChange={(e) => handleSidebarWidthChange(e.target.value)}
                         className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         {SIDEBAR_WIDTHS.map((width) => (
@@ -717,7 +830,7 @@ function SettingsPage() {
                   {/* Create User Section */}
                   <div className="mb-8 rounded-lg bg-white p-4 shadow dark:bg-slate-900 dark:text-slate-100 sm:p-6">
                     <h3 className="mb-4 text-xl font-semibold text-gray-800 dark:text-slate-100">Create New User</h3>
-                    <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-4">
+                    <div className="mb-4 grid grid-cols-1 gap-4 xl:grid-cols-5">
                       <input
                         type="text"
                         placeholder="Name"
@@ -750,6 +863,21 @@ function SettingsPage() {
                           </option>
                         ))}
                       </select>
+                      <select
+                        value={newUser.branchId}
+                        onChange={(e) => setNewUser({ ...newUser, branchId: e.target.value })}
+                        className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        disabled={branchesLoading}
+                      >
+                        <option value="">
+                          {branchesLoading ? 'Loading branches...' : 'Select branch'}
+                        </option>
+                        {branches.map((branch) => (
+                          <option key={branch.id} value={branch.id}>
+                            {branch.name}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <button
                       onClick={handleCreateUser}
@@ -778,6 +906,7 @@ function SettingsPage() {
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Name</th>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Email</th>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Role</th>
+                            <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Branch</th>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Active</th>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Disabled</th>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">Actions</th>
@@ -815,8 +944,9 @@ function SettingsPage() {
             </div>
           </div>
         </div>
-      </div>
+      </main>
     </div>
+  </div>
   );
 }
 
@@ -847,6 +977,7 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           ))}
         </select>
       </td>
+      <td className="px-3 py-3 text-gray-600 dark:text-slate-400 sm:px-6">{user.branchName || '—'}</td>
       <td className="px-3 py-3 sm:px-6">
         {user.active ? (
           <span className="flex items-center gap-2">

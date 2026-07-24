@@ -77,7 +77,12 @@ function OrdersPage() {
   const [tableConfirm, setTableConfirm] = useState({ open: false, table: null, title: '', message: '', action: null });
   const [tableForm, setTableForm] = useState({ customerName: '', phoneNumber: '', guestCount: '2', reservationDateTime: '', notes: '', assignedStaff: '', status: 'vacant' });
   const [tableActionPending, setTableActionPending] = useState(false);
+  const [creatingOrder, setCreatingOrder] = useState(false);
   const [sessionTick, setSessionTick] = useState(0);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherResult, setVoucherResult] = useState(null);
+  const [voucherError, setVoucherError] = useState('');
+  const [voucherApplying, setVoucherApplying] = useState(false);
   const occupiedTableAudio = useMemo(() => {
     const audio = new Audio(encodeURI('/uploads/Notification sounds/Table status occupied.wav'));
     audio.preload = 'auto';
@@ -488,6 +493,41 @@ function OrdersPage() {
     }
   };
 
+  const applyVoucher = async () => {
+    if (!voucherCode.trim()) {
+      setVoucherError('Enter a voucher code.');
+      return;
+    }
+    setVoucherApplying(true);
+    setVoucherError('');
+    try {
+      const subtotal = orderDraft.items.reduce((sum, item) => {
+        const menu = menuItems.find((m) => m.id === item.menuItemId);
+        return sum + (menu ? menu.price * item.quantity : 0);
+      }, 0);
+      const res = await fetch('/api/vouchers/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ code: voucherCode.trim(), subtotal })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || data?.message || 'Unable to apply voucher');
+      setVoucherResult({
+        code: data.voucher?.code || voucherCode.trim(),
+        discountAmount: Number(data.pricing?.discountAmount || 0),
+        newTotal: Number(data.pricing?.newTotal || subtotal),
+        type: data.voucher?.type || 'percentage'
+      });
+      success(`Voucher ${data.voucher?.code || voucherCode.trim()} applied.`);
+    } catch (err) {
+      setVoucherResult(null);
+      setVoucherError(err.message || 'Unable to apply voucher');
+    } finally {
+      setVoucherApplying(false);
+    }
+  };
+
   const handleCreateOrder = async (event) => {
     event.preventDefault();
     const draft = { ...orderDraft };
@@ -496,14 +536,16 @@ function OrdersPage() {
       warning('Add at least one product.');
       return;
     }
+    setCreatingOrder(true);
     const productNames = items.map((item) => {
       const menu = menuItems.find((m) => m.id === item.menuItemId);
       return menu ? `${item.quantity}x ${menu.name}` : ''; 
     }).filter(Boolean).join(', ');
-    const totalAmount = items.reduce((sum, item) => {
+    const subtotalAmount = items.reduce((sum, item) => {
       const menu = menuItems.find((m) => m.id === item.menuItemId);
       return sum + (menu ? menu.price * item.quantity : 0);
     }, 0);
+    const finalAmount = voucherResult?.newTotal ?? subtotalAmount;
 
     // If a table is selected, ensure it's vacant then mark occupied before creating order
     const tableNumber = draft.tableNumber || null;
@@ -532,8 +574,13 @@ function OrdersPage() {
         product: productNames,
         menuItemId: items[0]?.menuItemId,
         quantity: items.reduce((sum, item) => sum + item.quantity, 0),
-        amount: totalAmount,
+        amount: finalAmount,
         status: draft.status,
+        voucherCode: voucherResult?.code || voucherCode.trim() || null,
+        voucherDiscount: voucherResult?.discountAmount || 0,
+        voucherType: voucherResult?.type || null,
+        subtotal: subtotalAmount,
+        finalTotal: finalAmount,
         items: items.map((item) => ({
           menuItemId: item.menuItemId,
           quantity: item.quantity,
@@ -543,6 +590,9 @@ function OrdersPage() {
       });
 
       setOrderDraft({ customerName: '', tableNumber: '', status: 'pending', items: [{ menuItemId: '', quantity: 1 }] });
+      setVoucherCode('');
+      setVoucherResult(null);
+      setVoucherError('');
       setOrderModalOpen(false);
       success('Order created successfully!');
       await loadOrders();
@@ -559,6 +609,8 @@ function OrdersPage() {
         }
       }
       error(err.message || 'Unable to create order.');
+    } finally {
+      setCreatingOrder(false);
     }
   };
 
@@ -1398,8 +1450,36 @@ function OrdersPage() {
                   }, 0))}</div>
                 </div>
               </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                  <label className="flex-1 text-sm text-slate-700 dark:text-slate-200">
+                    Apply Voucher
+                    <input value={voucherCode} onChange={(e) => { setVoucherCode(e.target.value); setVoucherError(''); setVoucherResult(null); }} placeholder="SAVE-7KQ2-MXP8" className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+                  </label>
+                  <button type="button" onClick={applyVoucher} disabled={voucherApplying} className="rounded-2xl bg-brand-600 px-4 py-3 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:bg-slate-400">{voucherApplying ? 'Applying…' : 'Apply'}</button>
+                </div>
+                {voucherError ? <p className="mt-2 text-sm text-rose-600">{voucherError}</p> : null}
+                {voucherResult ? (
+                  <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                    <div>Applied: {voucherResult.code}</div>
+                    <div>Discount: {formatMoney(voucherResult.discountAmount)}</div>
+                    <div>New total: {formatMoney(voucherResult.newTotal)}</div>
+                  </div>
+                ) : null}
+              </div>
               <div className="flex flex-wrap gap-3 pt-4">
-                <button type="submit" className="rounded-2xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800">Create Order</button>
+                <button
+                  type="submit"
+                  disabled={creatingOrder}
+                  className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-600"
+                >
+                  {creatingOrder ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/70 border-t-transparent" />
+                      Creating...
+                    </span>
+                  ) : 'Create Order'}
+                </button>
                 <button type="button" onClick={() => setOrderModalOpen(false)} className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">Cancel</button>
               </div>
             </form>

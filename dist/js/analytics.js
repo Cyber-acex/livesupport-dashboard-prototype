@@ -520,21 +520,21 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (lastTicketsData && typeof lastTicketsData.monthly === 'number') {
             totalTickets = lastTicketsData.monthly;
         }
-        if (kpiTotalTickets) kpiTotalTickets.textContent = totalTickets;
+        if (kpiTotalTickets) kpiTotalTickets.textContent = String(totalTickets);
 
         // avg response
         let avgResp = '—';
         if (lastAnalyticsData && typeof lastAnalyticsData.avgResponseSeconds === 'number') {
             avgResp = Math.round(lastAnalyticsData.avgResponseSeconds);
         }
-        if (kpiAvgResponse) kpiAvgResponse.textContent = avgResp;
+        if (kpiAvgResponse) kpiAvgResponse.textContent = String(avgResp);
 
         // resolution time
         let resolutionTime = '—';
         if (lastAnalyticsData && typeof lastAnalyticsData.avgResolutionSeconds === 'number') {
             resolutionTime = Math.round(lastAnalyticsData.avgResolutionSeconds);
         }
-        if (kpiResolutionTime) kpiResolutionTime.textContent = resolutionTime;
+        if (kpiResolutionTime) kpiResolutionTime.textContent = String(resolutionTime);
 
         // active chats
         let active = '—';
@@ -543,15 +543,15 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (lastAnalyticsData && typeof lastAnalyticsData.numChats === 'number') {
             active = lastAnalyticsData.numChats;
         }
-        if (kpiActiveChats) kpiActiveChats.textContent = active;
+        if (kpiActiveChats) kpiActiveChats.textContent = String(active);
         // AI feedback KPIs
         if (kpiAIFeedbackAvg) {
             const avg = lastAnalyticsData && typeof lastAnalyticsData.aiFeedbackAvg === 'number' ? Number(lastAnalyticsData.aiFeedbackAvg).toFixed(2) : '—';
-            kpiAIFeedbackAvg.textContent = avg;
+            kpiAIFeedbackAvg.textContent = String(avg);
         }
         if (kpiAIFeedbackCount) {
             const cnt = lastAnalyticsData && typeof lastAnalyticsData.aiFeedbackCount === 'number' ? lastAnalyticsData.aiFeedbackCount : '—';
-            kpiAIFeedbackCount.textContent = cnt;
+            kpiAIFeedbackCount.textContent = String(cnt);
         }
 
         // Initialize gauges if needed and update them

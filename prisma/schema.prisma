@@ -9,6 +9,41 @@ datasource db {
   provider = "postgresql"
 }
 
+model Branch {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(255)
+  address   String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @db.Timestamp(0) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+
+  users         User[]
+  conversations Conversation[]
+  orders        Order[]
+  tickets       Ticket[]
+  menus         Menu[]
+  tables        Table[]
+  staffProfiles StaffProfile[]
+  staffs        Staff[]
+
+  @@map("branches")
+}
+
+model Staff {
+  id         Int      @id @default(autoincrement())
+  fullName   String?  @db.VarChar(255) @map("full_name")
+  email      String   @unique @db.VarChar(255)
+  phone      String?  @db.VarChar(50)
+  password   String?  @db.VarChar(255)
+  role       String?  @default("staff") @db.VarChar(50)
+  branch_id  Int?
+  branch     Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now()) @db.Timestamp(0) @map("created_at")
+  updatedAt  DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+
+  @@map("staffs")
+  @@index([branch_id])
+}
+
 model Conversation {
   id          Int      @id @default(autoincrement())
   phone       String?  @db.VarChar(255)
@@ -16,7 +51,11 @@ model Conversation {
   platform    String?  @default("whatsapp") @db.VarChar(50)
   last_viewed DateTime? @db.Timestamp(0)
   created_at  DateTime @default(now()) @db.Timestamp(0)
+  branch_id   Int?
+  customer_id Int?
 
+  branch           Branch? @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  customer         Customer? @relation(fields: [customer_id], references: [id], onDelete: SetNull)
   messages         Message[]
   replies          Reply[]
   aiMessages       AiMessage[]
@@ -32,6 +71,20 @@ model Conversation {
   
 
   @@map("conversations")
+  @@index([branch_id])
+  @@index([customer_id])
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(255)
+  phone     String?  @db.VarChar(255)
+  createdAt DateTime @default(now()) @db.Timestamp(0) @map("created_at")
+  updatedAt DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+
+  conversations Conversation[]
+
+  @@map("customers")
 }
 
 model Message {
@@ -130,6 +183,14 @@ model Escalation {
   claim_time       DateTime? @db.Timestamp(0)
   snoozed_until    DateTime? @db.Timestamp(0)
   alarm_active     Boolean?  @default(true)
+  assigned_staff_id Int?
+  customer_id      Int?
+  branch_id        Int?
+  escalation_reason String?  @db.VarChar(255)
+  detected_intent  String?   @db.VarChar(255)
+  ai_confidence    Float?
+  original_message String?   @db.Text
+  status           String?   @db.VarChar(50)
 
   conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
@@ -173,7 +234,9 @@ model User {
   role        String?  @default("agent") @db.VarChar(50)
   disabled    Boolean? @default(false)
   created_at  DateTime @default(now()) @db.Timestamp(0)
+  branch_id   Int?
 
+  branch              Branch? @relation(fields: [branch_id], references: [id], onDelete: SetNull)
   settings            Setting?
   avatars             UserAvatar[]
   profile             StaffProfile?
@@ -181,6 +244,7 @@ model User {
   voiceParticipations  VoiceParticipant[] @relation("VoiceParticipantUser")
 
   @@map("users")
+  @@index([branch_id])
 }
 
 model Setting {
@@ -208,21 +272,32 @@ model Setting {
 }
 
 model Order {
-  id              Int       @id @default(autoincrement())
-  order_id        String?   @unique @db.VarChar(255)
-  customer_name   String?   @db.VarChar(255)
-  phone           String?   @db.VarChar(255)
-  product         String?   @db.Text
-  amount          Decimal?  @db.Decimal(10,2)
-  total_amount    Decimal?  @db.Decimal(10,2)
-  status          String?   @db.VarChar(50)
-  order_date      DateTime? @db.Timestamp(0)
-  conversation_id Int?
-  conversation    Conversation? @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  deliveries      Delivery[]
+  id                 Int       @id @default(autoincrement())
+  order_id           String?   @unique @db.VarChar(255)
+  customer_name      String?   @db.VarChar(255)
+  phone              String?   @db.VarChar(255)
+  product            String?   @db.Text
+  amount             Decimal?  @db.Decimal(10,2)
+  total_amount       Decimal?  @db.Decimal(10,2)
+  status             String?   @db.VarChar(50)
+  order_date         DateTime? @db.Timestamp(0)
+  conversation_id    Int?
+  voucher_id         Int?
+  voucher_code       String?   @db.VarChar(255)
+  discount_type      String?   @db.VarChar(50)
+  discount_amount    Decimal?  @db.Decimal(10,2)
+  subtotal           Decimal?  @db.Decimal(10,2)
+  final_total        Decimal?  @db.Decimal(10,2)
+  branch_id          Int?
+  conversation       Conversation? @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  voucher            Voucher?  @relation(fields: [voucher_id], references: [id], onDelete: SetNull)
+  branch             Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  deliveries         Delivery[]
 
   @@map("orders")
   @@index([conversation_id])
+  @@index([voucher_id])
+  @@index([branch_id])
 }
 
 model Delivery {
@@ -258,6 +333,46 @@ model Receipt {
   @@map("receipts")
 }
 
+model Voucher {
+  id               Int       @id @default(autoincrement())
+  code             String    @unique @db.VarChar(255)
+  type             String    @db.VarChar(50)
+  value            Decimal   @db.Decimal(10,2)
+  minimum_order    Decimal?  @db.Decimal(10,2)
+  maximum_discount Decimal?  @db.Decimal(10,2)
+  usage_limit      Int?
+  used_count       Int       @default(0)
+  expires_at       DateTime? @db.Timestamp(0)
+  is_active        Boolean   @default(true)
+  created_by       Int?
+  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  updated_at       DateTime  @updatedAt @db.Timestamp(0)
+  orders           Order[]
+  redemptions      VoucherRedemption[]
+
+  @@map("vouchers")
+  @@index([code])
+  @@index([is_active])
+  @@index([expires_at])
+}
+
+model VoucherRedemption {
+  id               Int      @id @default(autoincrement())
+  voucher_id       Int
+  voucher_code     String   @db.VarChar(255)
+  order_id         String?  @db.VarChar(255)
+  discount_type    String   @db.VarChar(50)
+  discount_amount  Decimal  @db.Decimal(10,2)
+  subtotal         Decimal  @db.Decimal(10,2)
+  final_total      Decimal  @db.Decimal(10,2)
+  redeemed_at      DateTime @default(now()) @db.Timestamp(0)
+  voucher          Voucher  @relation(fields: [voucher_id], references: [id], onDelete: Cascade)
+
+  @@map("voucher_redemptions")
+  @@index([voucher_id])
+  @@index([order_id])
+}
+
 model Ticket {
   id            Int      @id @default(autoincrement())
   ticket_type   String?  @db.VarChar(255)
@@ -273,9 +388,33 @@ model Ticket {
   sla_due       DateTime? @db.Timestamp(0)
   escalated     Boolean? @db.Boolean
   created_at    DateTime  @default(now()) @db.Timestamp(0)
+  branch_id     Int?
+  branch        Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
   escalatedTicket EscalatedTicket?
 
   @@map("tickets")
+  @@index([branch_id])
+}
+
+model CustomerFeedback {
+  id                Int       @id @default(autoincrement())
+  token             String    @unique @db.VarChar(128)
+  ticket_id         Int
+  customer_id       Int?
+  branch_id         Int?
+  rating            Int?
+  comment           String?   @db.Text
+  used              Boolean   @default(false)
+  created_at        DateTime  @default(now()) @db.Timestamp(0)
+  expires_at        DateTime  @db.Timestamp(0)
+  used_at           DateTime? @db.Timestamp(0)
+  submitted_at      DateTime? @db.Timestamp(0)
+  feedback_source   String?   @db.VarChar(100)
+  created_by_staff_id Int?
+
+  @@map("customer_feedback")
+  @@index([ticket_id])
+  @@index([branch_id])
 }
 
 model EscalatedTicket {
@@ -315,9 +454,12 @@ model Menu {
   image_url  String?  @db.Text
   created_at DateTime @default(now()) @db.Timestamp(0)
   updated_at DateTime @default(now()) @db.Timestamp(0)
+  branch_id  Int?
+  branch     Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
 
   @@map("menu")
   @@unique([category, key_name], name: "uk_category_key")
+  @@index([branch_id])
 }
 
 model Table {
@@ -330,8 +472,11 @@ model Table {
   isBooking     Boolean  @default(false) @map("is_booking")
   created_at    DateTime @default(now()) @db.Timestamp(0)
   updated_at    DateTime @updatedAt @db.Timestamp(0)
+  branch_id     Int?
+  branch        Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
 
   @@map("restaurant_tables")
+  @@index([branch_id])
 }
 
 model WhatsappToken {
@@ -462,11 +607,14 @@ model StaffProfile {
   avatarUrl       String?   @db.Text
   created_at      DateTime  @default(now()) @db.Timestamp(0)
   updated_at      DateTime  @default(now()) @updatedAt @db.Timestamp(0)
+  branch_id       Int?
 
   user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  branch          Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
 
   @@map("staff_profiles")
   @@index([user_id])
+  @@index([branch_id])
 }
 
 model DashboardSnapshot {

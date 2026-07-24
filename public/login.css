@@ -521,7 +521,8 @@ body {
     color: #ff6b3d;
 }
 
-.input-wrapper input {
+.input-wrapper input,
+.input-wrapper select {
     flex: 1;
     border: none;
     background: transparent;
@@ -532,8 +533,17 @@ body {
     padding: 0 12px;
 }
 
+.input-wrapper select {
+    appearance: none;
+    cursor: pointer;
+}
+
 .input-wrapper input::placeholder {
     color: #d1d5db;
+}
+
+.branch-select-wrapper {
+    padding-right: 8px;
 }
 
 .toggle-password {
