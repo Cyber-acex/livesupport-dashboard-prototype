@@ -271,7 +271,7 @@ function buildPolicyGuidance(message = '') {
 
     if (hasAllergy) {
         rules.push(
-            'Food Allergy Policy: customer allergy confirmation is mandatory before any food recommendation or resolution. If the customer reports an allergy or possible contamination, escalate to the supervisor/kitchen immediately, use medically cautious wording, and avoid guaranteeing food safety without kitchen confirmation.'
+            'Food Allergy Policy: customer allergy confirmation is mandatory before any food recommendation or resolution. If the customer reports an allergy, such as a peanut allergy, or possible contamination, escalate to the supervisor/kitchen immediately, use medically cautious wording, and avoid guaranteeing food safety without kitchen confirmation.'
         );
     }
 

@@ -12,6 +12,7 @@ function formatTime(value) {
 
 export default function CustomerWebChatPage() {
   const [session, setSession] = useState(null);
+  const [selectedConversationId, setSelectedConversationId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -22,6 +23,9 @@ export default function CustomerWebChatPage() {
   const socketRef = useRef(null);
   const messagesEndRef = useRef(null);
 
+  const customerConversations = Array.isArray(session?.customerConversations) ? session.customerConversations : [];
+  const activeConversation = customerConversations.find((conversation) => conversation.id === (selectedConversationId || session?.conversationId)) || null;
+
   useEffect(() => {
     const existing = loadGuestSession(storage);
     if (!existing?.guestId) {
@@ -31,6 +35,7 @@ export default function CustomerWebChatPage() {
     }
 
     setSession(existing);
+    setSelectedConversationId(existing.conversationId || null);
     setLoading(false);
     (async () => {
       try {
@@ -43,6 +48,7 @@ export default function CustomerWebChatPage() {
             branchId: Number(data.session?.branchId || existing.branchId || 0) || null
           };
           setSession(nextSession);
+          setSelectedConversationId(nextSession.conversationId || selectedConversationId);
           saveGuestSession(storage, nextSession);
         }
       } catch (error) {
@@ -52,18 +58,23 @@ export default function CustomerWebChatPage() {
   }, [storage]);
 
   useEffect(() => {
-    if (!session?.guestId || !session?.conversationId) return;
+    if (!session?.guestId || !selectedConversationId) return;
 
     const socket = io({ reconnection: true, reconnectionDelay: 1000 });
     socketRef.current = socket;
 
-    socket.emit('conversation:join', { conversationId: session.conversationId });
+    const joinConversation = (conversationId) => {
+      if (!conversationId) return;
+      socket.emit('conversation:join', { conversationId });
+    };
+
+    joinConversation(selectedConversationId);
     socket.on('connect', () => {
-      socket.emit('conversation:join', { conversationId: session.conversationId });
+      joinConversation(selectedConversationId);
     });
     socket.on('newMessage', (payload) => {
       const conversationId = String(payload?.conversation_id || payload?.conversationId || '');
-      const activeConversationId = String(session.conversationId);
+      const activeConversationId = String(selectedConversationId);
       if (conversationId && conversationId !== activeConversationId) return;
       setMessages((prev) => {
         const exists = prev.some((message) => String(message.id || message.messageId || '') === String(payload.id || payload.messageId || ''));
@@ -78,18 +89,18 @@ export default function CustomerWebChatPage() {
       setTyping(false);
     });
     socket.on('typing', (payload) => {
-      if (String(payload?.conversationId || payload?.conversation_id) !== String(session.conversationId)) return;
+      if (String(payload?.conversationId || payload?.conversation_id) !== String(selectedConversationId)) return;
       if (payload?.userId === session.guestId) return;
       setTyping(true);
     });
     socket.on('stopTyping', (payload) => {
-      if (String(payload?.conversationId || payload?.conversation_id) !== String(session.conversationId)) return;
+      if (String(payload?.conversationId || payload?.conversation_id) !== String(selectedConversationId)) return;
       setTyping(false);
     });
 
     (async () => {
       try {
-        const response = await fetch(`/api/customer-web-chat/conversations/${session.conversationId}/messages`);
+        const response = await fetch(`/api/customer-web-chat/conversations/${selectedConversationId}/messages`);
         const data = await response.json().catch(() => ({}));
         if (response.ok) {
           setMessages(Array.isArray(data?.messages) ? data.messages : []);
@@ -103,15 +114,35 @@ export default function CustomerWebChatPage() {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, [session?.guestId, session?.conversationId]);
+  }, [session?.guestId, selectedConversationId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typing]);
 
+  useEffect(() => {
+    if (session?.conversationId) {
+      setSelectedConversationId(session.conversationId);
+    }
+  }, [session?.conversationId]);
+
+  const handleSelectConversation = (conversation) => {
+    if (!conversation?.id || conversation.id === selectedConversationId) return;
+    const nextSession = {
+      ...session,
+      conversationId: conversation.id,
+      branchId: Number(conversation.branch_id || session.branchId || 0) || null
+    };
+    setSession(nextSession);
+    saveGuestSession(storage, nextSession);
+    setSelectedConversationId(conversation.id);
+    setMessages([]);
+  };
+
   const sendMessage = async () => {
     const trimmed = input.trim();
-    if (!session?.conversationId || !trimmed || sending) return;
+    const activeConversationId = selectedConversationId || session?.conversationId;
+    if (!activeConversationId || !trimmed || sending) return;
     setSending(true);
     setStatusMessage('');
     setInput('');
@@ -121,7 +152,7 @@ export default function CustomerWebChatPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           guestId: session.guestId,
-          conversationId: session.conversationId,
+          conversationId: activeConversationId,
           branchId: session.branchId,
           customerName: session.customerName,
           phone: session.phone,
@@ -251,6 +282,33 @@ export default function CustomerWebChatPage() {
                   </div>
                 </div>
               </div>
+
+              {customerConversations.length > 1 ? (
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="text-sm font-semibold text-slate-900">Previous conversations</p>
+                  <div className="mt-4 space-y-3 max-h-[300px] overflow-y-auto">
+                    {customerConversations.map((conversation) => {
+                      const isActive = conversation.id === (selectedConversationId || session.conversationId);
+                      return (
+                        <button
+                          key={conversation.id}
+                          type="button"
+                          onClick={() => handleSelectConversation(conversation)}
+                          className={`w-full rounded-2xl border p-3 text-left transition ${isActive ? 'border-orange-400 bg-orange-50' : 'border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100'}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <div className="text-sm font-semibold text-slate-900">{conversation.name || `Conversation #${conversation.id}`}</div>
+                              <div className="mt-1 text-xs text-slate-500">Branch: {branchNames[conversation.branch_id] || conversation.branch_id || 'Unknown'}</div>
+                            </div>
+                            <div className="text-[11px] uppercase tracking-[0.24em] text-slate-400">{new Date(conversation.created_at).toLocaleDateString()}</div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="rounded-[2rem] border border-slate-200/70 bg-white p-5 shadow-sm">
                 <p className="text-sm font-semibold text-slate-900">Tips for a faster response</p>

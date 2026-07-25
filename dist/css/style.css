@@ -987,11 +987,14 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 }
 
 .inbox-page {
-    zoom: 0.88;
+    zoom: 1;
 }
 
 .inbox-page .content {
     padding-top: 56px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 24px;
 }
 
 .inbox-page .inbox-container {

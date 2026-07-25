@@ -45,49 +45,48 @@ export default function CustomerChatOnboardingPage() {
 
     setSubmitting(true);
     try {
-      const branch = branches.find((entry) => String(entry.id) === String(selectedBranchId));
       const trimmedName = customerName.trim();
-      const guestName = getGuestDisplayName(trimmedName, storage);
       const existing = loadGuestSession(storage);
-      const sessionPayload = {
-        guestId: existing?.guestId || `guest-${Date.now()}`,
-        conversationId: existing?.conversationId || null,
-        branchId: Number(selectedBranchId),
-        customerName: guestName,
-        phone: phone.trim(),
-        channel: 'web'
-      };
+      const guestId = existing?.guestId || `guest-${Date.now()}`;
+      const response = await fetch('/api/customer-web-chat/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          guestId,
+          branchId: Number(selectedBranchId),
+          customerName: trimmedName,
+          phone: phone.trim(),
+          channel: 'web'
+        })
+      });
 
-      let conversationId = existing?.conversationId || null;
-      if (!conversationId) {
-        const response = await fetch('/api/customer-web-chat/sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            guestId: sessionPayload.guestId,
-            branchId: sessionPayload.branchId,
-            customerName: trimmedName,
-            phone: sessionPayload.phone,
-            channel: 'web'
-          })
-        });
-
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data?.error || 'Unable to start a conversation right now.');
-        }
-        conversationId = data?.conversationId || data?.conversation?.id || null;
-        sessionPayload.conversationId = conversationId;
-        
-        // Show success message for new conversations
-        if (data?.isExisting === false) {
-          setError('✓ Welcome! A new conversation has been created for you.');
-        } else if (data?.isExisting === true) {
-          setError('✓ Welcome back! Returning to your existing conversation.');
-        }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || 'Unable to start a conversation right now.');
       }
 
+      const conversationId = data?.conversationId || data?.conversation?.id || null;
+      const customer = data?.customer || { name: trimmedName, phone: phone.trim() };
+      const customerConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+
+      const sessionPayload = {
+        guestId,
+        conversationId,
+        branchId: Number(selectedBranchId),
+        customerName: customer.name || trimmedName,
+        phone: customer.phone || phone.trim(),
+        channel: 'web',
+        customerConversations
+      };
+
       saveGuestSession(storage, sessionPayload);
+
+      if (data?.isExisting) {
+        setError('✓ We found your previous conversation and restored it.');
+      } else {
+        setError('✓ Welcome! A new conversation has been created for you.');
+      }
+
       setTimeout(() => navigate('/customer-chat'), 800);
     } catch (submitError) {
       setError(submitError?.message || 'Unable to start a chat right now.');

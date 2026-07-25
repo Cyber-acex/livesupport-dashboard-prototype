@@ -1629,8 +1629,14 @@ app.get('/api/customers/by-name/:name', async (req, res) => {
                 phone: true,
                 conversations: {
                     orderBy: { created_at: 'desc' },
-                    take: 1,
-                    select: { id: true, created_at: true, branch_id: true }
+                    select: {
+                        id: true,
+                        branch_id: true,
+                        name: true,
+                        phone: true,
+                        platform: true,
+                        created_at: true
+                    }
                 }
             }
         });
@@ -1639,11 +1645,10 @@ app.get('/api/customers/by-name/:name', async (req, res) => {
             return res.json({ exists: false });
         }
 
-        const latestConversation = customer.conversations[0] || null;
         return res.json({
             exists: true,
             customer: { id: customer.id, name: customer.name, phone: customer.phone },
-            latestConversation
+            conversations: customer.conversations
         });
     } catch (error) {
         console.error('Failed to check customer by name', error);
@@ -1676,21 +1681,27 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
             select: { id: true, name: true, phone: true, branch_id: true }
         });
 
-        // Reuse an existing conversation only when it is for the same branch.
+        let customerConversations = [];
+        let branchConversation = null;
         let existingConversation = null;
+
         if (customer) {
-            const latestConversation = await prisma.conversation.findFirst({
+            customerConversations = await prisma.conversation.findMany({
                 where: { customer_id: customer.id },
                 orderBy: { created_at: 'desc' },
-                select: { id: true, created_at: true, branch_id: true, name: true }
+                select: {
+                    id: true,
+                    branch_id: true,
+                    name: true,
+                    phone: true,
+                    platform: true,
+                    created_at: true
+                }
             });
 
-            if (latestConversation && shouldReuseCustomerConversation({
-                customer,
-                selectedBranchId: normalizedBranchId,
-                latestConversation
-            })) {
-                existingConversation = latestConversation;
+            branchConversation = customerConversations.find((conversation) => Number(conversation.branch_id || 0) === normalizedBranchId) || null;
+            if (branchConversation) {
+                existingConversation = branchConversation;
             }
         }
 
@@ -1701,13 +1712,16 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
                 branchId: existingConversation.branch_id || normalizedBranchId,
                 customerName: trimmedCustomerName,
                 phone: phone || customer.phone || '',
-                channel: channel || 'web'
+                channel: channel || 'web',
+                conversations: customerConversations
             });
             return res.json({
                 success: true,
                 conversationId: existingConversation.id,
                 branch: branch.name,
-                isExisting: true
+                isExisting: true,
+                customer: customer ? { id: customer.id, name: customer.name, phone: customer.phone } : null,
+                conversations: customerConversations
             });
         }
 
@@ -1750,19 +1764,32 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
             db.query(messageSql, [conversationId, 'customer', `Welcome to ${branch.name}. We will respond shortly.`], (err) => { if (err) return reject(err); resolve(); });
         });
 
+        const newConversation = {
+            id: conversationId,
+            branch_id: normalizedBranchId,
+            name: trimmedCustomerName,
+            phone: phone || null,
+            platform: 'web',
+            created_at: new Date().toISOString()
+        };
+        customerConversations = [newConversation, ...customerConversations];
+
         saveGuestSessionToStore({
             guestId: guestId || `guest-${Date.now()}`,
             conversationId,
             branchId: normalizedBranchId,
             customerName: trimmedCustomerName,
             phone: phone || '',
-            channel: channel || 'web'
+            channel: channel || 'web',
+            conversations: customerConversations
         });
         return res.json({
             success: true,
             conversationId,
             branch: branch.name,
-            isExisting: false
+            isExisting: false,
+            customer: { id: customer.id, name: customer.name, phone: customer.phone },
+            conversations: customerConversations
         });
     } catch (error) {
         console.error('Failed to create customer web chat session', error);
