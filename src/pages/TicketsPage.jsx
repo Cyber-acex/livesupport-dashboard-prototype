@@ -164,7 +164,7 @@ function TicketCard({ ticket, onEscalate, onDelete, onResolve, onOpenResolveModa
 }
 
 function TicketsPage() {
-  const { success, error } = useNotification();
+  const { success, error, markLocalTicketCreated, markLocalTicketDeleted, markLocalTicketEscalated } = useNotification();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const localTicketActionsRef = useRef({ created: new Set(), deleted: new Set(), escalated: new Set() });
@@ -175,6 +175,7 @@ function TicketsPage() {
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [resolveForm, setResolveForm] = useState({ resolutionNotes: '', resolutionCategory: '', notifyCustomer: true });
   const [resolvingTicket, setResolvingTicket] = useState(false);
+  const [creatingTicket, setCreatingTicket] = useState(false);
   const [resolveError, setResolveError] = useState('');
   const ticketCreationAudio = useMemo(() => {
     const audio = new Audio(encodeURI('/uploads/Notification sounds/Ticket creation.wav'));
@@ -281,6 +282,7 @@ function TicketsPage() {
       });
       if (!res.ok) throw new Error('Escalation failed');
       localTicketActionsRef.current.escalated.add(ticket.id);
+      markLocalTicketEscalated(ticket.id);
       setTickets((prev) => prev.map((item) => item.id === ticket.id ? { ...item, escalated: true } : item));
       success(`Escalated ticket #${ticket.id}`);
     } catch (err) {
@@ -295,6 +297,7 @@ function TicketsPage() {
       const res = await fetch(`/api/tickets/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Delete failed');
       localTicketActionsRef.current.deleted.add(id);
+      markLocalTicketDeleted(id);
       setTickets((prev) => prev.filter((ticket) => ticket.id !== id));
       success(`Deleted ticket #${id}`);
     } catch (err) {
@@ -366,6 +369,7 @@ function TicketsPage() {
       return;
     }
 
+    setCreatingTicket(true);
     try {
       const res = await fetch('/api/tickets', {
         method: 'POST',
@@ -379,6 +383,7 @@ function TicketsPage() {
       if (!res.ok) throw new Error('Create failed');
       const data = await res.json();
       localTicketActionsRef.current.created.add(String(data.id));
+      markLocalTicketCreated(String(data.id));
       const newTicket = {
         id: data.id,
         ...createForm,
@@ -408,6 +413,8 @@ function TicketsPage() {
     } catch (err) {
       console.error(err);
       error('Failed to create ticket');
+    } finally {
+      setCreatingTicket(false);
     }
   };
 
@@ -719,9 +726,17 @@ function TicketsPage() {
               <button
                 type="button"
                 onClick={handleCreateTicket}
-                className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400"
+                disabled={creatingTicket}
+                className="inline-flex items-center gap-2 rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-emerald-300"
               >
-                Create Ticket
+                {creatingTicket ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/35 border-t-white" />
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  'Create Ticket'
+                )}
               </button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGuestSessionStorage, getGuestDisplayName, loadGuestSession, saveGuestSession } from '../src/utils/webChatSession.js';
+import { shouldReuseCustomerConversation } from '../utils/customerWebChat.js';
 
 test('guest names default to sequential Guest #001 style labels when blank', () => {
   const storage = createGuestSessionStorage();
@@ -22,4 +23,14 @@ test('guest session storage round-trips a complete session payload', () => {
 
   saveGuestSession(storage, session);
   assert.deepEqual(loadGuestSession(storage), session);
+});
+
+test('customer conversations are not reused across different branches', () => {
+  const result = shouldReuseCustomerConversation({
+    customer: { id: 9, branch_id: 2 },
+    selectedBranchId: 5,
+    latestConversation: { id: 88, branch_id: 2 }
+  });
+
+  assert.equal(result, false);
 });

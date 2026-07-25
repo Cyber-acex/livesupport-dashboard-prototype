@@ -6,17 +6,19 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import OrdersPage from './pages/OrdersPage';
 import KnowledgePage from './pages/KnowledgePage';
 import PolicyPage from './pages/PolicyPage';
-import TrackingPage from './pages/TrackingPage';
 import SettingsPage from './pages/SettingsPage';
 import InboxPage from './pages/InboxPage';
 import MessengerInboxPage from './pages/MessengerInboxPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import VouchersPage from './pages/VouchersPage';
+import RefundsPage from './pages/RefundsPage';
+import DeliveriesPage from './pages/DeliveriesPage';
 import LoginPage from './pages/Login';
 import CustomerWebChatPage from './pages/CustomerWebChatPage';
 import CustomerChatOnboardingPage from './pages/CustomerChatOnboardingPage';import StaffWebChatPage from './pages/StaffWebChatPage';import FeedbackPage from './pages/FeedbackPage';
-import VoicePanel from './components/VoicePanel';
 import NotificationBanner from './components/NotificationBanner';
+import VoiceCommunicationPanel from './components/VoiceCommunicationPanel';
+import VoiceCommunicationLauncher from './components/VoiceCommunicationLauncher';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -44,18 +46,15 @@ function App() {
   const location = useLocation();
   const pathname = location.pathname || '';
   const isLoginRoute = pathname === '/login';
-  const isCustomerChatRoute = pathname === '/customer-chat' || pathname.startsWith('/customer-chat/');
   const isFeedbackRoute = pathname.startsWith('/rate/');
-  const shouldShowVoicePanel = !isLoginRoute && !isCustomerChatRoute && !isFeedbackRoute;
 
   return (
     <>
-      {shouldShowVoicePanel && (
-        <ErrorBoundary>
-          <VoicePanel />
-        </ErrorBoundary>
-      )}
       {!isLoginRoute && !isFeedbackRoute && <NotificationBanner />}
+      {!isLoginRoute && !isFeedbackRoute && <>
+        <VoiceCommunicationLauncher />
+        <VoiceCommunicationPanel />
+      </>}
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -65,7 +64,6 @@ function App() {
         <Route path="/orders/*" element={<OrdersPage />} />
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/knowledge/policies" element={<PolicyPage />} />
-        <Route path="/tracking" element={<TrackingPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/inbox" element={<InboxPage />} />
         <Route path="/inbox/messenger" element={<MessengerInboxPage />} />
@@ -76,6 +74,8 @@ function App() {
         <Route path="/rate/:token" element={<FeedbackPage />} />
         <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/vouchers" element={<VouchersPage />} />
+        <Route path="/refunds" element={<RefundsPage />} />
+        <Route path="/deliveries" element={<DeliveriesPage />} />
       </Routes>
     </>
   );

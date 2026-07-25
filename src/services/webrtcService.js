@@ -23,11 +23,28 @@ export class WebRTCService {
       throw new Error('This browser does not support microphone access');
     }
 
-    this.log('Requesting microphone access');
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    this.localStream = stream;
-    this.log('Microphone acquired', stream.getAudioTracks().length);
-    return stream;
+    this.log('Requesting microphone access with constraints', constraints);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.localStream = stream;
+      const audioTracks = stream.getAudioTracks();
+      this.log('Microphone acquired', audioTracks.length, 'audio tracks');
+      if (audioTracks.length === 0) {
+        throw new Error('getUserMedia succeeded but returned no audio tracks');
+      }
+      return stream;
+    } catch (error) {
+      this.log('Failed to acquire microphone:', error.name, error.message);
+      // Fallback: try with basic audio constraint
+      if (constraints.audio !== true && constraints.audio !== false) {
+        this.log('Retrying with basic audio constraint...');
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        this.localStream = fallbackStream;
+        this.log('Microphone acquired via fallback:', fallbackStream.getAudioTracks().length, 'tracks');
+        return fallbackStream;
+      }
+      throw error;
+    }
   }
 
   createPeerConnection({ iceServers = [{ urls: 'stun:stun.l.google.com:19302' }] } = {}) {
@@ -37,6 +54,7 @@ export class WebRTCService {
 
     const pc = new RTCPeerConnection({ iceServers });
     this.peerConnection = pc;
+    this.log('✅ Peer connection created with STUN server');
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -44,12 +62,12 @@ export class WebRTCService {
         if (typeof this.onIceCandidate === 'function') {
           this.onIceCandidate(event.candidate);
         }
-        this.log('ICE candidate generated');
+        this.log('📍 ICE candidate generated:', event.candidate.candidate.substring(0, 50) + '...');
       }
     };
 
     pc.onconnectionstatechange = () => {
-      this.log('Connection state', pc.connectionState);
+      this.log('🔗 Connection state:', pc.connectionState);
       if (typeof this.onStateChange === 'function') {
         this.onStateChange(pc.connectionState);
       }
@@ -58,7 +76,7 @@ export class WebRTCService {
     pc.ontrack = (event) => {
       const stream = event.streams?.[0] || new MediaStream([event.track]);
       this.remoteStream = stream;
-      this.log('Remote track received');
+      this.log('🎧 Remote track received:', event.track.kind, event.track.label, 'enabled:', event.track.enabled);
       if (typeof this.onRemoteStream === 'function') {
         this.onRemoteStream(stream);
       }
@@ -67,10 +85,23 @@ export class WebRTCService {
       }
     };
 
+    pc.onicegatheringstatechange = () => {
+      this.log('🧊 ICE gathering state:', pc.iceGatheringState);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      this.log('❄️ ICE connection state:', pc.iceConnectionState);
+    };
+
     if (this.localStream) {
-      this.localStream.getAudioTracks().forEach((track) => {
+      const audioTracks = this.localStream.getAudioTracks();
+      this.log('📤 Adding', audioTracks.length, 'audio track(s) to peer connection');
+      audioTracks.forEach((track) => {
         pc.addTrack(track, this.localStream);
+        this.log('📌 Audio track added:', track.label, 'enabled:', track.enabled);
       });
+    } else {
+      this.log('⚠️ No local stream available to add tracks');
     }
 
     return pc;

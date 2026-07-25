@@ -86,9 +86,28 @@ export default function StaffWebChatPage() {
 
   useEffect(() => {
     const container = messagesViewportRef.current;
-    if (!container) return;
-    container.scrollTop = container.scrollHeight;
-  }, [messages, messagesLoading]);
+    if (!container || !conversationId) return;
+
+    const scrollToLatestMessage = () => {
+      if (!messagesViewportRef.current) return;
+      const targetScrollTop = messagesViewportRef.current.scrollHeight;
+      try {
+        messagesViewportRef.current.scrollTo({ top: targetScrollTop, behavior: 'auto' });
+      } catch (error) {
+        messagesViewportRef.current.scrollTop = targetScrollTop;
+      }
+    };
+
+    const frameId = window.requestAnimationFrame(scrollToLatestMessage);
+    const timeoutId = window.setTimeout(scrollToLatestMessage, 60);
+    const timeoutId2 = window.setTimeout(scrollToLatestMessage, 180);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId2);
+    };
+  }, [conversationId, messages, messagesLoading]);
 
   const messageGroups = useMemo(() => {
     if (!messages || messages.length === 0) return [];

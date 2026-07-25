@@ -244,23 +244,6 @@ function setupRealtimeUpdates() {
     }
     if (changed) displayOrders();
   });
-  socket.on('delivery-update', (data) => {
-    try {
-      const orderId = data.order_id || data.orderId || (data.order && data.order.order_id) || null;
-      const delivery = data.delivery || data;
-      if (!orderId) return;
-      let changed = false;
-      for (const o of allOrders) {
-        if (o.id === orderId) {
-          if (delivery && delivery.status) o.status = delivery.status;
-          changed = true;
-        }
-      }
-      if (changed) displayOrders();
-    } catch (e) {
-      console.error('Error handling delivery-update', e);
-    }
-  });
 }
 // Load staff name from API
 function loadStaffName() {

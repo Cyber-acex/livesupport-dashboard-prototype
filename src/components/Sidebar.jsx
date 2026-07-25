@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
 import { getSettings } from '../services/settingsService';
+import { fetchDeliveries, fetchRiders } from '../services/deliveriesService';
 
 const menuItems = [
   { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -18,6 +19,7 @@ const menuItems = [
       { to: '/orders/tables', label: 'Tables' }
     ]
   },
+  { to: '/deliveries', label: 'Deliveries', icon: <path d="M4 7h10l3 3v7H4zM8 11h4M10 7v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
   {
     to: '/inbox',
     label: 'Inbox',
@@ -29,7 +31,7 @@ const menuItems = [
     ]
   },
   { to: '/vouchers', label: 'Vouchers', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
-  { to: '/tracking', label: 'Tracking', icon: <path d="M12 4a7 7 0 0 1 7 7c0 4.5-4.5 8.5-7 9-2.5-.5-7-4.5-7-9a7 7 0 0 1 7-7Zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/refunds', label: 'Refunds', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
   { to: '/settings', label: 'Settings', icon: <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 3.5-.9-.4a7.9 7.9 0 0 0-.4-1l.5-.8-1.4-1.4-.8.4a7.4 7.4 0 0 0-1-.4L15 4h-2l-.4 1a7.4 7.4 0 0 0-1 .4l-.8-.5-1.4 1.4.5.8a7.9 7.9 0 0 0-.4 1L4 12v2l.9.4c.1.3.2.7.4 1l-.5.8 1.4 1.4.8-.5c.3.2.7.3 1 .4L13 20h2l.4-1c.3-.1.7-.2 1-.4l.8.5 1.4-1.4-.5-.8c.2-.3.3-.7.4-1l.9-.4v-2Z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /> }
 ];
 
@@ -37,6 +39,8 @@ function Sidebar() {
   const { sidebarToggle, closeSidebar } = useSidebar();
   const location = useLocation();
   const [isHovered, setIsHovered] = useState(false);
+  const [activeDeliveryCount, setActiveDeliveryCount] = useState(0);
+  const [onlineRiderCount, setOnlineRiderCount] = useState(0);
   const [layout, setLayout] = useState(() => {
     const currentSettings = getSettings();
     return {
@@ -61,6 +65,28 @@ function Sidebar() {
     return () => {
       window.removeEventListener('storage', syncLayout);
       window.removeEventListener('settings:updated', syncLayout);
+    };
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const refreshMetrics = async () => {
+      try {
+        const [deliveries, riders] = await Promise.all([fetchDeliveries(), fetchRiders()]);
+        if (!isMounted) return;
+        setActiveDeliveryCount(Array.isArray(deliveries) ? deliveries.filter((delivery) => ['Assigned', 'Rider Accepted', 'Out For Delivery'].includes(delivery.deliveryStatus)).length : 0);
+        setOnlineRiderCount(Array.isArray(riders) ? riders.filter((rider) => rider.online).length : 0);
+      } catch (err) {
+        console.error('Failed to refresh delivery sidebar metrics', err);
+      }
+    };
+
+    void refreshMetrics();
+    const intervalId = window.setInterval(refreshMetrics, 30000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(intervalId);
     };
   }, []);
 
@@ -126,6 +152,14 @@ function Sidebar() {
 
               <ul className="mb-6 flex flex-col gap-3">
                 {menuItems.map((item) => {
+                  // Role/permission guard for Deliveries menu
+                  if (item.to === '/deliveries') {
+                    const cu = typeof window !== 'undefined' ? window.currentUser || null : null;
+                    const role = (cu && cu.role) ? String(cu.role).toLowerCase() : null;
+                    const canView = role === 'rider' || role === 'manager' || role === 'admin' || (cu && cu.canViewDeliveryTracking);
+                    if (!canView) return null;
+                  }
+
                   const active = isActivePath(item.to);
 
                   return (
@@ -147,6 +181,11 @@ function Sidebar() {
                           </svg>
                         </span>
                         <span className={`${showExpandedContent ? '' : 'lg:hidden'} truncate`}>{item.label}</span>
+                        {item.to === '/deliveries' && activeDeliveryCount > 0 ? (
+                          <span className="absolute right-3 top-2 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-2 text-[11px] font-semibold text-white">
+                            {activeDeliveryCount}
+                          </span>
+                        ) : null}
                       </NavLink>
                       {item.children && active && showExpandedContent ? (
                         <ul className="mt-2 ml-10 space-y-2">
@@ -176,6 +215,25 @@ function Sidebar() {
                   );
                 })}
               </ul>
+
+              {showExpandedContent ? (
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-xs uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Delivery status</span>
+                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">Live</span>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm dark:bg-slate-900">
+                      <span>Active deliveries</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{activeDeliveryCount}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm dark:bg-slate-900">
+                      <span>Online riders</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{onlineRiderCount}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </nav>
         </div>

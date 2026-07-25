@@ -6,6 +6,8 @@ import './index.css';
 import { getSettings, applyTheme, applyFontSize } from './services/settingsService';
 import { SidebarProvider } from './contexts/SidebarContext';
 import { NotificationProvider } from './contexts/NotificationContext';
+import { VoiceCommunicationProvider } from './contexts/VoiceCommunicationContext';
+import { ZoomProvider } from './contexts/ZoomContext';
 
 // Apply theme and font size early to avoid flash during React mount
 try {
@@ -17,11 +19,15 @@ try {
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
-      <NotificationProvider>
-        <SidebarProvider>
-          <App />
-        </SidebarProvider>
-      </NotificationProvider>
+      <ZoomProvider>
+        <NotificationProvider>
+          <SidebarProvider>
+            <VoiceCommunicationProvider>
+              <App />
+            </VoiceCommunicationProvider>
+          </SidebarProvider>
+        </NotificationProvider>
+      </ZoomProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

@@ -4,11 +4,6 @@ import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import StatusBadge from '../components/StatusBadge';
-import CallStatusBadge from '../components/CallStatusBadge';
-import CallLinkPanel from '../components/CallLinkPanel';
-import VoiceCallPanel from '../components/VoiceCallPanel';
-import { useCallSocket } from '../hooks/useCallSocket';
-import { useCallWebRTC } from '../hooks/useCallWebRTC';
 import { formatInboxTimestamp } from '../utils/inboxTime';
 import { useNotification } from '../contexts/NotificationContext';
 import { canUseAiReply, normalizeAutopilotMode } from '../services/autopilotMode';
@@ -68,17 +63,8 @@ function InboxPage({ defaultPlatform = null }) {
   }, []);
   const [currentUser, setCurrentUser] = useState(null);
   const [autopilotMode, setAutopilotMode] = useState('assist');
-  const [callToken, setCallToken] = useState('');
-  const [callLink, setCallLink] = useState('');
-  const [callStatus, setCallStatus] = useState('waiting');
-  const [callError, setCallError] = useState('');
-  const [callStarted, setCallStarted] = useState(false);
-  const [offerSent, setOfferSent] = useState(false);
-  const [localStream, setLocalStream] = useState(null);
-  const [showVoiceCallPanel, setShowVoiceCallPanel] = useState(false);
   const [recentOrders, setRecentOrders] = useState([]);
   const [recentOrdersLoading, setRecentOrdersLoading] = useState(false);
-  const [remoteStream, setRemoteStream] = useState(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const navigate = useNavigate();
   const [editingConversationId, setEditingConversationId] = useState(null);
@@ -87,95 +73,7 @@ function InboxPage({ defaultPlatform = null }) {
   const socketRef = useRef(null);
   const selectedConversationIdRef = useRef(null);
   const activeConversationRoomRef = useRef(null);
-  const remoteAudioRef = useRef(null);
   const messagesViewportRef = useRef(null);
-
-  const callSocket = useCallSocket(
-    { token: callToken, role: callToken ? 'staff' : null, userId: currentUser?.id, name: currentUser?.name },
-    {
-      onStatus: (payload) => {
-        if (!payload) return;
-        if (payload.status) setCallStatus(payload.status);
-        if (payload.secureToken && !callLink) {
-          setCallLink(`${window.location.origin}/call/${payload.secureToken}`);
-        }
-        if (payload.error || payload.message) {
-          setCallError(payload.error || payload.message);
-        }
-      },
-        onRinging: (payload) => {
-        setCallStatus('ringing');
-        if (payload.secureToken) {
-          setCallLink(`${window.location.origin}/call/${payload.secureToken}`);
-        }
-      },
-      onAnswered: () => setCallStatus('answered'),
-      onEnded: () => setCallStatus('ended'),
-      onError: (payload) => setCallError(payload?.message || String(payload) || 'Call socket error'),
-      onAnswer: async (payload) => {
-        if (!payload || !payload.answer) return;
-        try {
-          await setRemoteDescription(payload.answer);
-        } catch (err) {
-          console.error('Call remote answer failed', err);
-          setCallError('Failed to complete call handshake.');
-        }
-      },
-      onIce: async (payload) => {
-        if (!payload || !payload.candidate) return;
-        try {
-          await addIceCandidate(payload.candidate);
-        } catch (err) {
-          console.warn('ICE candidate handling failed', err);
-        }
-      }
-    }
-  );
-
-  const { createOffer, createAnswer, addIceCandidate, setRemoteDescription, closePeerConnection } = useCallWebRTC({
-    localStream,
-    onRemoteStream: (stream) => setRemoteStream(stream),
-    socket: callSocket,
-    token: callToken,
-    userId: currentUser?.id,
-    targetId: null
-  });
-
-  useEffect(() => {
-    if (!callStarted || localStream) return;
-    const acquireAudio = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        setLocalStream(stream);
-      } catch (err) {
-        console.error('Failed to acquire microphone', err);
-        setCallError('Microphone access is required for voice calls.');
-      }
-    };
-    acquireAudio();
-  }, [callStarted, localStream]);
-
-  useEffect(() => {
-    if (!remoteAudioRef.current || !remoteStream) return;
-    remoteAudioRef.current.srcObject = remoteStream;
-  }, [remoteStream]);
-
-  useEffect(() => {
-    if (!callSocket || !callToken || !localStream || !callStatus) return;
-    if (callStatus !== 'ringing' || offerSent) return;
-
-    const sendOffer = async () => {
-      try {
-        await createOffer();
-        setOfferSent(true);
-      } catch (err) {
-        console.error('Failed to send call offer', err);
-        setCallError('Failed to initiate voice call.');
-      }
-    };
-
-    sendOffer();
-  }, [callSocket, callToken, localStream, callStatus, offerSent, createOffer]);
 
   useEffect(() => {
     let active = true;
@@ -243,6 +141,13 @@ function InboxPage({ defaultPlatform = null }) {
       console.warn('Failed to emit autopilot mode update', e);
     }
   }, [autopilotMode]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const conversationId = selectedConversation?.id != null ? String(selectedConversation.id) : '';
+      window.dispatchEvent(new CustomEvent('inbox:activeConversationChanged', { detail: { conversationId } }));
+    }
+  }, [selectedConversation?.id]);
 
   useEffect(() => {
     if (!selectedConversation?.id) {
@@ -344,30 +249,9 @@ function InboxPage({ defaultPlatform = null }) {
       }
     };
 
-    const handleCallEvent = (payload) => {
-      if (!payload) return;
-      if (payload.error || payload.message) {
-        setCallError(payload.error || payload.message);
-      }
-      if (payload.status) {
-        setCallStatus(payload.status);
-      }
-      if (payload.secureToken) {
-        const host = window.location.origin;
-        setCallLink(`${host}/call/${payload.secureToken}`);
-      }
-    };
-
     socket.on('connect', handleConnect);
     socket.on('newMessage', handleNewMessage);
     socket.on('messages:refreshed', handleMessagesRefreshed);
-    socket.on('call:status', handleCallEvent);
-    socket.on('call:ringing', handleCallEvent);
-    socket.on('call:answered', handleCallEvent);
-    socket.on('call:rejected', handleCallEvent);
-    socket.on('call:missed', handleCallEvent);
-    socket.on('call:ended', handleCallEvent);
-    socket.on('call:error', handleCallEvent);
 
     return () => {
       if (activeConversationRoomRef.current && socket) {
@@ -376,13 +260,6 @@ function InboxPage({ defaultPlatform = null }) {
       socket.off('connect', handleConnect);
       socket.off('newMessage', handleNewMessage);
       socket.off('messages:refreshed', handleMessagesRefreshed);
-      socket.off('call:status', handleCallEvent);
-      socket.off('call:ringing', handleCallEvent);
-      socket.off('call:answered', handleCallEvent);
-      socket.off('call:rejected', handleCallEvent);
-      socket.off('call:missed', handleCallEvent);
-      socket.off('call:ended', handleCallEvent);
-      socket.off('call:error', handleCallEvent);
     };
   }, []);
 
@@ -645,52 +522,6 @@ function InboxPage({ defaultPlatform = null }) {
       error(error.message || 'Unable to delete customer conversation');
     } finally {
       setIsDeletingConversation(false);
-    }
-  }
-
-  async function handleCallCustomer() {
-    if (!selectedConversation?.id) {
-      warning('Select a conversation before placing a call');
-      return;
-    }
-
-    setCallError('');
-    setCallStatus('waiting');
-    setCallLink('');
-    setCallToken('');
-    setOfferSent(false);
-    setCallStarted(true);
-    setShowVoiceCallPanel(true);
-
-    try {
-      const response = await fetch('/api/call-sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversationId: selectedConversation.id,
-          customerName: selectedConversation.name || selectedConversation.phone || 'Customer'
-        })
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.json().catch(() => ({}));
-        throw new Error(errorBody.error || 'Unable to start call session.');
-      }
-
-      const data = await response.json();
-      const secureToken = data.secureToken || data.token || data.call?.secureToken;
-      if (!secureToken) throw new Error('Call link generation failed.');
-
-      const host = window.location.origin;
-      setCallToken(secureToken);
-      setCallLink(`${host}/call/${secureToken}`);
-      setCallStatus(data.status || 'waiting');
-      success('Call link generated. Customer can answer using the secure link');
-    } catch (error) {
-      console.error('Call creation failed', error);
-      setCallError(error.message || 'Failed to create voice call.');
-      setCallStatus('failed');
-      setCallStarted(false);
     }
   }
 
@@ -984,10 +815,16 @@ function InboxPage({ defaultPlatform = null }) {
     setShowScrollToBottom(distanceFromBottom > 140);
   }
 
-  function scrollToBottom(behavior = 'smooth') {
+  function scrollToBottom(behavior = 'auto') {
     const container = messagesViewportRef.current;
     if (!container) return;
-    container.scrollTo({ top: container.scrollHeight, behavior });
+
+    const targetScrollTop = container.scrollHeight;
+    try {
+      container.scrollTo({ top: targetScrollTop, behavior });
+    } catch (error) {
+      container.scrollTop = targetScrollTop;
+    }
     setShowScrollToBottom(false);
   }
 
@@ -1043,17 +880,20 @@ function InboxPage({ defaultPlatform = null }) {
     const container = messagesViewportRef.current;
     if (!container) return;
 
-    const timeoutId = window.setTimeout(() => {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromBottom <= 140) {
-        container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
-        setShowScrollToBottom(false);
-      } else {
-        setShowScrollToBottom(true);
-      }
-    }, 60);
+    const runAutoScroll = () => {
+      scrollToBottom('auto');
+      updateScrollToBottomVisibility();
+    };
 
-    return () => window.clearTimeout(timeoutId);
+    const frameId = window.requestAnimationFrame(runAutoScroll);
+    const timeoutId = window.setTimeout(runAutoScroll, 60);
+    const timeoutId2 = window.setTimeout(runAutoScroll, 180);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId2);
+    };
   }, [activeConversation?.id, messagesLoading, conversationMessages.length]);
 
   async function saveConversationName(conversation) {
@@ -1205,7 +1045,7 @@ function InboxPage({ defaultPlatform = null }) {
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="flex-1 min-h-0 overflow-hidden p-3 sm:p-4 lg:p-6">
+          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6">
             <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950 sm:p-1">
               <div className="flex flex-col gap-4 px-3 py-4 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="max-w-2xl">
@@ -1561,35 +1401,6 @@ function InboxPage({ defaultPlatform = null }) {
                     >
                       Share update
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleCallCustomer}
-                      className="w-full rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700"
-                    >
-                      Call customer
-                    </button>
-                    <CallLinkPanel
-                      callLink={callLink}
-                      status={callStatus}
-                      onCopy={() => navigator.clipboard.writeText(callLink)}
-                    />
-                    {callError ? (
-                      <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
-                        {callError}
-                      </div>
-                    ) : null}
-                    <CallStatusBadge status={callStatus} />
-                    <div className="mt-4">
-                      {showVoiceCallPanel ? (
-                        <VoiceCallPanel
-                          contact={{ id: selectedConversation?.id, name: selectedConversation?.name || selectedConversation?.phone || 'Customer' }}
-                          currentUser={currentUser}
-                          onClose={() => setShowVoiceCallPanel(false)}
-                          onCallEnded={() => setShowVoiceCallPanel(false)}
-                        />
-                      ) : null}
-                    </div>
-                    <audio ref={remoteAudioRef} autoPlay playsInline hidden />
                   </div>
                 </aside>
               </div>

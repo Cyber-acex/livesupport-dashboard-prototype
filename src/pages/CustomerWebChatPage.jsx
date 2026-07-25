@@ -37,7 +37,11 @@ export default function CustomerWebChatPage() {
         const response = await fetch(`/api/customer-web-chat/sessions/${existing.guestId}`);
         const data = await response.json().catch(() => ({}));
         if (response.ok && data?.session) {
-          const nextSession = { ...existing, ...data.session };
+          const nextSession = {
+            ...existing,
+            ...data.session,
+            branchId: Number(data.session?.branchId || existing.branchId || 0) || null
+          };
           setSession(nextSession);
           saveGuestSession(storage, nextSession);
         }

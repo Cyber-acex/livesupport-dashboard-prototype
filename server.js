@@ -25,6 +25,14 @@ import { detectHighRiskIntent, createHighRiskEscalationContext, evaluateIntentPi
 import { listVouchers, createVoucher, updateVoucher, deleteVoucher, validateVoucher, redeemVoucher, getVoucherStats, prepareVoucherOrderPayload } from './utils/voucherStorage.js';
 import { mergeConversationMessagesForDisplay } from './utils/conversationHistory.js';
 import { extractCsatRating } from './src/utils/csat.js';
+import { shouldReuseCustomerConversation } from './utils/customerWebChat.js';
+import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
+import { resolveBranchId } from './utils/branchContext.js';
+import { createDefaultConversationSession, normalizeConversationState, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition } from './utils/conversationState.js';
+import { connectRedis, isReady } from './services/redisClient.js';
+import { saveRiderLocation, updateDeliveryRouteAndEta, getDeliveryEta, getDeliveryDistance } from './services/deliveryTrackingService.js';
+import { joinDeliveryRooms, leaveDeliveryRooms, publishDeliveryUpdates } from './sockets/deliverySocket.js';
+import { validateEnv } from './utils/validateEnv.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -32,6 +40,10 @@ const upload = multer({ dest: path.join(__dirname, "uploads") });
 
 // Initialize database connection for replies module
 initDatabase(db);
+validateEnv();
+connectRedis().catch((err) => {
+    console.warn('[Redis] startup connection failed:', err?.message || err);
+});
 
 // AI Response Control System
 // Track when agents last sent messages per conversation
@@ -59,6 +71,7 @@ const CALL_UNANSWERED_TIMEOUT_MS = 60 * 1000;
 
 // Dashboard snapshots storage
 const dashboardSnapshots = new Map(); // name -> { data, saved_at }
+const conversationStateCache = new Map(); // conversationId -> session snapshot
 const recentWebhookEventIds = new Map(); // cache of recent webhook event IDs to prevent duplicate processing
 const WEBHOOK_EVENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -749,7 +762,7 @@ function isStaffIdleForThreeMinutes(conversationId) {
 }
 
 // Automated ticket creation function
-async function checkAndCreateTicket(conversationId, phone, message) {
+async function checkAndCreateTicket(conversationId, phone, message, branchId = null) {
     // Auto-create a ticket when our keyword detector sees a support issue or complaint.
     // It will assign the ticket to the best matching staff role based on the message.
     const problemKeywords = [
@@ -785,7 +798,7 @@ async function checkAndCreateTicket(conversationId, phone, message) {
             const assignee = detectTicketCategory(message);
             console.log(`Auto-creating ticket for conversation ${conversationId}. Assigning to: ${assignee}`);
 
-            const ticket = await createTicket(message, phone, conversationId, assignee);
+            const ticket = await createTicket(message, phone, conversationId, assignee, null, 'Medium', [], branchId);
             if (ticket) {
                 console.log(`Ticket #${ticket.id} auto-created for conversation ${conversationId} and assigned to ${assignee}`);
                 io.emit('ticketCreated', ticket);
@@ -1278,6 +1291,25 @@ if (isPg) {
     db.query("ALTER TABLE replies ADD COLUMN IF NOT EXISTS user_id INTEGER", (err) => { if (err) console.log('Error adding user_id to replies (pg):', err); });
 
     db.query(`
+        CREATE TABLE IF NOT EXISTS conversation_sessions (
+            id SERIAL PRIMARY KEY,
+            conversation_id INTEGER UNIQUE,
+            session_id VARCHAR(255),
+            customer_id INTEGER,
+            branch_id INTEGER,
+            workflow_state VARCHAR(255) DEFAULT 'Greeting',
+            pending_questions TEXT,
+            draft_order JSONB,
+            history JSONB,
+            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            active BOOLEAN DEFAULT true
+        );
+    `, (err) => { if (err) console.log('Error creating conversation_sessions table (pg):', err); });
+
+    db.query(`
         CREATE TABLE IF NOT EXISTS receipts (
             id SERIAL PRIMARY KEY,
             content TEXT,
@@ -1389,6 +1421,25 @@ if (isPg) {
     `, (err) => { if (err) console.log('Error creating replies table:', err); });
 
     db.query("ALTER TABLE replies ADD COLUMN IF NOT EXISTS user_id INT NULL", (err) => { if (err && err.errno !== 1060) console.log('Error adding user_id to replies:', err); });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS conversation_sessions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            conversation_id INT UNIQUE,
+            session_id VARCHAR(255),
+            customer_id INT,
+            branch_id INT,
+            workflow_state VARCHAR(255) DEFAULT 'Greeting',
+            pending_questions TEXT,
+            draft_order JSON,
+            history JSON,
+            last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            active TINYINT(1) DEFAULT 1
+        )
+    `, (err) => { if (err) console.log('Error creating conversation_sessions table:', err); });
 
     db.query(`
         CREATE TABLE IF NOT EXISTS receipts (
@@ -1622,10 +1673,11 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
         // Check if customer already exists
         let customer = await prisma.customer.findUnique({
             where: { name: trimmedCustomerName },
-            select: { id: true, name: true, phone: true }
+            select: { id: true, name: true, phone: true, branch_id: true }
         });
 
-        // If customer exists, get their latest conversation
+        // Reuse an existing conversation only when it is for the same branch.
+        let existingConversation = null;
         if (customer) {
             const latestConversation = await prisma.conversation.findFirst({
                 where: { customer_id: customer.id },
@@ -1633,23 +1685,30 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
                 select: { id: true, created_at: true, branch_id: true, name: true }
             });
 
-            if (latestConversation) {
-                // Return existing conversation
-                saveGuestSessionToStore({
-                    guestId: guestId || `guest-${Date.now()}`,
-                    conversationId: latestConversation.id,
-                    branchId: latestConversation.branch_id || normalizedBranchId,
-                    customerName: trimmedCustomerName,
-                    phone: phone || customer.phone || '',
-                    channel: channel || 'web'
-                });
-                return res.json({
-                    success: true,
-                    conversationId: latestConversation.id,
-                    branch: branch.name,
-                    isExisting: true
-                });
+            if (latestConversation && shouldReuseCustomerConversation({
+                customer,
+                selectedBranchId: normalizedBranchId,
+                latestConversation
+            })) {
+                existingConversation = latestConversation;
             }
+        }
+
+        if (existingConversation) {
+            saveGuestSessionToStore({
+                guestId: guestId || `guest-${Date.now()}`,
+                conversationId: existingConversation.id,
+                branchId: existingConversation.branch_id || normalizedBranchId,
+                customerName: trimmedCustomerName,
+                phone: phone || customer.phone || '',
+                channel: channel || 'web'
+            });
+            return res.json({
+                success: true,
+                conversationId: existingConversation.id,
+                branch: branch.name,
+                isExisting: true
+            });
         }
 
         // Create new customer if doesn't exist
@@ -1657,9 +1716,10 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
             customer = await prisma.customer.create({
                 data: {
                     name: trimmedCustomerName,
-                    phone: phone || null
+                    phone: phone || null,
+                    branch_id: normalizedBranchId
                 },
-                select: { id: true, name: true, phone: true }
+                select: { id: true, name: true, phone: true, branch_id: true }
             });
         }
 
@@ -1764,6 +1824,16 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
     const resolvedPhone = phone || null;
     if (!normalizedConversationId || !customerMessage) return null;
 
+    const conversationSession = await loadConversationSession(normalizedConversationId, Number(branchId || 0) || null, null, null, resolvedPhone);
+    const transitionedSession = applyWorkflowTransition(conversationSession, {
+        customerMessage,
+        draftOrder: conversationSession.draftOrder,
+    });
+    const resolvedSession = mergeConversationState(transitionedSession, {
+        lastMessageAt: new Date().toISOString(),
+        history: [...(Array.isArray(transitionedSession.history) ? transitionedSession.history : []), { role: 'customer', message: customerMessage }]
+    });
+
     if (isCustomerGreeting(customerMessage) && isStaffIdleForThreeMinutes(normalizedConversationId)) {
         enableAIForConversation(normalizedConversationId);
     }
@@ -1789,15 +1859,38 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
     let replyText = null;
 
     if (orderConfirmed && orderConfirmed.orderId) {
-        replyText = `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`;
+        replyText = orderConfirmed.message || `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`;
     } else if (aiAutoAllowed && (forceAI || shouldAIRespond(normalizedConversationId))) {
-        replyText = await getMistralReply(customerMessage, resolvedPhone, normalizedConversationId, Number(branchId || 0) || null);
+        replyText = await getMistralReply(
+            customerMessage,
+            resolvedPhone,
+            normalizedConversationId,
+            Number(branchId || 0) || null,
+            resolvedSession
+        );
     }
 
     if (replyText) {
-        return persistCustomerWebChatReply(normalizedConversationId, replyText, 'sent');
+        const nextSessionSnapshot = mergeConversationState(resolvedSession, {
+            workflowState: resolvedSession.workflowState || 'Greeting',
+            pendingQuestions: resolvedSession.pendingQuestions || [],
+            draftOrder: resolvedSession.draftOrder || null,
+            history: [...resolvedSession.history, { role: 'ai', message: replyText }]
+        });
+        const storedSession = await saveConversationSession(nextSessionSnapshot);
+        const persistedReply = await persistCustomerWebChatReply(normalizedConversationId, replyText, 'sent');
+        if (storedSession) {
+            console.log('Conversation session restored and persisted before AI reply:', {
+                conversationId: normalizedConversationId,
+                workflowState: storedSession.workflowState,
+                pendingQuestions: storedSession.pendingQuestions?.length || 0,
+                draftItems: storedSession.draftOrder?.items?.length || 0
+            });
+        }
+        return persistedReply;
     }
 
+    await saveConversationSession(resolvedSession);
     return null;
 }
 
@@ -1889,6 +1982,152 @@ app.get('/api/customer-web-chat/conversations/:id/messages', (req, res) => {
 
 const customerGuestSessions = new Map();
 
+function getConversationStateCacheKey(conversationId) {
+    return buildSessionOrderKey({ conversationId, sessionId: `conversation-${conversationId}` });
+}
+
+async function loadConversationSession(conversationId, branchId = null, customerId = null, customerName = null, phone = null) {
+    const normalizedConversationId = Number(conversationId || 0);
+    if (!normalizedConversationId) {
+        return createDefaultConversationSession({ conversationId, customerId, branchId, customerName, phone });
+    }
+
+    const cacheKey = getConversationStateCacheKey(normalizedConversationId);
+    if (conversationStateCache.has(cacheKey)) {
+        return normalizeConversationState(conversationStateCache.get(cacheKey));
+    }
+
+    const selectSql = isPg
+        ? `SELECT conversation_id, session_id, customer_id, branch_id, workflow_state, pending_questions, draft_order, history, last_message_at, created_at, updated_at, expires_at, active
+           FROM conversation_sessions WHERE conversation_id = ? LIMIT 1`
+        : `SELECT conversation_id, session_id, customer_id, branch_id, workflow_state, pending_questions, draft_order, history, last_message_at, created_at, updated_at, expires_at, active
+           FROM conversation_sessions WHERE conversation_id = ? LIMIT 1`;
+
+    const existing = await new Promise((resolve) => {
+        db.query(selectSql, [normalizedConversationId], (err, rows) => {
+            if (err) {
+                console.warn('Failed to load persisted conversation session:', err?.message || err);
+                resolve(null);
+                return;
+            }
+            resolve(Array.isArray(rows) && rows.length ? rows[0] : null);
+        });
+    });
+
+    const session = existing
+        ? normalizeConversationState({
+            conversationId: existing.conversation_id ?? normalizedConversationId,
+            sessionId: existing.session_id || `session-${normalizedConversationId}`,
+            customerId: existing.customer_id ?? customerId,
+            branchId: existing.branch_id ?? branchId,
+            workflowState: existing.workflow_state || 'Greeting',
+            pendingQuestions: safeParseJson(existing.pending_questions, []),
+            draftOrder: safeParseJson(existing.draft_order, null),
+            history: safeParseJson(existing.history, []),
+            lastMessageAt: existing.last_message_at || new Date().toISOString(),
+            createdAt: existing.created_at || new Date().toISOString(),
+            updatedAt: existing.updated_at || new Date().toISOString(),
+            expiresAt: existing.expires_at || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            active: existing.active !== false
+        })
+        : createDefaultConversationSession({ conversationId: normalizedConversationId, sessionId: `session-${normalizedConversationId}`, customerId, branchId, customerName, phone });
+
+    conversationStateCache.set(cacheKey, session);
+    return session;
+}
+
+function safeParseJson(value, fallback) {
+    if (value == null) return fallback;
+    if (typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return fallback;
+        }
+    }
+    if (typeof value === 'object') return value;
+    return fallback;
+}
+
+async function saveConversationSession(session) {
+    const normalizedConversationId = Number(session?.conversationId || 0);
+    if (!normalizedConversationId) return null;
+
+    const nextSession = normalizeConversationState(session);
+    const cacheKey = getConversationStateCacheKey(normalizedConversationId);
+    conversationStateCache.set(cacheKey, nextSession);
+
+    const payload = {
+        conversation_id: normalizedConversationId,
+        session_id: nextSession.sessionId,
+        customer_id: nextSession.customerId,
+        branch_id: nextSession.branchId,
+        workflow_state: nextSession.workflowState,
+        pending_questions: JSON.stringify(nextSession.pendingQuestions || []),
+        draft_order: JSON.stringify(nextSession.draftOrder || {}),
+        history: JSON.stringify(nextSession.history || []),
+        last_message_at: nextSession.lastMessageAt || new Date().toISOString(),
+        created_at: nextSession.createdAt || new Date().toISOString(),
+        updated_at: nextSession.updatedAt || new Date().toISOString(),
+        expires_at: nextSession.expiresAt || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        active: nextSession.active !== false
+    };
+
+    const upsertSql = isPg
+        ? `INSERT INTO conversation_sessions (
+            conversation_id, session_id, customer_id, branch_id, workflow_state, pending_questions, draft_order, history, last_message_at, created_at, updated_at, expires_at, active
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET
+            session_id = EXCLUDED.session_id,
+            customer_id = EXCLUDED.customer_id,
+            branch_id = EXCLUDED.branch_id,
+            workflow_state = EXCLUDED.workflow_state,
+            pending_questions = EXCLUDED.pending_questions,
+            draft_order = EXCLUDED.draft_order,
+            history = EXCLUDED.history,
+            last_message_at = EXCLUDED.last_message_at,
+            updated_at = EXCLUDED.updated_at,
+            expires_at = EXCLUDED.expires_at,
+            active = EXCLUDED.active`
+        : `INSERT INTO conversation_sessions (
+            conversation_id, session_id, customer_id, branch_id, workflow_state, pending_questions, draft_order, history, last_message_at, created_at, updated_at, expires_at, active
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            session_id = VALUES(session_id),
+            customer_id = VALUES(customer_id),
+            branch_id = VALUES(branch_id),
+            workflow_state = VALUES(workflow_state),
+            pending_questions = VALUES(pending_questions),
+            draft_order = VALUES(draft_order),
+            history = VALUES(history),
+            last_message_at = VALUES(last_message_at),
+            updated_at = VALUES(updated_at),
+            expires_at = VALUES(expires_at),
+            active = VALUES(active)`;
+
+    await new Promise((resolve, reject) => {
+        db.query(upsertSql, [
+            payload.conversation_id,
+            payload.session_id,
+            payload.customer_id,
+            payload.branch_id,
+            payload.workflow_state,
+            payload.pending_questions,
+            payload.draft_order,
+            payload.history,
+            payload.last_message_at,
+            payload.created_at,
+            payload.updated_at,
+            payload.expires_at,
+            payload.active
+        ], (err) => {
+            if (err) return reject(err);
+            resolve();
+        });
+    });
+
+    return nextSession;
+}
+
 function loadGuestSessionFromStore(guestId) {
     if (!guestId) return null;
     const storageKey = `livesupport:webchat:guest-session:${guestId}`;
@@ -1941,7 +2180,9 @@ const branchScopedPrefixes = [
     '/api/escalations',
     '/api/resolved',
     '/api/refunds',
-    '/api/delivery-issues'
+    '/api/delivery-issues',
+    '/api/deliveries',
+    '/api/riders'
 ];
 
 branchScopedPrefixes.forEach((prefix) => {
@@ -1998,11 +2239,6 @@ if (fs.existsSync(reactDistPath) && fs.existsSync(reactIndexFile)) {
     app.use(express.static(reactDistPath));
     app.use('/assets', express.static(path.join(reactDistPath, 'assets')));
 }
-
-// Redirect the legacy static tracking page to the React tracking route.
-app.get('/tracking.html', (req, res) => {
-    return res.redirect('/tracking');
-});
 
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor', express.static(path.join(__dirname, 'node_modules')));
@@ -2442,7 +2678,6 @@ const reactRoutes = [
     '/orders',
     '/inbox',
     '/knowledge',
-    '/tracking',
     '/settings',
     '/admin-users'
 ];
@@ -3130,6 +3365,232 @@ app.get('/api/session', (req, res) => {
     }
 });
 
+app.get('/api/riders', isAuthenticated, (req, res) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    if (!branchId) return res.status(400).json({ error: 'branch_required' });
+
+    const onlineRiderIds = new Set();
+    for (const agent of onlineAgents.values()) {
+        if (agent && agent.userId) onlineRiderIds.add(String(agent.userId));
+    }
+
+    const sql = 'SELECT id, full_name, email, role, branch_id FROM staffs WHERE role = ? AND branch_id = ?';
+    db.query(sql, ['rider', branchId], (err, rows) => {
+        if (err) {
+            console.error('Error fetching riders:', err);
+            return res.status(500).json({ error: 'db_error' });
+        }
+        const allowMultiple = process.env.ALLOW_MULTIPLE_ACTIVE_DELIVERIES_PER_RIDER === 'true';
+        const riders = (rows || []).map((row) => {
+            const online = onlineRiderIds.has(String(row.id));
+            const availability = online ? 'Available' : 'Offline';
+            return {
+                id: row.id,
+                name: row.full_name || row.email,
+                email: row.email,
+                role: row.role,
+                branchId: row.branch_id,
+                online,
+                availability,
+                activeCount: 0,
+                allowMultipleActiveDeliveries: allowMultiple,
+                disabled: availability === 'Offline'
+            };
+        });
+        res.json(riders);
+    });
+});
+
+app.get('/api/deliveries', isAuthenticated, async (req, res) => {
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const sql = branchId > 0
+        ? 'SELECT d.*, o.order_id AS order_number, o.customer_name, o.phone AS customer_phone, o.product, o.total_amount FROM deliveries d LEFT JOIN orders o ON o.id = d.order_id WHERE o.branch_id = ? ORDER BY d.created_at DESC'
+        : 'SELECT d.*, o.order_id AS order_number, o.customer_name, o.phone AS customer_phone, o.product, o.total_amount FROM deliveries d LEFT JOIN orders o ON o.id = d.order_id ORDER BY d.created_at DESC';
+    const params = branchId > 0 ? [branchId] : [];
+
+    db.query(sql, params, async (err, rows) => {
+        if (err) {
+            console.error('Error fetching deliveries:', err);
+            return res.status(500).json({ error: 'db_error' });
+        }
+        const deliveries = (rows || []).map((row) => ({
+            id: row.id,
+            orderId: row.order_id,
+            orderNumber: row.order_number,
+            customerName: row.customer_name,
+            customerPhone: row.customer_phone,
+            product: row.product,
+            amount: Number(row.total_amount || 0),
+            riderId: null,
+            riderName: row.rider_name,
+            branchId: branchId || null,
+            deliveryStatus: row.delivery_status,
+            currentLat: row.current_lat,
+            currentLng: row.current_lng,
+            eta: null,
+            distance: null,
+            paymentStatus: 'Pending',
+            createdAt: row.created_at,
+            updatedAt: row.updated_at
+        }));
+
+        if (isReady()) {
+            try {
+                const enriched = await Promise.all(deliveries.map(async (delivery) => {
+                    const eta = await getDeliveryEta(delivery.id);
+                    const distance = await getDeliveryDistance(delivery.id);
+                    return {
+                        ...delivery,
+                        eta: eta || delivery.eta,
+                        distance: distance != null ? distance : delivery.distance
+                    };
+                }));
+                return res.json(enriched);
+            } catch (cacheErr) {
+                console.warn('Failed to attach cached delivery metrics:', cacheErr);
+            }
+        }
+
+        res.json(deliveries);
+    });
+});
+
+app.post('/api/deliveries/:deliveryId/location', isAuthenticated, async (req, res) => {
+    const deliveryId = Number(req.params.deliveryId || 0);
+    const role = String(req.session.user.role || '').toLowerCase();
+    if (!deliveryId || req.body.latitude == null || req.body.longitude == null) {
+        return res.status(400).json({ error: 'invalid_location_payload' });
+    }
+    if (role !== 'rider' && role !== 'admin' && role !== 'manager') {
+        return res.status(403).json({ error: 'not_authorized_for_location_updates' });
+    }
+
+    const sql = 'SELECT d.*, o.branch_id, o.order_id AS order_number, o.customer_name, o.phone AS customer_phone, o.customer_lat, o.customer_lng FROM deliveries d LEFT JOIN orders o ON o.id = d.order_id WHERE d.id = ?';
+    db.query(sql, [deliveryId], async (err, rows) => {
+        if (err) {
+            console.error('Error validating delivery location update:', err);
+            return res.status(500).json({ error: 'db_error' });
+        }
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ error: 'delivery_not_found' });
+        }
+        const existing = rows[0];
+        if (['Cancelled', 'Delivered'].includes(String(existing.delivery_status || ''))) {
+            return res.status(400).json({ error: 'delivery_not_active' });
+        }
+
+        const latitude = Number(req.body.latitude);
+        const longitude = Number(req.body.longitude);
+        const updateSql = isPg
+            ? 'UPDATE deliveries SET current_lat = $1, current_lng = $2, updated_at = NOW() WHERE id = $3'
+            : 'UPDATE deliveries SET current_lat = ?, current_lng = ?, updated_at = NOW() WHERE id = ?';
+        const updateParams = [latitude, longitude, deliveryId];
+
+        db.query(updateSql, updateParams, async (updateErr) => {
+            if (updateErr) {
+                console.error('Error saving delivery location:', updateErr);
+                return res.status(500).json({ error: 'db_error' });
+            }
+
+            const riderLocation = { latitude, longitude };
+            try {
+                await saveRiderLocation(deliveryId, riderLocation);
+            } catch (cacheErr) {
+                console.warn('Failed to cache rider location:', cacheErr);
+            }
+
+            let routePayload = null;
+            try {
+                routePayload = await updateDeliveryRouteAndEta(deliveryId, riderLocation, existing);
+            } catch (routeErr) {
+                console.warn('Failed to calculate delivery route/eta:', routeErr);
+            }
+
+            try {
+                io.emit('delivery:location', {
+                    deliveryId,
+                    latitude,
+                    longitude,
+                    timestamp: req.body.timestamp || Date.now()
+                });
+            } catch (emitErr) {
+                console.error('Failed to emit delivery location event', emitErr);
+            }
+
+            if (routePayload) {
+                try {
+                    await publishDeliveryUpdates(io, deliveryId, {
+                        branchId: existing.branch_id,
+                        orderId: existing.order_id,
+                        riderId: req.session.user.id,
+                        customerId: null,
+                        ...routePayload
+                    });
+                } catch (broadcastErr) {
+                    console.warn('Failed to publish delivery route updates:', broadcastErr);
+                }
+            }
+
+            res.json({ success: true });
+        });
+    });
+});
+
+app.post('/api/deliveries/:deliveryId/:action', isAuthenticated, (req, res) => {
+    const deliveryId = Number(req.params.deliveryId || 0);
+    const action = String(req.params.action || '').toLowerCase();
+    const role = String(req.session.user.role || '').toLowerCase();
+
+    if (!deliveryId || !['start', 'complete', 'cancel'].includes(action)) {
+        return res.status(400).json({ error: 'invalid_action' });
+    }
+
+    const sql = 'SELECT * FROM deliveries WHERE id = ?';
+    db.query(sql, [deliveryId], (err, rows) => {
+        if (err) {
+            console.error('Error fetching delivery for action:', err);
+            return res.status(500).json({ error: 'db_error' });
+        }
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ error: 'delivery_not_found' });
+        }
+        const record = rows[0];
+        const isManagerOrAdmin = role === 'admin' || role === 'manager';
+        if (action === 'start' && !isManagerOrAdmin && role !== 'rider') {
+            return res.status(403).json({ error: 'not_authorized_to_start' });
+        }
+        if (['complete', 'cancel'].includes(action) && !isManagerOrAdmin && role !== 'rider') {
+            return res.status(403).json({ error: 'not_authorized_to_update' });
+        }
+
+        const statusMap = {
+            start: 'Out For Delivery',
+            complete: 'Delivered',
+            cancel: 'Cancelled'
+        };
+        const timeField = action === 'start' ? 'in_transit_time' : action === 'complete' ? 'delivered_time' : 'updated_at';
+        const statusValue = statusMap[action];
+
+        const updateSql = isPg
+            ? `UPDATE deliveries SET delivery_status = $1, ${timeField} = NOW(), updated_at = NOW() WHERE id = $2`
+            : `UPDATE deliveries SET delivery_status = ?, ${timeField} = NOW(), updated_at = NOW() WHERE id = ?`;
+        const updateParams = [statusValue, deliveryId];
+
+        db.query(updateSql, updateParams, (updateErr) => {
+            if (updateErr) {
+                console.error('Error updating delivery status:', updateErr);
+                return res.status(500).json({ error: 'db_error' });
+            }
+            try {
+                io.emit('delivery:status', { deliveryId, status: statusValue, orderId: record.order_id });
+            } catch (emitErr) {
+                console.error('Failed to emit delivery status event', emitErr);
+            }
+            res.json({ success: true, status: statusValue });
+        });
+    });
+});
+
 // Admin middleware
 function isAdmin(req, res, next) {
     if (req.session && req.session.user && req.session.user.role === 'admin') return next();
@@ -3198,15 +3659,17 @@ app.post('/api/admin/users', isAuthenticated, isAdmin, async (req, res) => {
     }
 
     const sql = isPg
-        ? 'INSERT INTO staffs (full_name, email, password, role, branch_id) VALUES (?, ?, ?, ?, ?) RETURNING id'
-        : 'INSERT INTO staffs (full_name, email, password, role, branch_id) VALUES (?, ?, ?, ?, ?)';
+        ? 'INSERT INTO staffs (full_name, email, password, role, branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW()) RETURNING id'
+        : 'INSERT INTO staffs (full_name, email, password, role, branch_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())';
     db.query(sql, [name || email.split('@')[0], email, password, role || 'staff', resolvedBranchId], (err, result) => {
         if (err) {
             console.error('Failed to insert staff:', err);
             const payload = { error: 'db_error', code: err.code || null, message: err.sqlMessage || String(err) };
             return res.status(500).json(payload);
         }
-        const insertedId = result && (result.insertId || result.lastID || (result.rows && result.rows[0] && result.rows[0].id) || null);
+        const insertedId = Array.isArray(result)
+            ? (result[0] && result[0].id) || null
+            : result && (result.insertId || result.lastID || (result.rows && result.rows[0] && result.rows[0].id) || null);
         console.log('Staff created id=', insertedId);
         try { io.emit('admin:users:changed', { action: 'create', id: insertedId, email }); } catch (e) { console.error('Emit admin users changed error', e); }
         res.json({ success: true, id: insertedId });
@@ -3440,6 +3903,53 @@ app.get('/api/staff-presence', isAuthenticated, (req, res) => {
     });
     
     res.json(staffPresence);
+});
+
+// Voice directory: return every staff member in the authenticated user's branch.
+// The online flag is derived from the live Socket.IO agent registry.
+app.get('/api/voice/staff', isAuthenticated, async (req, res) => {
+    try {
+        const branchId = Number(req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        if (!branchId) return res.json([]);
+
+        const staff = await prisma.staff.findMany({
+            where: { branch_id: branchId },
+            orderBy: { fullName: 'asc' },
+            select: {
+                id: true,
+                fullName: true,
+                email: true,
+                role: true,
+                branch_id: true,
+                branch: { select: { id: true, name: true } }
+            }
+        });
+
+        const onlineByUserId = new Map();
+        for (const agent of onlineAgents.values()) {
+            if (agent?.userId != null) onlineByUserId.set(String(agent.userId), agent);
+        }
+
+        res.json(staff.map((member) => {
+            const presence = onlineByUserId.get(String(member.id));
+            const status = presence?.status || 'offline';
+            return {
+                id: member.id,
+                name: member.fullName || member.email || 'Staff',
+                email: member.email,
+                role: member.role || 'staff',
+                branchId: member.branch_id,
+                branchName: member.branch?.name || null,
+                online: Boolean(presence),
+                status,
+                speaking: Boolean(presence?.speaking),
+                muted: Boolean(presence?.muted)
+            };
+        }));
+    } catch (error) {
+        console.error('Failed to load voice staff directory:', error);
+        res.status(500).json({ error: 'voice_staff_lookup_failed' });
+    }
 });
 
 // ---------------------------
@@ -4009,7 +4519,7 @@ app.get("/api/suggest-reply/:id", async (req, res) => {
                             return res.json({ suggestion: "No customer message yet to suggest a reply." });
                         }
 
-                        const suggestion = await getMistralReply(latestCustomerMessage, phone, conversationId, null);
+                        const suggestion = await getMistralReply(latestCustomerMessage, phone, conversationId, resolveBranchId(req));
                         return res.json({ suggestion });
                     }
                 );
@@ -4546,18 +5056,32 @@ function getConversationCustomerName(conversationId) {
     });
 }
 
-async function checkAndSaveOrderConfirmation(phone, conversationId, customerMessage) {
+async function checkAndSaveOrderConfirmation(phone, conversationId, customerMessage, branchId = null) {
     if (!isOrderConfirmation(customerMessage)) {
         return false;
     }
 
+    const conversationSession = await loadConversationSession(conversationId, Number(branchId || 0) || null, null, null, phone);
+    if (conversationSession?.draftOrder?.orderId) {
+        console.log('Order confirmation already handled for active session', {
+            conversationId,
+            sessionId: conversationSession.sessionId,
+            orderId: conversationSession.draftOrder.orderId
+        });
+        return {
+            success: true,
+            orderId: conversationSession.draftOrder.orderId,
+            message: `Your order ${conversationSession.draftOrder.orderId} is already confirmed and in progress.`,
+            orderAlreadyExists: true
+        };
+    }
+
     return new Promise(async (resolve) => {
-        // Get last few messages to find AI's order suggestion
         db.query(
             `SELECT sender, message, created_at FROM messages WHERE conversation_id = ?
              UNION ALL
              SELECT sender, message, created_at FROM replies WHERE conversation_id = ?
-             ORDER BY created_at DESC LIMIT 10`,
+             ORDER BY created_at DESC LIMIT 20`,
             [conversationId, conversationId],
             async (err, messages) => {
                 if (err || !messages || messages.length === 0) {
@@ -4565,71 +5089,138 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                     return;
                 }
 
-                // Find the AI's most recent message (sender = 'sent')
-                const aiMessage = messages.find(m => m.sender === 'sent');
-                if (!aiMessage) {
-                    resolve(false);
-                    return;
-                }
-
                 const customerOrderMessage = findMostRecentCustomerOrderMessage(messages);
-                const { items, total } = extractOrderDetails(aiMessage.message, customerOrderMessage);
+                const aiMessage = messages.find((m) => m.sender === 'sent') || messages[0];
+                const aiText = String(aiMessage?.message || '');
+                const customerText = String(customerOrderMessage || '');
 
-                if (!total || total === 0) {
-                    console.log("Order confirmation detected but no valid order total found in AI message or customer order message:", {
-                        aiMessage: aiMessage.message,
-                        customerOrderMessage
+                const parsedItems = [];
+                try {
+                    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            model: 'mistral-large-latest',
+                            messages: [
+                                { role: 'system', content: 'Extract the ordered items and quantities from the customer message and return JSON only. Do not include prices or totals.' },
+                                { role: 'user', content: customerText || aiText }
+                            ],
+                            temperature: 0.0,
+                            max_tokens: 200
+                        })
                     });
-                    resolve(false);
-                    return;
-                }
-
-                const customerName = await getConversationCustomerName(conversationId);
-                const orderId = `ORD-${Date.now()}`;
-                const product = items;
-                const amount = total;
-                const status = 'confirmed';
-
-                db.query(
-                    'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)',
-                    [orderId, customerName, phone || null, product, amount, total, status, conversationId],
-                    (err, result) => {
-                        if (err) {
-                            console.log("Order save error:", err);
-                            resolve(false);
-                        } else {
-                            console.log(`Order confirmed and saved: ${product} - $${total} from ${phone}`);
-                            // Emit order-created so connected dashboards update immediately
-                            try {
-                                const orderPayload = {
-                                    id: orderId,
-                                    customerName: customerName,
-                                    product: product,
-                                    amount: amount,
-                                    status: status,
-                                    date: new Date().toLocaleDateString()
-                                };
-                                if (typeof io !== 'undefined') io.emit('order-created', orderPayload);
-                            } catch (emitErr) {
-                                console.error('Failed to emit order-created for AI-created order', emitErr);
-                            }
-                            // Automatically start delivery simulation for this newly created order
-                            try {
-                                startDeliverySimulationForOrder(orderId, (startErr, rider) => {
-                                    if (startErr) {
-                                        console.error('Auto-start delivery failed for order', orderId, startErr);
-                                    } else {
-                                        console.log('Auto-started delivery for order', orderId, 'rider:', rider && rider.name);
-                                    }
-                                });
-                            } catch (ex) {
-                                console.error('Exception while auto-starting delivery for order', orderId, ex);
-                            }
-
-                            resolve({ orderId, product, amount, status });
+                    if (response.ok) {
+                        const data = await response.json();
+                        const raw = data.choices?.[0]?.message?.content || '';
+                        const parsed = JSON.parse(raw.replace(/^```json|```$/g, '').trim());
+                        if (Array.isArray(parsed?.items)) {
+                            parsedItems.push(...parsed.items.filter((item) => item && Number(item.quantity) > 0));
                         }
                     }
-                );
+                } catch (parseErr) {
+                    console.warn('Order extraction fallback failed:', parseErr?.message || parseErr);
+                }
+
+                const fallbackItems = parsedItems.length > 0
+                    ? parsedItems
+                    : [{ name: customerText || aiText || 'Order', quantity: 1 }];
+
+                const menuRows = await new Promise((resolveMenu) => {
+                    db.query('SELECT id, category, key_name, name, price, available FROM Menu ORDER BY name ASC', (menuErr, rows) => {
+                        if (menuErr) return resolveMenu([]);
+                        resolveMenu(Array.isArray(rows) ? rows : []);
+                    });
+                });
+
+                const { resolved, unavailable } = resolveMenuItemMatches(fallbackItems, menuRows);
+                if (resolved.length === 0) {
+                    const unavailableMessage = unavailable.length > 0
+                        ? `I’m sorry, ${unavailable[0].name} is currently unavailable${unavailable[0].reason === 'insufficient_stock' ? ' or out of stock' : ''}. I can suggest alternatives if you’d like.`
+                        : 'I’m sorry, I could not validate the requested items against the current menu.';
+                    resolve({ success: false, message: unavailableMessage, orderId: null });
+                    return;
+                }
+
+                const pricing = calculateOrderPricing(resolved, {
+                    taxRate: 0.08,
+                    deliveryFee: 3.5,
+                    freeDeliveryThreshold: 25,
+                    discountAmount: 0
+                });
+                const customerName = await getConversationCustomerName(conversationId);
+                const conversationBranchId = await new Promise((resolve) => {
+                    db.query('SELECT branch_id FROM conversations WHERE id = ? LIMIT 1', [conversationId], (branchErr, rows) => {
+                        if (branchErr) return resolve(null);
+                        resolve(Number(rows?.[0]?.branch_id || 0) || null);
+                    });
+                });
+                const orderId = `ORD-${Date.now()}`;
+                const lineItems = resolved.map((item) => ({
+                    name: item.name,
+                    quantity: item.quantity,
+                    unitPrice: item.unitPrice,
+                    lineTotal: item.lineTotal
+                }));
+                const confirmationMessage = buildOrderConfirmationMessage({
+                    orderId,
+                    customerName,
+                    lineItems,
+                    pricing,
+                    estimatedPreparationTime: '25 mins',
+                    estimatedDeliveryTime: '40 mins',
+                    status: 'Confirmed'
+                });
+
+                const insertSql = isPg
+                    ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11, $12) RETURNING id'
+                    : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)';
+                const resolvedBranchId = Number(branchId || conversationBranchId || 0) || null;
+                db.query(insertSql, [orderId, customerName, phone || null, lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), pricing.subtotal, pricing.finalTotal, 'confirmed', conversationId, pricing.subtotal, pricing.finalTotal, pricing.discountAmount, resolvedBranchId], async (dbErr) => {
+                    if (dbErr) {
+                        console.log('Order save error:', dbErr);
+                        resolve({ success: false, message: 'I’m sorry, the order could not be created right now. Please try again.', orderId: null });
+                        return;
+                    }
+
+                    try {
+                        const nextSession = mergeConversationState(conversationSession, {
+                            workflowState: 'Order Created',
+                            draftOrder: {
+                                ...(conversationSession?.draftOrder || {}),
+                                items: resolved.map((item) => ({ name: item.name, quantity: item.quantity })),
+                                orderId,
+                                total: pricing.finalTotal,
+                                status: 'confirmed',
+                                updatedAt: new Date().toISOString()
+                            },
+                            history: [...(Array.isArray(conversationSession?.history) ? conversationSession.history : []), { role: 'system', message: `Order ${orderId} created` }]
+                        });
+                        await saveConversationSession(nextSession);
+                    } catch (persistErr) {
+                        console.warn('Unable to persist order session snapshot after confirmation:', persistErr?.message || persistErr);
+                    }
+
+                    try {
+                        reduceMenuStock(resolved, (stockErr) => {
+                            if (stockErr) {
+                                console.error('Inventory reduction failed after order creation:', stockErr);
+                            }
+                        });
+                    } catch (stockErr) {
+                        console.error('Stock reduction exception:', stockErr);
+                    }
+
+                    try {
+                        if (typeof io !== 'undefined') io.emit('order-created', { id: orderId, customerName, product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), amount: pricing.finalTotal, status: 'confirmed', date: new Date().toLocaleDateString() });
+                    } catch (emitErr) {
+                        console.error('Failed to emit order-created for AI-created order', emitErr);
+                    }
+
+                    resolve({ success: true, orderId, product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), amount: pricing.finalTotal, status: 'confirmed', message: confirmationMessage });
+                });
             }
         );
     });
@@ -5176,8 +5767,7 @@ app.post('/webhook/messenger', async (req, res) => {
     // Create composite key for deduplication when messageId is missing
     let compositeKey = null;
     if (!messageId && senderId && messageText) {
-        const crypto = require('crypto');
-        const hash = crypto.createHash('md5').update(messageText).digest('hex').substring(0, 8);
+        const hash = createHash('md5').update(messageText).digest('hex').substring(0, 8);
         compositeKey = `${senderId}:${recipientId}:${hash}`;
     }
 
@@ -5346,6 +5936,7 @@ app.get('/webhook/messenger', (req, res) => {
 app.post("/api/test-message", (req, res) => {
     const phone = req.query.phone || "1234567890";
     const text = req.query.message || "Test message";
+    const requestBranchId = resolveBranchId(req);
 
     db.query("SELECT * FROM conversations WHERE phone = ? AND platform = 'whatsapp'", [phone], async (err, result) => {
         if (err) return res.sendStatus(500);
@@ -5353,9 +5944,9 @@ app.post("/api/test-message", (req, res) => {
         if (!result || result.length === 0) {
             // Create new conversation
             const insertConvSql = isPg
-                ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
-                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
-            db.query(insertConvSql, [phone, phone, 'whatsapp'], (err, newConv) => {
+                ? 'INSERT INTO conversations (phone, name, platform, branch_id) VALUES (?, ?, ?, ?) RETURNING id'
+                : 'INSERT INTO conversations (phone, name, platform, branch_id) VALUES (?, ?, ?, ?)';
+            db.query(insertConvSql, [phone, phone, 'whatsapp', requestBranchId], (err, newConv) => {
                 if (err) return res.sendStatus(500);
                 const convoId = newConv.insertId;
                 db.query(
@@ -5379,14 +5970,14 @@ app.post("/api/test-message", (req, res) => {
                             console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
                         } else {
                             // Check if this is an order confirmation
-                            const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                            const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text, requestBranchId);
                             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                             if (orderConfirmed && orderConfirmed.orderId) {
                                 await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                             } else {
                                 // Check if AI should respond
                                 if (aiAutoAllowed && shouldAIRespond(convoId)) {
-                                    const reply = await getMistralReply(text, phone, convoId);
+                                    const reply = await getMistralReply(text, phone, convoId, requestBranchId);
                                     await sendAutoReply(phone, reply);
                                 } else {
                                     console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
@@ -5422,14 +6013,14 @@ app.post("/api/test-message", (req, res) => {
                         }
                         console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
                     } else {
-                        const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+                        const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text, requestBranchId);
                         const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                         if (orderConfirmed && orderConfirmed.orderId) {
                             await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                         } else {
                             const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                             if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                                const reply = await getMistralReply(text, phone, convoId);
+                                const reply = await getMistralReply(text, phone, convoId, requestBranchId);
                                 await sendAutoReply(phone, reply);
                             } else {
                                 console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
@@ -5902,23 +6493,135 @@ app.get("/api/resolved", (req, res) => {
 });
 
 app.post("/api/refund", (req, res) => {
-    const { conversation_id, name } = req.body;
-    db.query("DELETE FROM escalations WHERE conversation_id = ?", [conversation_id], (err) => {
-        if (err) return res.status(500).json({ error: "DB error" });
-        db.query("INSERT INTO resolved (conversation_id) VALUES (?)", [conversation_id], (resolvedErr) => {
+    const {
+        conversation_id,
+        name,
+        orderId,
+        customerName,
+        refundAmount,
+        refundType,
+        refundReason,
+        managerNotes,
+        refundMethod,
+        requestedBy,
+        paymentReference
+    } = req.body || {};
+
+    const insertRefundSql = isPg
+        ? `INSERT INTO refunds (refund_number, order_id, customer_name, requested_by, status, refund_type, refund_method, refund_reason, manager_notes, refund_amount, payment_reference, requested_at, created_at, updated_at) VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8, $9, $10, NOW(), NOW(), NOW())`
+        : `INSERT INTO refunds (refund_number, order_id, customer_name, requested_by, status, refund_type, refund_method, refund_reason, manager_notes, refund_amount, payment_reference, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`;
+
+    const refundPayload = [
+        `RF-${Date.now()}`,
+        orderId ? String(orderId) : null,
+        customerName || name || null,
+        requestedBy || req.session?.user?.name || req.session?.user?.email || 'Staff',
+        refundType || 'full',
+        refundMethod || null,
+        refundReason || null,
+        managerNotes || null,
+        Number(refundAmount || 0),
+        paymentReference || null
+    ];
+
+    const completeRefundInsert = () => {
+        db.query(insertRefundSql, refundPayload, (err) => {
+            if (err) return res.status(500).json({ error: 'DB error' });
+            res.json({ success: true });
+        });
+    };
+
+    if (conversation_id == null) {
+        return completeRefundInsert();
+    }
+
+    db.query('DELETE FROM escalations WHERE conversation_id = ?', [conversation_id], (err) => {
+        if (err) return res.status(500).json({ error: 'DB error' });
+        db.query('INSERT INTO resolved (conversation_id) VALUES (?)', [conversation_id], (resolvedErr) => {
             if (resolvedErr) {
                 console.warn('Resolved insert failed, continuing to refund insert:', resolvedErr);
             }
-            db.query(
-                "INSERT INTO refunds (conversation_id, customer_name) VALUES (?, ?)",
-                [conversation_id, name || null],
-                (err) => {
-                    if (err) return res.status(500).json({ error: "DB error" });
-                    res.json({ success: true });
-                }
-            );
+            completeRefundInsert();
         });
     });
+});
+
+app.post('/api/refunds', isAuthenticated, async (req, res) => {
+    try {
+        const { orderId, orderNumber, customerName, refundType, refundReason, managerNotes, refundAmount, selectedItems } = req.body || {};
+        if (!orderId) return res.status(400).json({ error: 'orderId is required' });
+        const refundNumber = `RF-${Date.now()}`;
+        const requestedBy = req.session?.user?.name || req.session?.user?.email || 'Staff';
+        const status = 'pending';
+        const insertSql = isPg
+            ? `INSERT INTO refunds (refund_number, order_id, customer_name, requested_by, status, refund_type, refund_reason, manager_notes, refund_amount, requested_at, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW(), NOW()) RETURNING id`
+            : `INSERT INTO refunds (refund_number, order_id, customer_name, requested_by, status, refund_type, refund_reason, manager_notes, refund_amount, requested_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())`;
+        db.query(insertSql, [refundNumber, String(orderId), customerName || null, requestedBy, status, refundType || 'full', refundReason || null, managerNotes || null, Number(refundAmount || 0)], (err, result) => {
+            if (err) {
+                console.error('Refund request insert error:', err);
+                return res.status(500).json({ error: 'Unable to create refund request' });
+            }
+            res.json({ success: true, message: 'Refund request submitted for manager review', refundNumber });
+        });
+    } catch (error) {
+        console.error('POST /api/refunds error:', error);
+        res.status(500).json({ error: 'Unable to create refund request' });
+    }
+});
+
+app.get('/api/refunds/admin', isAuthenticated, async (req, res) => {
+    try {
+        const role = String(req.session?.user?.role || '').toLowerCase();
+        if (role !== 'admin' && role !== 'manager') return res.status(403).json({ error: 'manager_or_admin_required' });
+        const sql = `SELECT id, refund_number AS refundNumber, order_id AS orderId, customer_name AS customerName, requested_by AS requestedBy, status, refund_type AS refundType, refund_reason AS refundReason, manager_notes AS managerNotes, refund_amount AS refundAmount, requested_at AS requestedAt, created_at AS createdAt, updated_at AS updatedAt FROM refunds ORDER BY created_at DESC`;
+        db.query(sql, (err, rows) => {
+            if (err) {
+                console.error('GET /api/refunds/admin error:', err);
+                return res.status(500).json({ error: 'Unable to load refund requests' });
+            }
+            res.json(rows || []);
+        });
+    } catch (error) {
+        console.error('GET /api/refunds/admin error:', error);
+        res.status(500).json({ error: 'Unable to load refund requests' });
+    }
+});
+
+app.post('/api/refunds/:refundId/decision', isAuthenticated, async (req, res) => {
+    try {
+        const refundId = Number(req.params.refundId || 0);
+        if (!refundId) return res.status(400).json({ error: 'refundId is required' });
+        const role = String(req.session?.user?.role || '').toLowerCase();
+        if (role !== 'admin' && role !== 'manager') return res.status(403).json({ error: 'manager_or_admin_required' });
+        const { status, managerNotes } = req.body || {};
+        const normalizedStatus = String(status || '').toLowerCase();
+        const allowedStatuses = ['approve', 'reject', 'needs_more_information'];
+        if (!allowedStatuses.includes(normalizedStatus)) return res.status(400).json({ error: 'invalid_status' });
+        const mappedStatus = normalizedStatus === 'approve' ? 'approved' : normalizedStatus === 'reject' ? 'rejected' : 'needs_more_information';
+        const updateSql = isPg
+            ? `UPDATE refunds SET status = $1, manager_notes = COALESCE($2, manager_notes), approved_by = $3, approved_at = NOW(), updated_at = NOW() WHERE id = $4`
+            : `UPDATE refunds SET status = ?, manager_notes = COALESCE(?, manager_notes), approved_by = ?, approved_at = NOW(), updated_at = NOW() WHERE id = ?`;
+        db.query(updateSql, [mappedStatus, managerNotes || null, req.session?.user?.name || req.session?.user?.email || 'Manager', refundId], (err) => {
+            if (err) {
+                console.error('Refund decision update error:', err);
+                return res.status(500).json({ error: 'Unable to update refund' });
+            }
+            if (mappedStatus === 'approved') {
+                db.query('SELECT order_id FROM refunds WHERE id = ?', [refundId], (selectErr, rows) => {
+                    if (!selectErr && rows && rows[0]) {
+                        const orderId = rows[0].order_id || rows[0].orderId;
+                        if (orderId) {
+                            db.query('UPDATE orders SET status = ? WHERE order_id = ? OR id = ?', ['refunded', String(orderId), Number(orderId)], () => {});
+                        }
+                    }
+                });
+            }
+            res.json({ success: true, message: `Refund marked ${mappedStatus}` });
+        });
+    } catch (error) {
+        console.error('POST /api/refunds/:refundId/decision error:', error);
+        res.status(500).json({ error: 'Unable to update refund' });
+    }
 });
 
 app.post("/api/delivery-issue", (req, res) => {
@@ -5943,9 +6646,8 @@ app.post("/api/delivery-issue", (req, res) => {
 
 app.get("/api/refunds", (req, res) => {
     db.query(`
-        SELECT f.*, c.phone, c.name, c.platform
+        SELECT f.*
         FROM refunds f
-        LEFT JOIN conversations c ON f.conversation_id = c.id
         ORDER BY f.refunded_at DESC
     `, (err, results) => {
         if (err) {
@@ -6155,8 +6857,101 @@ app.get('/api/orders', (req, res) => {
     );
 });
 
+app.get('/api/search', isAuthenticated, async (req, res) => {
+    try {
+        const query = String(req.query.q || '').trim().slice(0, 100);
+        if (!query) return res.json({ results: [] });
+
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+        const searchPattern = `%${query.replace(/[%_]/g, '\\$&')}%`;
+        const branchClause = branchId > 0 ? ' AND branch_id = ?' : '';
+        const branchParams = branchId > 0 ? [branchId] : [];
+        const orderRows = await db.promise().query(`
+            SELECT id, order_id, customer_name, phone, COALESCE(total_amount, amount) AS total_amount, status, order_date
+            FROM orders
+            WHERE (CAST(order_id AS TEXT) ILIKE ? OR COALESCE(customer_name, '') ILIKE ? OR COALESCE(phone, '') ILIKE ?)${branchClause}
+            ORDER BY order_date DESC
+            LIMIT 10
+        `, [searchPattern, searchPattern, searchPattern, ...branchParams]);
+        const customerRows = Array.from(new Map(
+            orderRows
+                .filter((order) => order.customer_name)
+                .map((order) => [order.customer_name.toLowerCase(), order])
+        ).values()).slice(0, 5);
+
+        const results = [
+            ...customerRows.map((customer) => ({
+                type: 'customer',
+                id: customer.customer_name,
+                title: customer.customer_name,
+                subtitle: customer.phone || 'Customer',
+                path: '/inbox'
+            })),
+            ...orderRows.map((order) => ({
+                type: 'order',
+                id: order.id,
+                title: `Order #${order.order_id}`,
+                subtitle: `${order.customer_name || 'Customer'} · ${order.status || 'pending'}`,
+                path: '/orders',
+                orderId: order.order_id,
+                amount: Number(order.total_amount || 0),
+                date: order.order_date
+            }))
+        ];
+
+        return res.json({ results });
+    } catch (error) {
+        console.error('GET /api/search error', error);
+        return res.status(500).json({ error: 'Unable to search records' });
+    }
+});
+
+app.get('/api/search/analytics', isAuthenticated, async (req, res) => {
+    try {
+        const query = String(req.query.q || '').trim().slice(0, 160);
+        const normalized = query.toLowerCase();
+        const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || 0);
+        const branchClause = branchId > 0 ? ' AND branch_id = ?' : '';
+        const branchParams = branchId > 0 ? [branchId] : [];
+        const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+        const requestedMonth = monthNames.findIndex((month) => normalized.includes(month));
+
+        if (normalized.includes('top customer') || normalized.includes('customers by revenue')) {
+            const rows = await db.promise().query(`
+                SELECT COALESCE(customer_name, 'Unknown customer') AS customer, COUNT(*) AS orders,
+                       COALESCE(SUM(COALESCE(total_amount, amount, 0)), 0) AS revenue
+                FROM orders
+                WHERE 1 = 1${branchClause}
+                GROUP BY customer_name
+                ORDER BY revenue DESC
+                LIMIT 5
+            `, branchParams);
+            return res.json({ title: 'Top customers by revenue', rows: rows.map((row) => ({ customer: row.customer, orders: Number(row.orders || 0), revenue: Number(row.revenue || 0) })) });
+        }
+
+        if (normalized.includes('sales') || normalized.includes('revenue')) {
+            const month = requestedMonth >= 0 ? requestedMonth : new Date().getMonth();
+            const year = new Date().getFullYear();
+            const start = new Date(Date.UTC(year, month, 1));
+            const end = new Date(Date.UTC(year, month + 1, 1));
+            const rows = await db.promise().query(`
+                SELECT COUNT(*) AS orders, COALESCE(SUM(COALESCE(total_amount, amount, 0)), 0) AS revenue
+                FROM orders
+                WHERE order_date >= ? AND order_date < ?${branchClause}
+            `, [start.toISOString(), end.toISOString(), ...branchParams]);
+            const row = rows[0] || {};
+            const label = `${monthNames[month][0].toUpperCase()}${monthNames[month].slice(1)} ${year}`;
+            return res.json({ title: `Sales for ${label}`, rows: [{ period: label, orders: Number(row.orders || 0), revenue: Number(row.revenue || 0) }] });
+        }
+
+        return res.status(400).json({ error: 'Try "Show monthly sales for June" or "List top customers by revenue".' });
+    } catch (error) {
+        console.error('GET /api/search/analytics error', error);
+        return res.status(500).json({ error: 'Unable to process analytics query' });
+    }
+});
+
 async function validateOrderItems(items = []) {
-    const normalizedItems = [];
     const quantities = {};
     const keys = [];
 
@@ -6195,9 +6990,14 @@ async function validateOrderItems(items = []) {
                 return resolve({ error: `Menu items not found: ${missingKeys.join(', ')}`, validatedItems: [], total: 0, productDisplay: '' });
             }
 
+            const unavailableKeys = [];
             const validated = rows.map((row) => {
                 const key = String(row.key_name).trim();
                 const quantity = quantities[key] || 0;
+                const available = Number(row.available || 0);
+                if (available < quantity) {
+                    unavailableKeys.push(`${row.name || key} (${quantity} requested, ${available} available)`);
+                }
                 const unitPrice = Number(row.price || 0);
                 return {
                     menuItemId: key,
@@ -6210,6 +7010,10 @@ async function validateOrderItems(items = []) {
                 };
             });
 
+            if (unavailableKeys.length > 0) {
+                return resolve({ error: `Unavailable or out of stock: ${unavailableKeys.join('; ')}`, validatedItems: [], total: 0, productDisplay: '' });
+            }
+
             const total = Number(validated.reduce((sum, item) => sum + item.totalPrice, 0).toFixed(2));
             const productDisplay = validated.map((item) => {
                 return item.quantity > 1 ? `${item.quantity}x ${item.name}` : item.name;
@@ -6220,106 +7024,168 @@ async function validateOrderItems(items = []) {
     });
 }
 
-// Create new order
-app.post('/api/orders', async (req, res) => {
-    const { customerName, product, menuItemId, quantity, amount, status, items, phone, voucherCode, voucherDiscount, voucherType, finalTotal, subtotal } = req.body;
+async function createValidatedOrderFromPayload(payload = {}, options = {}) {
+    const requestedItems = Array.isArray(payload.items) && payload.items.length > 0
+        ? payload.items
+        : payload.menuItemId ? [{ menuItemId: payload.menuItemId, quantity: Number(payload.quantity || 1) }] : [];
 
-    if (!customerName) {
-        return res.status(400).json({ error: 'Missing required field: customerName' });
+    if (requestedItems.length === 0) {
+        return { success: false, error: 'No order items provided. Please submit a valid items array or menuItemId and quantity.' };
     }
 
-    const providedItems = Array.isArray(items) && items.length > 0
-        ? items
-        : menuItemId ? [{ menuItemId, quantity: Number(quantity || 1) }] : [];
-
-    if (providedItems.length === 0) {
-        return res.status(400).json({ error: 'No order items provided. Please submit a valid items array or menuItemId and quantity.' });
-    }
-
-    const validation = await validateOrderItems(providedItems);
+    const validation = await validateOrderItems(requestedItems);
     if (validation.error) {
-        return res.status(400).json({ error: validation.error });
+        return { success: false, error: validation.error };
     }
+
+    const subtotal = Number(validation.total || 0);
+    const taxRate = Number(payload.taxRate || options.taxRate || 0.08);
+    const deliveryFee = Number(payload.deliveryFee || options.deliveryFee || 3.5);
+    const freeDeliveryThreshold = Number(payload.freeDeliveryThreshold || options.freeDeliveryThreshold || 25);
+    const discountAmount = Number(payload.discountAmount || options.discountAmount || 0);
+    const pricing = calculateOrderPricing(validation.validatedItems.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.price,
+        lineTotal: item.totalPrice
+    })), { taxRate, deliveryFee, freeDeliveryThreshold, discountAmount });
 
     const orderId = `ORD-${Date.now()}`;
-    const now = new Date();
-    const orderAmount = validation.total;
-    const orderProduct = validation.productDisplay || String(product || '').trim();
-    const voucherFields = prepareVoucherOrderPayload({
-        voucherCode,
-        voucherType,
-        voucherDiscount,
-        subtotal: subtotal ?? orderAmount,
-        finalTotal: finalTotal ?? orderAmount
-    });
-
-    // If a table number was provided, try to mark it occupied first (fail if not vacant)
-    const tableNumber = req.body.tableNumber || null;
-    let occupiedTableUpdated = false;
-    if (tableNumber) {
-        try {
-            if (isPg) {
-                const updateSql = `UPDATE restaurant_tables SET status = 'occupied', reserved_until = NULL, is_booking = FALSE, session_started_at = NOW(), updated_at = NOW() WHERE number = $1 AND status = 'vacant' RETURNING id`;
-                const updRes = await new Promise((resolve, reject) => db.query(updateSql, [tableNumber], (uErr, uRes) => uErr ? reject(uErr) : resolve(uRes)));
-                if (!updRes || (updRes.rowCount === 0)) {
-                    return res.status(400).json({ error: 'Table unavailable' });
-                }
-            } else {
-                const updateSql = `UPDATE restaurant_tables SET status = 'occupied', reserved_until = NULL, is_booking = FALSE, session_started_at = ?, updated_at = NOW() WHERE number = ? AND status = 'vacant'`;
-                const nowIso = new Date().toISOString();
-                const updRes = await new Promise((resolve, reject) => db.query(updateSql, [nowIso, tableNumber], (uErr, uRes) => uErr ? reject(uErr) : resolve(uRes)));
-                if (!updRes || (typeof updRes.affectedRows !== 'undefined' && updRes.affectedRows === 0)) {
-                    return res.status(400).json({ error: 'Table unavailable' });
-                }
-            }
-            occupiedTableUpdated = true;
-        } catch (uErr) {
-            console.error('Failed to update table to occupied:', uErr);
-            return res.status(500).json({ error: 'Failed to reserve table' });
-        }
-    }
-
-    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
+    const customerName = String(payload.customerName || options.customerName || 'Customer').trim() || 'Customer';
+    const phone = payload.phone || options.phone || null;
+    const branchId = Number(payload.branchId || options.branchId || 0) || null;
+    const orderProduct = validation.productDisplay || String(payload.product || '').trim();
+    const status = payload.status || options.status || 'confirmed';
     const insertSql = isPg
-        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, voucher_code, discount_type, discount_amount, subtotal, final_total, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id'
-        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, voucher_code, discount_type, discount_amount, subtotal, final_total, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11) RETURNING id'
+        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)';
 
-    db.query(
-        insertSql,
-        [orderId, customerName, phone || null, orderProduct, orderAmount, orderAmount, status || 'pending', now, voucherFields.voucher_code, voucherFields.discount_type, voucherFields.discount_amount, voucherFields.subtotal, voucherFields.final_total, branchId > 0 ? branchId : null],
-        async (err, result) => {
+    return new Promise((resolve) => {
+        db.query(insertSql, [orderId, customerName, phone, orderProduct, pricing.subtotal, pricing.finalTotal, status, pricing.subtotal, pricing.finalTotal, pricing.discountAmount, branchId], async (err, result) => {
             if (err) {
                 console.error('Error creating order:', err);
-                // attempt to rollback table occupation if we updated it
-                if (occupiedTableUpdated && tableNumber) {
-                    try {
-                        if (isPg) {
-                            await new Promise((resolve, reject) => db.query(`UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, session_started_at = NULL, updated_at = NOW() WHERE number = $1`, [tableNumber], (rErr) => rErr ? reject(rErr) : resolve()));
-                        } else {
-                            await new Promise((resolve, reject) => db.query(`UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, session_started_at = NULL, updated_at = NOW() WHERE number = ?`, [tableNumber], (rErr) => rErr ? reject(rErr) : resolve()));
-                        }
-                    } catch (rollbackErr) {
-                        console.error('Failed to rollback table state after order insert error', rollbackErr);
-                    }
-                }
-                return res.status(500).json({ error: 'Database error' });
+                return resolve({ success: false, error: 'Database error' });
             }
 
-            const responsePayload = { success: true, orderId, id: result.insertId || result.rows?.[0]?.id, amount: orderAmount, product: orderProduct };
+            const orderRecord = {
+                success: true,
+                orderId,
+                id: isPg ? result?.rows?.[0]?.id : result?.insertId,
+                customerName,
+                phone,
+                product: orderProduct,
+                amount: pricing.finalTotal,
+                subtotal: pricing.subtotal,
+                tax: pricing.tax,
+                deliveryFee: pricing.deliveryFee,
+                discountAmount: pricing.discountAmount,
+                finalTotal: pricing.finalTotal,
+                status,
+                lineItems: validation.validatedItems.map((item) => ({
+                    name: item.name,
+                    quantity: item.quantity,
+                    unitPrice: item.price,
+                    lineTotal: item.totalPrice
+                })),
+                confirmationMessage: buildOrderConfirmationMessage({
+                    orderId,
+                    customerName,
+                    lineItems: validation.validatedItems.map((item) => ({
+                        name: item.name,
+                        quantity: item.quantity,
+                        unitPrice: item.price,
+                        lineTotal: item.totalPrice
+                    })),
+                    pricing,
+                    estimatedPreparationTime: payload.estimatedPreparationTime || options.estimatedPreparationTime || '25 mins',
+                    estimatedDeliveryTime: payload.estimatedDeliveryTime || options.estimatedDeliveryTime || '40 mins',
+                    status: status === 'confirmed' ? 'Confirmed' : status
+                })
+            };
 
             reduceMenuStock(validation.validatedItems, (stockErr) => {
                 if (stockErr) {
                     console.error('Error reducing stock for order:', stockErr);
                 }
-                startDeliverySimulationForOrder(orderId, (deliveryErr) => {
-                    if (deliveryErr) {
-                        console.error('Failed to auto-start delivery for order:', orderId, deliveryErr);
-                    }
-                    res.json(responsePayload);
-                });
+                resolve(orderRecord);
             });
+        });
+    });
+}
+
+// Create new order
+app.post('/api/orders', async (req, res) => {
+    const { customerName, product, menuItemId, quantity, amount, status, items, phone, voucherCode, voucherDiscount, voucherType, finalTotal, subtotal, taxRate, deliveryFee, discountAmount } = req.body;
+
+    if (!customerName) {
+        return res.status(400).json({ error: 'Missing required field: customerName' });
+    }
+
+    const orderPayload = {
+        customerName,
+        product,
+        menuItemId,
+        quantity,
+        status,
+        items,
+        phone,
+        taxRate,
+        deliveryFee,
+        discountAmount,
+        branchId: req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0
+    };
+
+    const createdOrder = await createValidatedOrderFromPayload(orderPayload, { customerName, phone, status, taxRate, deliveryFee, discountAmount });
+    if (!createdOrder.success) {
+        return res.status(400).json({ error: createdOrder.error });
+    }
+
+    const deliveryStatus = req.body.riderId ? 'Assigned' : 'Pending Assignment';
+    const riderId = req.body.riderId ? Number(req.body.riderId) : null;
+    const riderName = req.body.riderName ? String(req.body.riderName).trim() : null;
+    const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0) || null;
+
+    if (deliveryStatus === 'Assigned' || deliveryStatus === 'Pending Assignment') {
+        const deliveryInsertSql = isPg
+            ? 'INSERT INTO deliveries (order_id, rider_name, delivery_status, order_confirmed_time, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW(), NOW())'
+            : 'INSERT INTO deliveries (order_id, rider_name, delivery_status, order_confirmed_time, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW(), NOW())';
+        db.query(deliveryInsertSql, [createdOrder.id, riderName, deliveryStatus], (deliveryErr) => {
+            if (deliveryErr) {
+                console.error('Error creating delivery record for order:', deliveryErr);
+            }
+        });
+    }
+
+    const responsePayload = {
+        success: true,
+        orderId: createdOrder.orderId,
+        id: createdOrder.id,
+        amount: createdOrder.finalTotal,
+        product: createdOrder.product,
+        subtotal: createdOrder.subtotal,
+        tax: createdOrder.tax,
+        deliveryFee: createdOrder.deliveryFee,
+        discountAmount: createdOrder.discountAmount,
+        finalTotal: createdOrder.finalTotal,
+        confirmationMessage: createdOrder.confirmationMessage
+    };
+
+    if (riderId) {
+        try {
+            io.emit('delivery:assigned', {
+                orderId: createdOrder.orderId,
+                id: createdOrder.id,
+                riderId,
+                riderName,
+                branchId,
+                status: deliveryStatus
+            });
+        } catch (emitErr) {
+            console.error('Failed to emit delivery-assigned event', emitErr);
         }
-    );
+    }
+
+    res.json(responsePayload);
 });
 
 // Update order status
@@ -6349,426 +7215,6 @@ app.get('/api/debug/all-orders', (req, res) => {
     db.query('SELECT * FROM orders ORDER BY order_date DESC LIMIT 20', (err, results) => {
         if (err) return res.status(500).json({ error: "Database error" });
         res.json(results);
-    });
-});
-
-// ---------------------------
-// Delivery Tracking System
-// ---------------------------
-
-// Get tracking info for an order
-app.get('/api/tracking/:orderId', (req, res) => {
-    const orderId = req.params.orderId;
-    
-    db.query(
-        `SELECT o.id as order_id_num, o.order_id, o.customer_name, o.phone, o.product, o.amount, o.total_amount, o.status, o.order_date, o.conversation_id,
-         d.id as delivery_id, d.rider_name, d.vehicle, d.current_lat, d.current_lng, d.customer_lat, d.customer_lng, d.delivery_status, 
-         d.order_confirmed_time, d.rider_assigned_time, d.picked_up_time, d.in_transit_time, d.arriving_time, d.delivered_time
-         FROM orders o 
-         LEFT JOIN deliveries d ON o.id = d.order_id 
-         WHERE o.order_id = ?`,
-        [orderId],
-        (err, results) => {
-            if (err) {
-                console.error('Tracking query error:', err);
-                return res.status(500).json({ error: "Database error" });
-            }
-            
-            if (!results || results.length === 0) {
-                return res.status(404).json({ error: "Order not found" });
-            }
-            
-            const order = results[0];
-            res.json({
-                id: order.order_id_num,
-                order_id: order.order_id,
-                customer_name: order.customer_name,
-                phone: order.phone,
-                product: order.product,
-                total_amount: order.total_amount,
-                status: order.status,
-                order_date: order.order_date,
-                delivery: order.delivery_status ? {
-                    id: order.delivery_id,
-                    status: order.delivery_status || 'pending',
-                    rider_name: order.rider_name || 'Assigned Rider',
-                    vehicle: order.vehicle || 'Motorcycle',
-                    current_lat: order.current_lat,
-                    current_lng: order.current_lng,
-                    customer_lat: order.customer_lat,
-                    customer_lng: order.customer_lng,
-                    order_confirmed_time: order.order_confirmed_time,
-                    rider_assigned_time: order.rider_assigned_time,
-                    picked_up_time: order.picked_up_time,
-                    in_transit_time: order.in_transit_time,
-                    arriving_time: order.arriving_time,
-                    delivered_time: order.delivered_time
-                } : null
-            });
-        }
-    );
-});
-
-// Get all active deliveries
-app.get('/api/deliveries/active', (req, res) => {
-    db.query(
-        `SELECT d.id, d.order_id, o.order_id as order_code, o.status as order_status, d.rider_name, d.vehicle, d.current_lat, d.current_lng, d.customer_lat, d.customer_lng, d.delivery_status 
-         FROM deliveries d 
-         LEFT JOIN orders o ON d.order_id = o.id 
-         WHERE d.delivery_status != 'delivered' AND d.delivery_status != 'cancelled'
-         ORDER BY d.updated_at DESC`,
-        (err, results) => {
-            if (err) {
-                console.error('Active deliveries query error:', err);
-                return res.status(500).json({ error: "Database error" });
-            }
-            
-            const deliveries = (results || []).map(d => ({
-                id: d.id,
-                order_id: d.order_code,
-                rider_name: d.rider_name,
-                vehicle: d.vehicle,
-                current_lat: parseFloat(d.current_lat),
-                current_lng: parseFloat(d.current_lng),
-                customer_lat: parseFloat(d.customer_lat),
-                customer_lng: parseFloat(d.customer_lng),
-                delivery_status: d.delivery_status || 'pending',
-                order_status: d.order_status || 'pending'
-            }));
-            
-            res.json(deliveries);
-        }
-    );
-});
-
-const deliveryTimers = new Map();
-
-function clearDeliveryTimers(deliveryId) {
-    const timers = deliveryTimers.get(deliveryId);
-    if (timers) {
-        timers.forEach((timer) => clearTimeout(timer));
-        deliveryTimers.delete(deliveryId);
-    }
-}
-
-function broadcastDeliveryUpdate(orderId, callback) {
-    db.query(`SELECT o.*, d.* FROM orders o LEFT JOIN deliveries d ON o.id = d.order_id WHERE o.order_id = ?`, [orderId], (err, results) => {
-        if (err) return callback(err);
-        if (!results || results.length === 0) return callback(new Error('Order not found'));
-        const order = results[0];
-        const responseData = {
-            id: order.id,
-            order_id: order.order_id,
-            customer_name: order.customer_name,
-            total_amount: order.total_amount,
-            items: order.items,
-            delivery: order.delivery_status ? {
-                status: order.delivery_status,
-                rider_name: order.rider_name,
-                vehicle: order.vehicle,
-                current_lat: order.current_lat,
-                current_lng: order.current_lng,
-                customer_lat: order.customer_lat,
-                customer_lng: order.customer_lng,
-                order_confirmed_time: order.order_confirmed_time,
-                rider_assigned_time: order.rider_assigned_time,
-                picked_up_time: order.picked_up_time,
-                in_transit_time: order.in_transit_time,
-                arriving_time: order.arriving_time,
-                delivered_time: order.delivered_time
-            } : null
-        };
-        io.emit('delivery-update', responseData);
-        callback(null, responseData);
-    });
-}
-
-function updateDeliveryStatus(deliveryId, orderDbId, orderId, newStatus, timeField, callback) {
-    const queries = [];
-    const params = [];
-
-    if (timeField) {
-        queries.push(`${timeField} = NOW()`);
-    }
-    queries.push(`delivery_status = ?`);
-    params.push(newStatus, deliveryId);
-
-    const sql = `UPDATE deliveries SET ${queries.join(', ')} WHERE id = ?`;
-    db.query(sql, params, (err) => {
-        if (err) return callback(err);
-        db.query(`UPDATE orders SET status = ? WHERE id = ?`, [newStatus, orderDbId], (err) => {
-            if (err) console.error('Failed to update order status:', err);
-            broadcastDeliveryUpdate(orderId, () => callback(null));
-        });
-    });
-}
-
-function moveRiderTowardsCustomer(deliveryId, orderId, intervalRef) {
-    db.query('SELECT * FROM deliveries WHERE id = ?', [deliveryId], (err, results) => {
-        if (err || !results || results.length === 0) {
-            clearInterval(intervalRef);
-            return;
-        }
-
-        const delivery = results[0];
-        const currentLat = parseFloat(delivery.current_lat);
-        const currentLng = parseFloat(delivery.current_lng);
-        const customerLat = parseFloat(delivery.customer_lat);
-        const customerLng = parseFloat(delivery.customer_lng);
-        const distance = Math.sqrt(Math.pow(customerLat - currentLat, 2) + Math.pow(customerLng - currentLng, 2));
-        const step = 0.0004;
-
-        if (distance <= step) {
-            db.query(`UPDATE deliveries SET current_lat = ?, current_lng = ? WHERE id = ?`, [customerLat, customerLng, deliveryId], (err) => {
-                if (err) console.error('Failed to update rider location:', err);
-                broadcastDeliveryUpdate(orderId, () => {});
-            });
-            clearInterval(intervalRef);
-            return;
-        }
-
-        const newLat = currentLat + ((customerLat - currentLat) * (step / distance));
-        const newLng = currentLng + ((customerLng - currentLng) * (step / distance));
-        db.query(`UPDATE deliveries SET current_lat = ?, current_lng = ? WHERE id = ?`, [newLat, newLng, deliveryId], (err) => {
-            if (err) {
-                console.error('Failed to update rider location:', err);
-                return;
-            }
-            broadcastDeliveryUpdate(orderId, () => {});
-        });
-    });
-}
-
-function scheduleDeliveryLifecycle(deliveryId, orderId, orderDbId, customerLat, customerLng) {
-    clearDeliveryTimers(deliveryId);
-    const timers = [];
-    deliveryTimers.set(deliveryId, timers);
-
-    const assignDelay = 20 + Math.floor(Math.random() * 15); // 20-35 seconds
-    const pickupDelay = assignDelay + 90 + Math.floor(Math.random() * 45); // 1.5-2.25 min after assign
-    const transitDelay = pickupDelay + 35 + Math.floor(Math.random() * 25); // 35-60 sec after pickup
-    const arrivingDelay = transitDelay + 180 + Math.floor(Math.random() * 80); // 3-4.5 min after in transit
-    const deliveredDelay = arrivingDelay + 80 + Math.floor(Math.random() * 40); // 1.5-2.5 min after arriving
-
-    // Rider assigned
-    timers.push(setTimeout(() => {
-        updateDeliveryStatus(deliveryId, orderDbId, orderId, 'rider_assigned', 'rider_assigned_time', () => {});
-    }, assignDelay * 1000));
-
-    // Food picked up after rider assignment
-    timers.push(setTimeout(() => {
-        updateDeliveryStatus(deliveryId, orderDbId, orderId, 'picked_up', 'picked_up_time', () => {});
-    }, pickupDelay * 1000));
-
-    // In transit after pickup
-    timers.push(setTimeout(() => {
-        updateDeliveryStatus(deliveryId, orderDbId, orderId, 'in_transit', 'in_transit_time', () => {
-            const movementInterval = setInterval(() => moveRiderTowardsCustomer(deliveryId, orderId, movementInterval), 2500);
-            timers.push(movementInterval);
-        });
-    }, transitDelay * 1000));
-
-    // Arriving soon
-    timers.push(setTimeout(() => {
-        updateDeliveryStatus(deliveryId, orderDbId, orderId, 'arriving', 'arriving_time', () => {});
-    }, arrivingDelay * 1000));
-
-    // Delivered
-    timers.push(setTimeout(() => {
-        updateDeliveryStatus(deliveryId, orderDbId, orderId, 'delivered', 'delivered_time', () => {
-            clearDeliveryTimers(deliveryId);
-        });
-    }, deliveredDelay * 1000));
-}
-
-function startDeliverySimulationForOrder(orderId, callback) {
-    db.query('SELECT * FROM orders WHERE order_id = ?', [orderId], (err, results) => {
-        if (err || !results || results.length === 0) {
-            return callback(err || new Error('Order not found'));
-        }
-
-        const order = results[0];
-        const restaurantLat = 9.0765;
-        const restaurantLng = 7.3986;
-        const customerLat = 9.0865 + (Math.random() - 0.5) * 0.1;
-        const customerLng = 7.4086 + (Math.random() - 0.5) * 0.1;
-
-        const riders = [
-            { name: 'Chioma Adeyemi', vehicle: 'Motorcycle' },
-            { name: 'Tunde Okafor', vehicle: 'Motorcycle' },
-            { name: 'Zainab Hassan', vehicle: 'Motorcycle' }
-        ];
-        const rider = riders[Math.floor(Math.random() * riders.length)];
-
-        const insertSql = isPg
-            ? `INSERT INTO deliveries (order_id, rider_name, vehicle, current_lat, current_lng, customer_lat, customer_lng, delivery_status, order_confirmed_time) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW()) RETURNING id`
-            : `INSERT INTO deliveries (order_id, rider_name, vehicle, current_lat, current_lng, customer_lat, customer_lng, delivery_status, order_confirmed_time) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`;
-        db.query(
-            insertSql,
-            [order.id, rider.name, rider.vehicle, restaurantLat, restaurantLng, customerLat, customerLng, 'order_confirmed'],
-            (err, result) => {
-                if (err) {
-                    console.error('Delivery start error:', err);
-                    return callback(err);
-                }
-                const deliveryId = result.insertId;
-                scheduleDeliveryLifecycle(deliveryId, orderId, order.id, customerLat, customerLng);
-                callback(null, rider);
-            }
-        );
-    });
-}
-
-// Start delivery simulation for an order
-app.post('/api/delivery/start', (req, res) => {
-    const orderId = req.body.order_id;
-
-    startDeliverySimulationForOrder(orderId, (err, rider) => {
-        if (err) {
-            if (err.message === 'Order not found') {
-                return res.status(404).json({ error: 'Order not found' });
-            }
-            return res.status(500).json({ error: 'Database error' });
-        }
-
-        res.json({ success: true, message: 'Delivery started', rider });
-    });
-});
-
-// Update rider location during delivery
-app.post('/api/delivery/update-location', (req, res) => {
-    const orderId = req.body.order_id;
-    
-    db.query('SELECT * FROM deliveries WHERE order_id = (SELECT id FROM orders WHERE order_id = ?)', [orderId], (err, results) => {
-        if (err || !results || results.length === 0) {
-            return res.status(404).json({ error: "Delivery not found" });
-        }
-        
-        const delivery = results[0];
-        const currentLat = parseFloat(delivery.current_lat);
-        const currentLng = parseFloat(delivery.current_lng);
-        const customerLat = parseFloat(delivery.customer_lat);
-        const customerLng = parseFloat(delivery.customer_lng);
-        
-        // Move rider toward customer location
-        const distance = Math.sqrt(Math.pow(customerLat - currentLat, 2) + Math.pow(customerLng - currentLng, 2));
-        const step = Math.max(0.0003, Math.min(0.0015, distance * 0.18));
-
-        let newLat = currentLat;
-        let newLng = currentLng;
-        let newStatus = delivery.delivery_status;
-        let updateFields = [];
-
-        if (delivery.delivery_status === 'picked_up' || delivery.delivery_status === 'in_transit' || delivery.delivery_status === 'arriving') {
-            if (distance > step) {
-                newLat = currentLat + (customerLat - currentLat) * (step / distance);
-                newLng = currentLng + (customerLng - currentLng) * (step / distance);
-
-                if (delivery.delivery_status === 'picked_up') {
-                    newStatus = 'in_transit';
-                    updateFields.push(`in_transit_time = NOW()`);
-                } else if (delivery.delivery_status === 'in_transit' && distance < 1.2) {
-                    newStatus = 'arriving';
-                    if (delivery.delivery_status !== 'arriving') {
-                        updateFields.push(`arriving_time = NOW()`);
-                    }
-                } else {
-                    newStatus = delivery.delivery_status;
-                }
-            } else {
-                newLat = customerLat;
-                newLng = customerLng;
-                newStatus = 'delivered';
-                if (delivery.delivery_status !== 'delivered') {
-                    updateFields.push(`arriving_time = NOW()`);
-                    updateFields.push(`delivered_time = NOW()`);
-                }
-            }
-        } else {
-            // Rider waiting for assignment or pickup
-            newStatus = delivery.delivery_status;
-        }
-
-        // Update only if changed
-        if (newStatus !== delivery.delivery_status && !updateFields.includes(`${newStatus}_time = NOW()`)) {
-            if (newStatus === 'in_transit' && delivery.delivery_status !== 'in_transit') {
-                updateFields.push(`in_transit_time = NOW()`);
-            } else if (newStatus === 'arriving' && delivery.delivery_status !== 'arriving') {
-                updateFields.push(`arriving_time = NOW()`);
-            }
-        }
-        
-        const fieldsStr = updateFields.length > 0 ? ', ' + updateFields.join(', ') : '';
-        
-        db.query(
-            `UPDATE deliveries SET current_lat = ?, current_lng = ?, delivery_status = ? ${fieldsStr} 
-             WHERE id = ?`,
-            [newLat, newLng, newStatus, delivery.id],
-            (err) => {
-                if (err) {
-                    console.error('Location update error:', err);
-                    return res.status(500).json({ error: "Database error" });
-                }
-                
-                // Fetch updated delivery
-                db.query(`SELECT o.*, d.* FROM orders o LEFT JOIN deliveries d ON o.id = d.order_id WHERE o.order_id = ?`, [orderId], (err, updated) => {
-                    if (err) return res.status(500).json({ error: "Database error" });
-                    
-                    const order = updated[0];
-                    const responseData = {
-                        id: order.id,
-                        order_id: order.order_id,
-                        customer_name: order.customer_name,
-                        total_amount: order.total_amount,
-                        items: order.items,
-                        delivery: {
-                            status: order.delivery_status,
-                            rider_name: order.rider_name,
-                            current_lat: order.current_lat,
-                            current_lng: order.current_lng,
-                            customer_lat: order.customer_lat,
-                            customer_lng: order.customer_lng
-                        }
-                    };
-                    
-                    // Broadcast update via Socket.io
-                    io.emit('delivery-update', responseData);
-                    res.json(responseData);
-                });
-            }
-        );
-    });
-});
-
-// Complete delivery
-app.post('/api/delivery/complete', (req, res) => {
-    const orderId = req.body.order_id;
-    
-    db.query('SELECT id FROM orders WHERE order_id = ?', [orderId], (err, results) => {
-        if (err || !results || results.length === 0) {
-            return res.status(404).json({ error: "Order not found" });
-        }
-        
-        const orderId_db = results[0].id;
-        
-        db.query(
-            `UPDATE deliveries SET delivery_status = ?, delivered_time = NOW() WHERE order_id = ?`,
-            ['delivered', orderId_db],
-            (err) => {
-                if (err) {
-                    return res.status(500).json({ error: "Database error" });
-                }
-                
-                // Also update order status
-                db.query(`UPDATE orders SET status = ? WHERE id = ?`, ['delivered', orderId_db], (err) => {
-                    if (err) console.error('Order status update error:', err);
-                });
-                
-                res.json({ success: true, message: "Delivery completed" });
-            }
-        );
     });
 });
 
@@ -6808,59 +7254,81 @@ app.get('/api/settings', (req, res) => {
     });
 });
 
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', async (req, res) => {
     const userId = req.session.userId;
     const data = req.body;
-    const query = `
-        INSERT INTO settings 
-        (user_id, displayName, email, autoReply, chatEnabled, msgAlert, ticketAlert, soundAlert, autopilotMode, priority, autoAssign, theme)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          displayName = VALUES(displayName),
-          email = VALUES(email),
-          autoReply = VALUES(autoReply),
-          chatEnabled = VALUES(chatEnabled),
-          msgAlert = VALUES(msgAlert),
-          ticketAlert = VALUES(ticketAlert),
-          soundAlert = VALUES(soundAlert),
-          autopilotMode = VALUES(autopilotMode),
-          priority = VALUES(priority),
-          autoAssign = VALUES(autoAssign),
-          theme = VALUES(theme)
-    `;
-    db.query(query, [
-        userId,
-        data.displayName,
-        data.email,
-        data.autoReply,
-        data.chatEnabled,
-        data.msgAlert,
-        data.ticketAlert,
-        data.soundAlert,
-        data.autopilotMode,
-        data.priority,
-        data.autoAssign,
-        data.theme || 'Light'
-    ], (err) => {
-        if (err) return res.sendStatus(500);
-        
-        // Also update staff's full_name if displayName is provided
-        if (data.displayName) {
-            const updateStaffQuery = 'UPDATE staffs SET full_name = ? WHERE id = ?';
-            db.query(updateStaffQuery, [data.displayName, userId], (err2) => {
-                if (err2) {
-                    console.error('Error updating staff full_name:', err2);
-                }
-                // Update session with new name
-                if (req.session.user) {
-                    req.session.user.name = data.displayName;
-                }
-                res.sendStatus(200);
+
+    if (!userId) {
+        return res.status(401).json({ error: 'not_logged_in' });
+    }
+
+    try {
+        const settingsData = {
+            displayName: data.displayName || undefined,
+            email: data.email || undefined,
+            autoReply: data.autoReply || undefined,
+            chatEnabled: data.chatEnabled || undefined,
+            msgAlert: typeof data.msgAlert === 'boolean' ? data.msgAlert : undefined,
+            ticketAlert: typeof data.ticketAlert === 'boolean' ? data.ticketAlert : undefined,
+            soundAlert: typeof data.soundAlert === 'boolean' ? data.soundAlert : undefined,
+            autopilotMode: data.autopilotMode || undefined,
+            priority: data.priority || undefined,
+            autoAssign: data.autoAssign || undefined,
+            theme: data.theme || 'Light'
+        };
+
+        // Remove undefined values to keep existing data
+        Object.keys(settingsData).forEach(key => {
+            if (settingsData[key] === undefined) delete settingsData[key];
+        });
+
+        const legacyUser = await prisma.user.findUnique({
+            where: { id: Number(userId) },
+            select: { id: true }
+        });
+        if (legacyUser) {
+            await prisma.setting.upsert({
+                where: { user_id: Number(userId) },
+                create: { user_id: Number(userId), ...settingsData },
+                update: settingsData
             });
-        } else {
-            res.sendStatus(200);
         }
-    });
+
+        // Update staff name if displayName changed
+        if (data.displayName && req.session.user?.email) {
+            try {
+                await prisma.staff.updateMany({
+                    where: { email: req.session.user.email },
+                    data: { fullName: data.displayName }
+                });
+            } catch (staffErr) {
+                console.warn('Warning: Could not update staff name:', staffErr?.message);
+            }
+        }
+
+        // Update session with new name
+        if (data.displayName && req.session.user) {
+            req.session.user.name = data.displayName;
+            req.session.user.displayName = data.displayName;
+        }
+
+        // Save session using Promise wrapper
+        await new Promise((resolve, reject) => {
+            req.session.save((err) => {
+                if (err) {
+                    console.warn('Session save error:', err?.message);
+                    reject(err);
+                } else {
+                    resolve();
+                }
+            });
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Error saving settings:', err.message, err.stack);
+        res.status(500).json({ error: 'Failed to save settings', details: err.message });
+    }
 });
 
 // Upload avatar image for current user
@@ -6928,6 +7396,15 @@ io.on("connection", (socket) => {
     socket.on("conversation:leave", (data) => {
         if (!data || !data.conversationId) return;
         socket.leave(`conversation:${data.conversationId}`);
+    });
+
+    socket.on('delivery:join', (data) => {
+        if (!data || typeof data !== 'object') return;
+        joinDeliveryRooms(socket, data);
+    });
+
+    socket.on('delivery:leave', () => {
+        leaveDeliveryRooms(socket);
     });
 
     // Agent registers after connecting with their user info
@@ -7024,12 +7501,15 @@ io.on("connection", (socket) => {
     });
 
     socket.on('voice:register', (data, ack) => {
+        console.log('[Voice Server] 🎤 voice:register received:', { socketId: socket.id, userId: data?.userId, name: data?.name });
         const record = normalizeVoiceUser(socket, Object.assign({}, data, { status: 'online', socketId: socket.id }));
         if (!record || !record.userId) {
+            console.error('[Voice Server] ❌ Invalid voice:register - missing userId');
             if (typeof ack === 'function') ack({ ok: false, error: 'Missing userId' });
             return;
         }
         voiceUsers.set(socket.id, record);
+        console.log('[Voice Server] ✅ Voice user registered:', record);
         broadcastVoicePresence();
         socket.emit('voice:channels', getVoiceChannelList());
         if (typeof ack === 'function') ack({ ok: true, userId: record.userId, socketId: socket.id });
@@ -7040,16 +7520,31 @@ io.on("connection", (socket) => {
     });
 
     socket.on('call:start', (data) => {
-        if (!data || !data.recipientId || !data.callId) return;
+        console.log('[Voice Server] 📞 call:start received:', { callId: data?.callId, recipientId: data?.recipientId, fromUserId: data?.caller?.userId, voiceUsersCount: voiceUsers.size });
+        if (!data || !data.recipientId || !data.callId) {
+            console.error('[Voice Server] ❌ Invalid call:start - missing recipientId or callId');
+            return;
+        }
         const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.recipientId));
+        console.log('[Voice Server] Recipient lookup:', { found: !!recipient, searchingFor: data.recipientId, voiceUsers: Array.from(voiceUsers.values()).map(u => ({ userId: u.userId, socketId: u.socketId })) });
         if (!recipient?.socketId) {
+            console.error('[Voice Server] ❌ Recipient not found in voiceUsers');
             socket.emit('call:error', { message: 'Recipient is not online.' });
             return;
         }
-        io.to(recipient.socketId).emit('call:incoming', {
+        const payload = {
             ...data,
             fromUserId: data.caller?.userId || socket.id
-        });
+        };
+        console.log('[Voice Server] 📤 Sending call:incoming to recipient:', { recipientSocketId: recipient.socketId, payload: payload });
+        io.to(recipient.socketId).emit('call:incoming', payload);
+        if (payload.offer) {
+            io.to(recipient.socketId).emit('webrtc:offer', {
+                callId: payload.callId,
+                offer: payload.offer,
+                fromUserId: payload.fromUserId
+            });
+        }
     });
 
     socket.on('call:accept', (data) => {
@@ -8249,67 +8744,6 @@ app.get('/api/messages-daily', isAuthenticated, async (req, res) => {
 // Start server
 // ---------------------------
 const PORT = process.env.PORT || 3000;
-// Ensure `deliveries` table exists for delivery simulation
-if (isPg) {
-    db.query(`
-        CREATE TABLE IF NOT EXISTS deliveries (
-            id SERIAL PRIMARY KEY,
-            order_id INT NOT NULL,
-            rider_name VARCHAR(255),
-            vehicle VARCHAR(128),
-            current_lat DOUBLE PRECISION,
-            current_lng DOUBLE PRECISION,
-            customer_lat DOUBLE PRECISION,
-            customer_lng DOUBLE PRECISION,
-            delivery_status VARCHAR(64) DEFAULT 'pending',
-            order_confirmed_time TIMESTAMP,
-            rider_assigned_time TIMESTAMP,
-            picked_up_time TIMESTAMP,
-            in_transit_time TIMESTAMP,
-            arriving_time TIMESTAMP,
-            delivered_time TIMESTAMP,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW(),
-            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
-        );
-    `, (err) => {
-        if (err) console.error('Could not create deliveries table (pg):', err);
-        else {
-            db.query('CREATE INDEX IF NOT EXISTS idx_deliveries_order_id ON deliveries(order_id)', (ie) => {});
-            console.log('Deliveries table ready (pg)');
-        }
-    });
-} else {
-    db.query(`
-        CREATE TABLE IF NOT EXISTS deliveries (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            order_id INT NOT NULL,
-            rider_name VARCHAR(255),
-            vehicle VARCHAR(128),
-            current_lat DOUBLE,
-            current_lng DOUBLE,
-            customer_lat DOUBLE,
-            customer_lng DOUBLE,
-            delivery_status VARCHAR(64) DEFAULT 'pending',
-            order_confirmed_time DATETIME,
-            rider_assigned_time DATETIME,
-            picked_up_time DATETIME,
-            in_transit_time DATETIME,
-            arriving_time DATETIME,
-            delivered_time DATETIME,
-            created_at DATETIME DEFAULT NOW(),
-            updated_at DATETIME DEFAULT NOW() ON UPDATE NOW(),
-            INDEX (order_id),
-            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `, (err) => {
-        if (err) {
-            console.error('Could not create deliveries table:', err);
-        } else {
-            console.log('Deliveries table ready');
-        }
-    });
-}
 httpServer.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
         console.error(`Port ${PORT} is already in use. Stop the process using it or set a different PORT environment variable.`);
@@ -8351,6 +8785,12 @@ httpServer.listen(PORT, () => {
             });
         }
 
+        if (isReady()) {
+            console.log('Redis ready and connected for live delivery caching');
+        } else {
+            console.warn('Redis not available at startup; delivery caching will operate in fallback mode');
+        }
+
         // Ensure optional AI/staff message tables exist to avoid runtime query errors
         if (isPg) {
             db.query(`
@@ -8374,28 +8814,30 @@ httpServer.listen(PORT, () => {
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             `, (err) => { if (err) console.error('Error ensuring staff_messages table at startup:', err); else console.log('staff_messages table ensured at startup'); });
-        } else {
-            db.query(`
-                CREATE TABLE IF NOT EXISTS ai_messages (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    conversation_id INT,
-                    sender VARCHAR(255),
-                    message TEXT,
-                    user_id INT,
-                    created_at DATETIME DEFAULT NOW()
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            `, (err) => { if (err) console.error('Error ensuring ai_messages table at startup:', err); else console.log('ai_messages table ensured at startup'); });
 
             db.query(`
-                CREATE TABLE IF NOT EXISTS staff_messages (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    conversation_id INT,
-                    sender VARCHAR(255),
-                    message TEXT,
-                    user_id INT,
-                    created_at DATETIME DEFAULT NOW()
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            `, (err) => { if (err) console.error('Error ensuring staff_messages table at startup:', err); else console.log('staff_messages table ensured at startup'); });
+                CREATE TABLE IF NOT EXISTS refunds (
+                    id SERIAL PRIMARY KEY,
+                    refund_number VARCHAR(255) UNIQUE,
+                    order_id VARCHAR(255),
+                    customer_name VARCHAR(255),
+                    requested_by VARCHAR(255),
+                    approved_by VARCHAR(255),
+                    completed_by VARCHAR(255),
+                    status VARCHAR(50) DEFAULT 'pending',
+                    refund_type VARCHAR(50) DEFAULT 'full',
+                    refund_method VARCHAR(50),
+                    refund_reason TEXT,
+                    manager_notes TEXT,
+                    refund_amount DECIMAL(10, 2),
+                    payment_reference VARCHAR(255),
+                    requested_at TIMESTAMP DEFAULT NOW(),
+                    approved_at TIMESTAMP,
+                    completed_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT NOW(),
+                    updated_at TIMESTAMP DEFAULT NOW()
+                );
+            `, (err) => { if (err) console.error('Error ensuring refunds table at startup:', err); else console.log('refunds table ensured at startup'); });
         }
     } catch (e) {
         console.log(`✅🎲Server running on port ${PORT}🎲`);

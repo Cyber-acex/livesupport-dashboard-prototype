@@ -37,6 +37,16 @@ function DashboardPage() {
   const [yesterdayAmount, setYesterdayAmount] = useState(0);
 
   useEffect(() => {
+    function refreshTarget() {
+      const nextTarget = Number(getSettings().monthlyTargetAmount || 0) || 20000;
+      setTargetAmount(nextTarget);
+    }
+
+    window.addEventListener('settings:updated', refreshTarget);
+    return () => window.removeEventListener('settings:updated', refreshTarget);
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     async function loadDashboard() {

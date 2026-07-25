@@ -57,10 +57,6 @@ export class SocketCallService {
     this.emit('call:register', { secureToken, role, userId, name });
   }
 
-  registerVoiceContext(payload) {
-    this.emit('voice:register', payload);
-  }
-
   startCall(payload) {
     this.emit('call:start', payload);
   }

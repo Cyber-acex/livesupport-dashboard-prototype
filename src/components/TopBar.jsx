@@ -1,8 +1,17 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
 import NotificationDropdown from './NotificationDropdown';
 
+const PALETTE_COMMANDS = [
+  { command: '/view orders', description: 'Open orders' },
+  { command: '/view analytics', description: 'Open analytics' },
+  { command: '/view inbox', description: 'Open inbox' },
+  { command: '/set target 20000', description: 'Set monthly sales target' }
+];
+
 function TopBar({ onSidebarToggle }) {
+  const navigate = useNavigate();
   const { toggleSidebar } = useSidebar();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
@@ -20,6 +29,11 @@ function TopBar({ onSidebarToggle }) {
     return now;
   });
   const [sessionTick, setSessionTick] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [analyticsResult, setAnalyticsResult] = useState(null);
+  const [searchError, setSearchError] = useState('');
   const signOutAudio = useMemo(() => {
     const audio = new Audio(encodeURI('/uploads/Notification sounds/sign out.wav'));
     audio.preload = 'auto';
@@ -27,6 +41,8 @@ function TopBar({ onSidebarToggle }) {
   }, []);
   const notifRef = useRef();
   const userRef = useRef();
+  const searchRef = useRef();
+  const searchInputRef = useRef();
 
   // Initialize dark mode from localStorage and apply on mount
   useEffect(() => {
@@ -49,26 +65,31 @@ function TopBar({ onSidebarToggle }) {
     }
 
     async function loadCurrentUser() {
-      if (typeof window !== 'undefined' && window.currentUser) {
-        setCurrentUser({
-          ...window.currentUser,
-          name: window.currentUser.name || 'Staff',
-          role: window.currentUser.role || 'agent',
-          avatar_url: window.currentUser.avatar_url || window.currentUser.avatarUrl || null
-        });
-        syncAvatarFromStorage();
-        return;
-      }
+      const storedDisplayName = typeof window !== 'undefined' ? window.localStorage.getItem('displayName') : null;
+      const fallbackName = storedDisplayName || (typeof window !== 'undefined' ? window.currentUser?.name : null) || 'Staff';
 
       try {
         const res = await fetch('/api/user', { credentials: 'same-origin' });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (typeof window !== 'undefined' && window.currentUser) {
+            const mergedUser = {
+              ...window.currentUser,
+              name: fallbackName,
+              role: window.currentUser.role || 'agent',
+              avatar_url: window.currentUser.avatar_url || window.currentUser.avatarUrl || null
+            };
+            setCurrentUser(mergedUser);
+            window.currentUser = mergedUser;
+          }
+          return;
+        }
+
         const data = await res.json();
         if (data && data.name) {
           const resolvedAvatar = data.avatar_url || data.avatarUrl || (typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null);
           const mergedUser = {
             ...data,
-            name: data.name || 'Staff',
+            name: data.name || storedDisplayName || fallbackName,
             role: data.role || 'agent',
             avatar_url: resolvedAvatar
           };
@@ -76,10 +97,31 @@ function TopBar({ onSidebarToggle }) {
           if (typeof window !== 'undefined') {
             window.currentUser = mergedUser;
           }
+        } else if (typeof window !== 'undefined' && window.currentUser) {
+          const mergedUser = {
+            ...window.currentUser,
+            name: fallbackName,
+            role: window.currentUser.role || 'agent',
+            avatar_url: window.currentUser.avatar_url || window.currentUser.avatarUrl || null
+          };
+          setCurrentUser(mergedUser);
+          window.currentUser = mergedUser;
         }
       } catch (error) {
         console.warn('Failed to load current user', error);
+        if (typeof window !== 'undefined' && window.currentUser) {
+          const mergedUser = {
+            ...window.currentUser,
+            name: fallbackName,
+            role: window.currentUser.role || 'agent',
+            avatar_url: window.currentUser.avatar_url || window.currentUser.avatarUrl || null
+          };
+          setCurrentUser(mergedUser);
+          window.currentUser = mergedUser;
+        }
       }
+
+      syncAvatarFromStorage();
     }
 
     loadCurrentUser();
@@ -115,6 +157,46 @@ function TopBar({ onSidebarToggle }) {
   }, []);
 
   useEffect(() => {
+    function handleShortcut(event) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        setSearchOpen(true);
+      }
+    }
+
+    document.addEventListener('keydown', handleShortcut);
+    return () => document.removeEventListener('keydown', handleShortcut);
+  }, []);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query || query.startsWith('/')) {
+      const matchingCommands = query
+        ? PALETTE_COMMANDS.filter((item) => item.command.includes(query.toLowerCase()))
+        : [];
+      setSearchResults(matchingCommands.map((item) => ({ ...item, type: 'command', title: item.command, subtitle: item.description })));
+      setAnalyticsResult(null);
+      setSearchError('');
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { credentials: 'same-origin', signal: controller.signal });
+        if (!response.ok) throw new Error('Search unavailable');
+        const data = await response.json();
+        setSearchResults(data.results || []);
+        setSearchError('');
+      } catch (error) {
+        if (error.name !== 'AbortError') setSearchError('Search is temporarily unavailable.');
+      }
+    }, 250);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+  }, [searchQuery]);
+
+  useEffect(() => {
     function handleClick(e) {
       if (notifRef.current && !notifRef.current.contains(e.target)) {
         setNotificationsOpen(false);
@@ -122,10 +204,71 @@ function TopBar({ onSidebarToggle }) {
       if (userRef.current && !userRef.current.contains(e.target)) {
         setUserOpen(false);
       }
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setSearchOpen(false);
+      }
     }
     document.addEventListener('click', handleClick);
     return () => document.removeEventListener('click', handleClick);
   }, []);
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setAnalyticsResult(null);
+    setSearchError('');
+  }
+
+  function executeCommand(command) {
+    const normalized = command.trim().toLowerCase();
+    const viewMatch = normalized.match(/^\/view\s+(dashboard|orders|analytics|inbox|tickets|settings)$/);
+    if (viewMatch) {
+      navigate(`/${viewMatch[1]}`);
+      closeSearch();
+      return true;
+    }
+
+    const targetMatch = normalized.match(/^\/set\s+target\s+(\d+(?:\.\d{1,2})?)$/);
+    if (targetMatch) {
+      const amount = Number(targetMatch[1]);
+      localStorage.setItem('monthlyTargetAmount', String(amount));
+      window.dispatchEvent(new Event('settings:updated'));
+      setSearchQuery('');
+      setSearchResults([{ type: 'command', title: 'Monthly target updated', subtitle: `$${amount.toLocaleString()} per month` }]);
+      return true;
+    }
+    return false;
+  }
+
+  async function runSearch(event) {
+    event.preventDefault();
+    const query = searchQuery.trim();
+    if (!query) return;
+    if (query.startsWith('/') && executeCommand(query)) return;
+
+    try {
+      const response = await fetch(`/api/search/analytics?q=${encodeURIComponent(query)}`, { credentials: 'same-origin' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Try a sales question.');
+      setAnalyticsResult(data);
+      setSearchError('');
+    } catch (error) {
+      setSearchError(error.message || 'Try a sales question.');
+      setAnalyticsResult(null);
+    }
+  }
+
+  function selectSearchResult(result) {
+    if (result.type === 'command') {
+      executeCommand(result.command || result.title);
+      return;
+    }
+    if (result.path) {
+      navigate(result.path);
+      closeSearch();
+    }
+  }
 
   function getInitials(name) {
     if (!name) return 'ST';
@@ -206,17 +349,34 @@ function TopBar({ onSidebarToggle }) {
             <img className="hidden dark:block" src="/images/logo/logo-dark.svg" alt="Logo" />
           </a>
 
-          <div className="hidden lg:block">
-            <form>
+          <div className="hidden lg:block" ref={searchRef}>
+            <form onSubmit={runSearch}>
               <div className="relative">
                 <span className="absolute top-1/2 left-4 -translate-y-1/2 text-gray-500">
                   <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.042 9.374C3.042 5.877 5.877 3.042 9.375 3.042C12.873 3.042 15.708 5.877 15.708 9.374C15.708 12.87 12.873 15.705 9.375 15.705C5.877 15.705 3.042 12.87 3.042 9.374Z" fill="currentColor"/></svg>
                 </span>
-                <input type="text" placeholder="Search or type command..." id="search-input" className="dark:bg-dark-900 h-11 w-full rounded-lg border border-gray-200 bg-transparent py-2.5 pr-14 pl-12 text-sm text-gray-800 placeholder:text-gray-400 xl:w-[430px] dark:border-gray-800 dark:bg-gray-900 dark:text-white/90" />
-                <button id="search-button" className="absolute top-1/2 right-2.5 inline-flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-[7px] py-[4.5px] text-xs text-gray-500 dark:border-gray-800 dark:bg-white/[0.03]">
+                <input ref={searchInputRef} value={searchQuery} onChange={(event) => { setSearchQuery(event.target.value); setSearchOpen(true); }} onFocus={() => setSearchOpen(true)} type="text" placeholder="Search or type command..." id="search-input" aria-label="Search or type command" autoComplete="off" className="dark:bg-dark-900 h-11 w-full rounded-lg border border-gray-200 bg-transparent py-2.5 pr-14 pl-12 text-sm text-gray-800 placeholder:text-gray-400 xl:w-[430px] dark:border-gray-800 dark:bg-gray-900 dark:text-white/90" />
+                <button type="submit" id="search-button" aria-label="Run search" className="absolute top-1/2 right-2.5 inline-flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-gray-200 bg-gray-50 px-[7px] py-[4.5px] text-xs text-gray-500 dark:border-gray-800 dark:bg-white/[0.03]">
                   <span> ⌘ </span>
                   <span> K </span>
                 </button>
+                {searchOpen && (searchResults.length > 0 || analyticsResult || searchError || searchQuery.trim()) && (
+                  <div className="absolute top-14 left-0 z-50 w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+                    {searchResults.length > 0 && <div className="max-h-64 overflow-y-auto p-2">
+                      {searchResults.map((result, index) => (
+                        <button key={`${result.type}-${result.id || result.title}-${index}`} type="button" onClick={() => selectSearchResult(result)} className="flex w-full items-start justify-between rounded-lg px-3 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-800">
+                          <span><span className="block text-sm font-medium text-gray-800 dark:text-gray-100">{result.title}</span><span className="block text-xs text-gray-500 dark:text-gray-400">{result.subtitle}</span></span>
+                          <span className="ml-3 text-[10px] font-semibold uppercase tracking-wide text-gray-400">{result.type}</span>
+                        </button>
+                      ))}
+                    </div>}
+                    {analyticsResult && <div className="border-t border-gray-100 p-3 dark:border-gray-800">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{analyticsResult.title}</div>
+                      {analyticsResult.rows.map((row, index) => <div key={index} className="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200"><span>{row.customer || row.period}</span><span className="font-semibold">${Number(row.revenue || 0).toLocaleString()} <span className="text-xs font-normal text-gray-400">({row.orders} orders)</span></span></div>)}
+                    </div>}
+                    {searchError && <div className="p-3 text-xs text-rose-600 dark:text-rose-300">{searchError}</div>}
+                  </div>
+                )}
               </div>
             </form>
           </div>

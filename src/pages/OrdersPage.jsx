@@ -16,7 +16,8 @@ import {
   fetchTables,
   updateTableState
 } from '../services/ordersService';
-import { buildOccupiedFromReservationPayload, shouldTransitionReservedTable } from '../utils/tableReservation';
+import { fetchRiders } from '../services/deliveriesService';
+import { buildOccupiedFromReservationPayload, buildOrderTableTransitionPayload, canUseTableForOrder, shouldTransitionReservedTable } from '../utils/tableReservation';
 
 const socket = io();
 const STATUS_OPTIONS = ['pending', 'processing', 'completed', 'cancelled'];
@@ -50,6 +51,7 @@ function OrdersPage() {
   const [orders, setOrders] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [tables, setTables] = useState([]);
+  const [riders, setRiders] = useState([]);
   const [filterText, setFilterText] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFilter, setDateFilter] = useState('');
@@ -62,9 +64,11 @@ function OrdersPage() {
   const [menuSection, setMenuSection] = useState('items');
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [refundDraft, setRefundDraft] = useState({ refundType: 'full', refundReason: '', managerNotes: '', refundAmount: 0, selectedItems: [] });
   const [menuItemModalOpen, setMenuItemModalOpen] = useState(false);
   const [editingMenuItem, setEditingMenuItem] = useState(null);
-  const [orderDraft, setOrderDraft] = useState({ customerName: '', tableNumber: '', status: 'pending', items: [{ menuItemId: '', quantity: 1 }] });
+  const [orderDraft, setOrderDraft] = useState({ customerName: '', tableNumber: '', status: 'pending', riderId: '', riderName: '', items: [{ menuItemId: '', quantity: 1 }] });
   const [viewOrder, setViewOrder] = useState(null);
   const [menuSearch, setMenuSearch] = useState('');
   const [menuCategory, setMenuCategory] = useState('All');
@@ -112,6 +116,7 @@ function OrdersPage() {
     loadOrders();
     loadMenuItems();
     loadTables();
+    loadRiders();
 
     const timer = window.setInterval(() => setSessionTick((value) => value + 1), 1000);
 
@@ -131,15 +136,10 @@ function OrdersPage() {
       setOrders((prev) => prev.map((order) => order.id === payload.orderId ? { ...order, status: payload.status || order.status } : order));
     });
 
-    socket.on('delivery-update', (payload) => {
-      setOrders((prev) => prev.map((order) => order.id === payload.order_id ? { ...order, status: payload.status || order.status } : order));
-    });
-
     return () => {
       window.clearInterval(timer);
       socket.off('order-created');
       socket.off('order-updated');
-      socket.off('delivery-update');
     };
   }, []);
 
@@ -177,6 +177,15 @@ function OrdersPage() {
     } catch (error) {
       console.error('Failed to load tables', error);
       error('Unable to load tables');
+    }
+  };
+
+  const loadRiders = async () => {
+    try {
+      const data = await fetchRiders();
+      setRiders(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Failed to load riders', error);
     }
   };
 
@@ -469,6 +478,48 @@ function OrdersPage() {
   const openViewOrder = (order) => {
     setViewOrder(order);
     setViewModalOpen(true);
+    setRefundDraft({ refundType: 'full', refundReason: '', managerNotes: '', refundAmount: Number(order?.amount || 0), selectedItems: [] });
+  };
+
+  const openRefundModal = () => {
+    if (!viewOrder) return;
+    setRefundDraft({
+      refundType: 'full',
+      refundReason: '',
+      managerNotes: '',
+      refundAmount: Number(viewOrder.amount || 0),
+      selectedItems: []
+    });
+    setRefundModalOpen(true);
+  };
+
+  const submitRefundRequest = async () => {
+    if (!viewOrder) return;
+    try {
+      const payload = {
+        orderId: viewOrder.id,
+        orderNumber: viewOrder.id,
+        customerName: viewOrder.customerName,
+        refundType: refundDraft.refundType,
+        refundReason: refundDraft.refundReason,
+        managerNotes: refundDraft.managerNotes,
+        refundAmount: Number(refundDraft.refundAmount || 0),
+        selectedItems: refundDraft.selectedItems
+      };
+      const res = await fetch('/api/refunds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Unable to create refund request');
+      success(data?.message || 'Refund request submitted for manager review');
+      setRefundModalOpen(false);
+      setViewModalOpen(false);
+    } catch (err) {
+      error(err.message || 'Unable to create refund request');
+    }
   };
 
   const completeOrder = async (orderId) => {
@@ -555,15 +606,15 @@ function OrdersPage() {
         const tnum = Number(tableNumber);
         const table = tables.find((t) => Number(t.number) === tnum);
         if (table) {
-          const status = normalizeTableStatus(table.status);
-          if (status !== 'vacant') {
+          if (!canUseTableForOrder(table)) {
             throw new Error('Table unavailable');
           }
 
           // mark locally and persist as occupied
-          const now = new Date().toISOString();
-          updateTableLocally(tnum, { status: 'occupied', reservedUntil: null, isBooking: false, sessionStartedAt: now });
-          await updateTableState(tnum, { status: 'occupied', reservedUntil: null, isBooking: false, sessionStartedAt: now });
+          const now = new Date();
+          const payload = buildOrderTableTransitionPayload(table, now);
+          updateTableLocally(tnum, { ...payload, sessionStartedAt: payload.sessionStartedAt });
+          await updateTableState(tnum, payload);
           occupiedTableNumber = tnum;
         }
       }
@@ -576,6 +627,8 @@ function OrdersPage() {
         quantity: items.reduce((sum, item) => sum + item.quantity, 0),
         amount: finalAmount,
         status: draft.status,
+        riderId: draft.riderId || null,
+        riderName: draft.riderName || null,
         voucherCode: voucherResult?.code || voucherCode.trim() || null,
         voucherDiscount: voucherResult?.discountAmount || 0,
         voucherType: voucherResult?.type || null,
@@ -589,7 +642,7 @@ function OrdersPage() {
         }))
       });
 
-      setOrderDraft({ customerName: '', tableNumber: '', status: 'pending', items: [{ menuItemId: '', quantity: 1 }] });
+      setOrderDraft({ customerName: '', tableNumber: '', status: 'pending', riderId: '', riderName: '', items: [{ menuItemId: '', quantity: 1 }] });
       setVoucherCode('');
       setVoucherResult(null);
       setVoucherError('');
@@ -1435,11 +1488,33 @@ function OrdersPage() {
                 ))}
               </div>
               <button type="button" onClick={() => setOrderDraft((prev) => ({ ...prev, items: [...prev.items, { menuItemId: '', quantity: 1 }] }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800">+ Add another product</button>
-              <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
+              <div className="grid gap-4 lg:grid-cols-[1fr_1fr_0.8fr]">
                 <label className="block text-sm text-slate-700 dark:text-slate-200">
                   Status
                   <select value={orderDraft.status} onChange={(e) => setOrderDraft((prev) => ({ ...prev, status: e.target.value }))} className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
                     {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+                  </select>
+                </label>
+                <label className="block text-sm text-slate-700 dark:text-slate-200">
+                  Delivery Rider (Optional)
+                  <select
+                    value={orderDraft.riderId}
+                    onChange={(e) => {
+                      const rider = riders.find((entry) => String(entry.id) === String(e.target.value));
+                      setOrderDraft((prev) => ({
+                        ...prev,
+                        riderId: e.target.value,
+                        riderName: rider ? rider.name : ''
+                      }));
+                    }}
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  >
+                    <option value="">-- No rider assigned --</option>
+                    {riders.map((rider) => (
+                      <option key={rider.id} value={rider.id} disabled={rider.availability === 'On Delivery' && !rider.allowMultipleActiveDeliveries}>
+                        {rider.name} · {rider.availability}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <div className="block text-sm text-slate-700 dark:text-slate-200">
@@ -1544,9 +1619,49 @@ function OrdersPage() {
               </div>
               <div className="flex flex-wrap gap-3 pt-4">
                 <button type="submit" className="rounded-2xl bg-slate-900 px-6 py-3 text-sm font-semibold text-white hover:bg-slate-800">Save Changes</button>
+                <button type="button" onClick={openRefundModal} className="rounded-2xl bg-rose-600 px-6 py-3 text-sm font-semibold text-white hover:bg-rose-700">Request Refund</button>
                 <button type="button" onClick={() => setViewModalOpen(false)} className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">Close</button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {refundModalOpen && viewOrder ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4">
+          <div className="w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-[0_22px_60px_rgba(15,23,42,0.18)] dark:bg-slate-900 dark:text-slate-100">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-semibold">Request Refund</h2>
+                <p className="text-sm text-slate-500">Create a refund request for review by a manager.</p>
+              </div>
+              <button type="button" onClick={() => setRefundModalOpen(false)} className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">Close</button>
+            </div>
+            <div className="grid gap-4">
+              <label className="block text-sm">
+                Refund type
+                <select value={refundDraft.refundType} onChange={(e) => setRefundDraft((prev) => ({ ...prev, refundType: e.target.value, refundAmount: e.target.value === 'full' ? Number(viewOrder.amount || 0) : prev.refundAmount }))} className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-950">
+                  <option value="full">Full Refund</option>
+                  <option value="partial">Partial Refund</option>
+                </select>
+              </label>
+              <label className="block text-sm">
+                Refund reason
+                <textarea value={refundDraft.refundReason} onChange={(e) => setRefundDraft((prev) => ({ ...prev, refundReason: e.target.value }))} rows="3" className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-950" placeholder="Describe the issue" />
+              </label>
+              <label className="block text-sm">
+                Requested refund amount
+                <input type="number" step="0.01" value={refundDraft.refundAmount} onChange={(e) => setRefundDraft((prev) => ({ ...prev, refundAmount: Number(e.target.value || 0) }))} className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-950" />
+              </label>
+              <label className="block text-sm">
+                Manager notes
+                <textarea value={refundDraft.managerNotes} onChange={(e) => setRefundDraft((prev) => ({ ...prev, managerNotes: e.target.value }))} rows="3" className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none dark:border-slate-700 dark:bg-slate-950" placeholder="Optional notes" />
+              </label>
+              <div className="flex flex-wrap gap-3 pt-4">
+                <button type="button" onClick={submitRefundRequest} className="rounded-2xl bg-rose-600 px-6 py-3 text-sm font-semibold text-white hover:bg-rose-700">Submit request</button>
+                <button type="button" onClick={() => setRefundModalOpen(false)} className="rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">Cancel</button>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}

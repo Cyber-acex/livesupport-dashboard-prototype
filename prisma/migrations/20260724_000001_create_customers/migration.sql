@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS "customers" (
+  "id" SERIAL NOT NULL,
+  "name" VARCHAR(255) NOT NULL,
+  "phone" VARCHAR(255),
+  "created_at" TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updated_at" TIMESTAMP(0) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "customers_pkey" PRIMARY KEY ("id"),
+  CONSTRAINT "customers_name_key" UNIQUE ("name")
+);

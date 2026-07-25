@@ -1,0 +1,1 @@
+{"id":2,"name":"Cyber15","role":"admin","password":"","avatar_url":"http://localhost:3000/uploads/27c741de44b7f44c5f596c1672b71b08","branchId":2,"branchName":"Ikeja"}

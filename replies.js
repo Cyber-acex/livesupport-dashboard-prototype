@@ -4,6 +4,7 @@ import path from "path";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config as dbConfig, prisma } from './db/database.js';
+import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -684,6 +685,59 @@ function extractPartySize(message) {
     return Number.isFinite(value) ? value : null;
 }
 
+function getBranchDisplayName(branchId = null) {
+    const branchMap = {
+        1: 'Ikeja',
+        2: 'Lekki',
+        3: 'Victoria Island'
+    };
+    const normalizedBranchId = Number(branchId || 0);
+    return branchMap[normalizedBranchId] || 'your branch';
+}
+
+function buildSupportReply(message = '', options = {}) {
+    const lowerMessage = String(message || '').toLowerCase();
+    const branchId = options?.branchId;
+    const branchLabel = getBranchDisplayName(branchId);
+    const branchContext = branchId ? `For ${branchLabel}, ` : '';
+
+    if (isMenuInquiry(message)) {
+        return `${branchContext}I can share our current menu and pricing. Delivery is $${DELIVERY_FEE.toFixed(2)} per order, and orders above $${FREE_DELIVERY_THRESHOLD.toFixed(2)} qualify for free delivery. I can also highlight featured dishes or the full menu for you.`;
+    }
+
+    if (isOrderStatusInquiry(message)) {
+        return `${branchContext}I can help with your order status and ETA. Please send your order ID (for example ORD-12345) so I can check the latest status, estimated arrival time, and any delays for you.`;
+    }
+
+    if (isColdFoodComplaint(message)) {
+        return `I’m very sorry your food arrived cold. I can offer a replacement, expedited redelivery, or a manager review right away. Please tell me which option you prefer and I’ll start the resolution process.`;
+    }
+
+    if (isModificationRequest(message)) {
+        return `${branchContext}I can help update your order if the change is still within the allowed modification window. Please send your order ID and the exact change you want, such as removing onions or adding extra chicken.`;
+    }
+
+    if (isRefundInquiry(message)) {
+        return `I understand you want a refund. I can check eligibility first, and if the request qualifies, I’ll escalate it to a manager for approval and keep you updated throughout the process.`;
+    }
+
+    if (isReservationInquiry(message)) {
+        const partySize = extractPartySize(message);
+        const partyText = partySize ? `for ${partySize}` : 'for your party';
+        return `${branchContext}I can help check availability ${partyText}. Please share your preferred date, time, and party size so I can confirm the reservation options.`;
+    }
+
+    if (isMissingItemRequest(message)) {
+        return `I’m sorry something was missing from your order. I can arrange a quick replacement for the missing item or offer a voucher or store credit if that is the better resolution.`;
+    }
+
+    if (/(help|assist|issue|problem|order)/.test(lowerMessage) && branchId) {
+        return `${branchContext}I can help with your order, delivery, reservation, or refund request. Please share your order ID or a brief description of the issue so I can route it correctly.`;
+    }
+
+    return null;
+}
+
 async function getOrderById(orderId) {
     if (!orderId) return null;
 
@@ -1247,7 +1301,21 @@ async function getRecentConversationMessages(conversationId, limit = 8) {
     }
 }
 
-async function createTicket(content, phone = null, conversationId = null, assignee = null, ticketType = null, priority = 'Medium', tags = []) {
+async function getConversationBranchId(conversationId) {
+    if (!conversationId) return null;
+    try {
+        const conversation = await prisma.conversation.findUnique({
+            where: { id: Number(conversationId) },
+            select: { branch_id: true }
+        });
+        return Number(conversation?.branch_id || 0) || null;
+    } catch (error) {
+        console.warn('Unable to resolve conversation branch:', error?.message || error);
+        return null;
+    }
+}
+
+async function createTicket(content, phone = null, conversationId = null, assignee = null, ticketType = null, priority = 'Medium', tags = [], branchId = null) {
     const customerName = await getCustomerName(phone, conversationId);
     const now = new Date();
     const status = 'Open';
@@ -1255,6 +1323,7 @@ async function createTicket(content, phone = null, conversationId = null, assign
     const ticketTypeValue = ticketType || getTicketTypeByAssignee(assignee);
     const tagsText = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
     const slaDue = new Date(now.getTime() + 2 * 60 * 60 * 1000); // 2 hour SLA for auto-created tickets by default
+    const resolvedBranchId = Number(branchId || await getConversationBranchId(conversationId) || 0) || null;
 
     try {
         const ticket = await prisma.ticket.create({
@@ -1268,7 +1337,8 @@ async function createTicket(content, phone = null, conversationId = null, assign
                 status,
                 content,
                 tags: tagsText,
-                sla_due: slaDue
+                sla_due: slaDue,
+                branch_id: resolvedBranchId
             }
         });
 
@@ -1279,85 +1349,102 @@ async function createTicket(content, phone = null, conversationId = null, assign
     }
 }
 
-async function createOrderFromConversation(conversationId, phone) {
+async function createOrderFromConversation(conversationId, phone, branchId = null) {
     if (!conversationId) {
         console.log("createOrderFromConversation: No conversationId");
         return null;
     }
 
-    // Get recent conversation messages to find the order details
     const recentMessages = await getRecentConversationMessages(conversationId, 10);
-    
-    // Find the customer's order message and extract items
-    let orderDetails = null;
+    let orderPayload = null;
+
     for (let i = recentMessages.length - 1; i >= 0; i--) {
         const msg = recentMessages[i];
-        if (msg.sender === 'received' || msg.sender === 'customer') { // Customer message
+        if (msg.sender === 'received' || msg.sender === 'customer') {
             const aiExtracted = await parseOrderJsonFromAI(msg.message);
             if (aiExtracted.items && aiExtracted.items.length > 0) {
-                const total = await calculateOrderTotalFromItems(aiExtracted.items);
-                const itemsText = formatOrderItemsForConfirmation(aiExtracted.items);
-                orderDetails = { items: itemsText, total };
+                orderPayload = aiExtracted.items;
                 break;
             }
 
             const extracted = extractOrderItemsFromMessage(msg.message);
-            if (extracted.items && extracted.total > 0) {
-                orderDetails = extracted;
+            if (extracted && extracted.items) {
+                orderPayload = [{ name: extracted.items, quantity: 1 }];
                 break;
             }
         }
     }
 
-    if (!orderDetails) {
+    if (!orderPayload) {
         console.log("createOrderFromConversation: Could not find order details in conversation");
         return null;
     }
 
-    // Get customer name
     const customerName = await getCustomerName(phone, conversationId);
-
-    // Generate order ID
-    const orderId = `ORD-${Date.now()}`;
+    const resolvedBranchId = Number(branchId || await getConversationBranchId(conversationId) || 0) || null;
 
     try {
+        const menuRows = await prisma.menu.findMany({
+            select: { id: true, category: true, key_name: true, name: true, price: true, available: true },
+            orderBy: [{ category: 'asc' }, { name: 'asc' }]
+        });
+        const { resolved, unavailable } = resolveMenuItemMatches(orderPayload, Array.isArray(menuRows) ? menuRows : []);
+        if (resolved.length === 0) {
+            const reason = unavailable[0] ? `${unavailable[0].name} is unavailable` : 'the requested menu items could not be validated';
+            return { success: false, message: `I’m sorry, ${reason}. I can suggest alternatives if you’d like.` };
+        }
+
+        const pricing = calculateOrderPricing(resolved, {
+            taxRate: 0.08,
+            deliveryFee: 3.5,
+            freeDeliveryThreshold: 25,
+            discountAmount: 0
+        });
+        const orderId = `ORD-${Date.now()}`;
         const order = await prisma.order.create({
             data: {
                 order_id: orderId,
                 customer_name: customerName,
                 phone: phone || null,
-                product: orderDetails.items,
-                amount: orderDetails.total,
-                total_amount: orderDetails.total,
+                product: resolved.map((item) => `${item.name} x${item.quantity}`).join(', '),
+                amount: pricing.subtotal,
+                total_amount: pricing.finalTotal,
+                subtotal: pricing.subtotal,
+                final_total: pricing.finalTotal,
+                discount_amount: pricing.discountAmount,
                 status: 'confirmed',
                 order_date: new Date(),
-                conversation_id: Number(conversationId)
+                conversation_id: Number(conversationId),
+                branch_id: resolvedBranchId
             }
         });
 
         const result = {
+            success: true,
             id: order.id,
             orderId: order.order_id,
             product: order.product,
             total: order.total_amount ?? order.amount,
-            status: order.status
+            status: order.status,
+            message: buildOrderConfirmationMessage({
+                orderId: order.order_id,
+                customerName,
+                lineItems: resolved.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice, lineTotal: item.lineTotal })),
+                pricing,
+                estimatedPreparationTime: '25 mins',
+                estimatedDeliveryTime: '40 mins',
+                status: 'Confirmed'
+            })
         };
+
         console.log("createOrderFromConversation: Order created:", result);
 
-        // Automatically start the delivery simulation using the server route
         fetch('http://localhost:3000/api/delivery/start', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ order_id: result.orderId })
-        }).then((response) => {
-            if (!response.ok) {
-                throw new Error('Delivery start failed');
-            }
-            return response.json();
-        }).then((data) => {
-            console.log('createOrderFromConversation: Auto delivery simulation started for order', result.orderId, data);
         }).catch((deliveryErr) => {
             console.error('createOrderFromConversation: Failed to auto-start delivery:', deliveryErr);
         });
@@ -1365,24 +1452,26 @@ async function createOrderFromConversation(conversationId, phone) {
         return result;
     } catch (err) {
         console.log("createOrderFromConversation: Database error:", err);
-        return null;
+        return { success: false, message: 'I’m sorry, the order could not be created right now. Please try again.' };
     }
 }
 
-async function getMistralReply(message, phone = null, conversationId = null, branchId = null) {
+async function getMistralReply(message, phone = null, conversationId = null, branchId = null, conversationState = null) {
     try {
-        console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", branchId);
+        console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", branchId, "state:", conversationState?.workflowState || 'none');
         
         // Check if this is a response to an order confirmation
         if (conversationId && isOrderConfirmationResponse(message)) {
             if (isPositiveConfirmation(message)) {
                 console.log("Customer confirmed order - creating order");
-                const order = await createOrderFromConversation(conversationId, phone);
-                if (order) {
-                    return `Great! Your order has been confirmed and placed. Order ID: ${order.orderId}. Your ${order.product} will be prepared and delivered soon. Total: $${order.total.toFixed(2)}. Thank you for your business!`;
-                } else {
-                    return "I apologize, but I couldn't process your order at this time. Please try again or contact our support team for assistance.";
+                const order = await createOrderFromConversation(conversationId, phone, branchId);
+                if (order && order.success) {
+                    return order.message;
                 }
+                if (order && order.message) {
+                    return order.message;
+                }
+                return "I apologize, but I couldn't process your order at this time. Please try again or contact our support team for assistance.";
             } else {
                 console.log("Customer declined order confirmation");
                 return "No problem! Your order has not been placed. If you'd like to modify your order or try again, just let me know!";
@@ -1402,6 +1491,11 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
 
         if (orderStatusRequest && !orderId) {
             return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
+        }
+
+        const supportReply = buildSupportReply(message, { branchId });
+        if (supportReply) {
+            return supportReply;
         }
 
         if (isReservationInquiry(message)) {
@@ -1467,7 +1561,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             console.log("Customer requested ticket creation. Attempting to create ticket.");
             const assignee = detectTicketCategory(message);
             const ticketType = getTicketTypeByAssignee(assignee);
-            const ticket = await createTicket(message, phone, conversationId, assignee, ticketType, 'Medium', ['auto-created']);
+            const ticket = await createTicket(message, phone, conversationId, assignee, ticketType, 'Medium', ['auto-created'], branchId);
             if (ticket) {
                 return `A support ticket has been created for you as Ticket #${ticket.id} and assigned to our ${assignee} team. I will continue helping you here while your request is recorded. Can you please tell me more about the problem or let me know what I can assist you with next?`;
             }
@@ -1525,6 +1619,10 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             orderContext += `\n\nCustomer branch context: branch ID ${branchId}. Use the branch context to route requests or confirm availability for the correct location.`;
         }
 
+        const persistedWorkflowContext = conversationState && typeof conversationState === 'object'
+            ? `\n\nPersisted conversation workflow state:\n- Current workflow state: ${conversationState.workflowState || 'Greeting'}\n- Pending questions: ${(conversationState.pendingQuestions || []).join('; ') || 'None'}\n- Draft order items: ${(conversationState.draftOrder?.items || []).map(item => `${item.name} x${item.quantity}`).join(', ') || 'None'}\n- Draft order notes: ${conversationState.draftOrder?.notes || 'None'}\n- Branch ID: ${conversationState.branchId || branchId || 'Unknown'}`
+            : '';
+
         // Include recent conversation history so Mistral remembers ongoing orders
         let conversationHistory = [];
         if (conversationId) {
@@ -1560,7 +1658,7 @@ Follow these policy guardrails when taking action:
 ${policyGuidance}
 
 Never invent compensation, refund amounts, or replacement guarantees. Only offer actions supported by the policy, verified order information, or documented escalation.`;
-        let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}`;
+        let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}${persistedWorkflowContext}`;
 
         if (menuInquiry) {
             userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;
@@ -1652,4 +1750,4 @@ The customer appears to be placing an order but I couldn't identify the specific
     }
 }
 
-export { getMistralReply, buildPolicyGuidance, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize };
+export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize };

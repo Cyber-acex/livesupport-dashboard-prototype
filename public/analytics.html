@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <link rel="icon" href="/favicon.png" type="image/png">
@@ -9,7 +9,6 @@
     <link rel="stylesheet" href="./css/style.css">
     <link rel="stylesheet" href="./css/sidebar.css">
   <link rel="stylesheet" href="./css/tailadmin.css">
-  <link rel="stylesheet" href="./css/voice.css">
     <script>document.documentElement.classList.add('ls-js');</script>
     <style>
       body { background: white !important; }
@@ -57,7 +56,6 @@
                 <a href="./ai-knowledge.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 7V4H4v3H2v10h18V7h-0zM6 6h12v2H6V6zm12 10H6v-6h12v6z"/></svg><span class="nav-label">AI Knowledge</span></a>
                 
                 <a href="./orders.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-1.99.9-1.99 2S15.9 22 17 22s2-.9 2-2-.9-2-2-2zM7.16 14l.84-2h7.45l1.24 3H7.16zM7.6 6h10.8l-1.2 3H8.8L7.6 6z"/></svg><span class="nav-label">Orders</span></a>
-                <a href="./tracking.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm0-6c-6.6 0-12 5.4-12 12 0 3.6 1.6 6.8 4.2 9l.8-2.6C4.1 19.1 3 16.6 3 14 3 8.5 7.6 4 13 4s10 4.5 10 10c0 2.6-1.1 5.1-2.9 6.4L21 23c2.6-2.2 4-5.4 4-9 0-6.6-5.4-12-12-12z"/></svg><span class="nav-label">Tracking</span></a>
                 <a href="./settings.html"><svg class="nav-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19.14 12.94a7.89 7.89 0 000-1.88l2.03-1.58-2-3.46-2.39.96a8.1 8.1 0 00-1.6-.93l-.36-2.5h-4l-.36 2.5c-.57.24-1.1.55-1.6.93L6.8 6.02l-2 3.46L6.83 11a7.89 7.89 0 000 1.88l-2.03 1.58 2 3.46 2.39-.96c.5.38 1.03.69 1.6.93l.36 2.5h4l.36-2.5c.57-.24 1.1-.55 1.6-.93l2.39.96 2-3.46-2.03-1.58zM12 15.5A3.5 3.5 0 1112 8.5a3.5 3.5 0 010 7z"/></svg><span class="nav-label">Settings</span></a>
     </nav>
   </aside>
@@ -94,14 +92,14 @@
             <div class="profile-session">
               <div class="session-header">Session Info</div>
               <div class="session-details">
-                <div class="session-item"><span class="session-icon">🕐</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
-                <div class="session-item"><span class="session-icon">⏱️</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
-                <div class="session-item"><span class="session-icon">⚡</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
+                <div class="session-item"><span class="session-icon">??</span><span class="session-label">Logged in:</span><span class="session-value" id="loginTime">--:--</span></div>
+                <div class="session-item"><span class="session-icon">??</span><span class="session-label">Duration:</span><span class="session-value" id="sessionDuration">--:--</span></div>
+                <div class="session-item"><span class="session-icon">?</span><span class="session-label">Last activity:</span><span class="session-value" id="lastActivity">--:--</span></div>
               </div>
             </div>
             <div class="profile-actions">
-              <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">⚙️</span> Settings</a>
-              <button id="logoutBtn" class="profile-action"><span class="profile-icon">🚪</span> Logout</button>
+              <a id="profileSettings" class="profile-action" href="settings.html"><span class="profile-icon">??</span> Settings</a>
+              <button id="logoutBtn" class="profile-action"><span class="profile-icon">??</span> Logout</button>
             </div>
           </div>
         </div>
@@ -148,7 +146,6 @@ fetch("/api/user")
 </script>
 <!---->
 <script src="/socket.io/socket.io.js"></script>
-<script src="./js/voice.js" defer></script>
 <script src="./js/phone-ui.js" type="module"></script>
 <script src="./js/notification-sound.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
@@ -973,32 +970,32 @@ fetch("/api/user")
 <div class="kpi-row">
   <div class="kpi-card">
     <h4>Total Tickets</h4>
-            <p id="kpi-totalTickets">—</p>
+            <p id="kpi-totalTickets">�</p>
     <div class="kpi-small">Created in selected range</div>
   </div>
   <div class="kpi-card">
     <h4>Avg Response (s)</h4>
-      <p id="kpi-analyticsAvgResponse">—</p>
+      <p id="kpi-analyticsAvgResponse">�</p>
     <div class="kpi-small">Average first response time</div>
   </div>
   <div class="kpi-card">
     <h4>Resolution Time</h4>
-      <p id="kpi-resolutionTime">—</p>
+      <p id="kpi-resolutionTime">�</p>
     <div class="kpi-small">Average seconds to resolve</div>
   </div>
   <div class="kpi-card">
     <h4>Active Chats</h4>
-      <p id="kpi-analyticsActiveChats">—</p>
+      <p id="kpi-analyticsActiveChats">�</p>
     <div class="kpi-small">Currently live</div>
   </div>
   <div class="kpi-card">
     <h4>AI Feedback Avg</h4>
-      <p id="kpi-analyticsAIFeedbackAvg">—</p>
+      <p id="kpi-analyticsAIFeedbackAvg">�</p>
     <div class="kpi-small">Average rating from staff/customers</div>
   </div>
   <div class="kpi-card">
     <h4>Feedback Count</h4>
-            <p id="kpi-aiFeedbackCount">—</p>
+            <p id="kpi-aiFeedbackCount">�</p>
     <div class="kpi-small">Total feedback entries</div>
   </div>
 </div>
@@ -1044,27 +1041,27 @@ fetch("/api/user")
       <div class="staff-kpi-grid">
         <div class="metric-card">
           <h3>Total handled</h3>
-          <div class="metric-value" id="kpi-totalHandled">—</div>
+          <div class="metric-value" id="kpi-totalHandled">�</div>
           <div class="metric-note">Messages processed by the team.</div>
         </div>
         <div class="metric-card">
           <h3>Avg response</h3>
-          <div class="metric-value" id="kpi-avgResponse">—</div>
+          <div class="metric-value" id="kpi-avgResponse">�</div>
           <div class="metric-note">Average response time in seconds.</div>
         </div>
         <div class="metric-card">
           <h3>Resolution health</h3>
-          <div class="metric-value" id="kpi-resolutionRate">—</div>
+          <div class="metric-value" id="kpi-resolutionRate">�</div>
           <div class="metric-note">Estimated fulfillment rate.</div>
         </div>
         <div class="metric-card">
           <h3>Active chats</h3>
-          <div class="metric-value" id="kpi-activeChats">—</div>
+          <div class="metric-value" id="kpi-activeChats">�</div>
           <div class="metric-note">Conversations currently in progress.</div>
         </div>
         <div class="metric-card">
           <h3>AI feedback</h3>
-          <div class="metric-value" id="kpi-aiFeedbackAvg">—</div>
+          <div class="metric-value" id="kpi-aiFeedbackAvg">�</div>
           <div class="metric-note">Average quality rating from feedback.</div>
         </div>
       </div>
@@ -1072,7 +1069,7 @@ fetch("/api/user")
       <!-- Live Staff Presence Map -->
       <div class="staff-presence-section">
         <div class="section-header">
-          <h3>📍 Live Staff Presence Map</h3>
+          <h3>?? Live Staff Presence Map</h3>
           <div class="presence-filters">
             <button class="filter-btn active" data-filter="all">All</button>
             <button class="filter-btn" data-filter="online">Online</button>
@@ -1089,18 +1086,18 @@ fetch("/api/user")
         <aside class="staff-summary-card card">
           <div class="summary-block">
             <h4>Performance summary</h4>
-            <p id="summaryTotalHandled">—</p>
+            <p id="summaryTotalHandled">�</p>
             <div class="summary-label">Total messages handled</div>
           </div>
           <div class="summary-line">
             <div class="summary-block">
               <h4>Avg response</h4>
-              <p id="summaryAvgResp">—</p>
+              <p id="summaryAvgResp">�</p>
               <div class="summary-label">Seconds per first reply</div>
             </div>
             <div class="summary-block">
               <h4>Resolution rate</h4>
-              <p id="summaryResolutionRate">—</p>
+              <p id="summaryResolutionRate">�</p>
               <div class="summary-label">Team resolution health</div>
             </div>
           </div>
@@ -1145,7 +1142,7 @@ fetch("/api/user")
 
       <div id="staffModal" class="modal" aria-hidden="true">
         <div class="modal-panel">
-          <button id="modalClose" class="modal-close">×</button>
+          <button id="modalClose" class="modal-close">�</button>
           <h2 id="modalName">Staff Name</h2>
           <div id="modalBody">Loading...</div>
         </div>
@@ -1192,6 +1189,7 @@ window.addEventListener('hashchange', applyAnalyticsPageHash);
 
 </body>
 </html>
+
 
 
 

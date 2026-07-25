@@ -901,7 +901,6 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
 }
 
 .menu a .nav-icon, .menu a svg { width: 18px; height: 18px; display: inline-block; vertical-align: middle; margin-right: 10px; fill: currentColor; }
-.menu a[href="./tracking.html"] svg { transform: translateX(-8px); }
 .menu a .nav-label { vertical-align: middle; }
 
 @keyframes buttonPulse {

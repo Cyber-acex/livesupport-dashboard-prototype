@@ -3,16 +3,18 @@ import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import { useNotification } from '../contexts/NotificationContext';
+import { useZoom } from '../contexts/ZoomContext';
 import {
   getSettings,
   saveSettings,
   applyTheme,
   applyFontSize,
-  applyZoom,
   AUTOPILOT_MODES,
   getFontSizeLabel
 } from '../services/settingsService';
 import { normalizeAutopilotMode } from '../services/autopilotMode';
+import { DEFAULT_ZOOM, ZOOM_LEVELS } from '../utils/zoom';
+import { hasRolePermission, normalizeRole } from '../utils/rolePermissions';
 
 function SettingsPage() {
   const location = useLocation();
@@ -21,6 +23,7 @@ function SettingsPage() {
   const [settings, setSettings] = useState(getSettings());
   const [passwordChanged, setPasswordChanged] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [adminPermissions, setAdminPermissions] = useState([]);
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [branches, setBranches] = useState([]);
@@ -28,11 +31,19 @@ function SettingsPage() {
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'agent', branchId: '' });
   const [createMessage, setCreateMessage] = useState('');
   const [createMessageColor, setCreateMessageColor] = useState('');
+  const [showCreateConfirmation, setShowCreateConfirmation] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState('');
   const [avatarFile, setAvatarFile] = useState(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [showAdminUserPassword, setShowAdminUserPassword] = useState(false);
+  const { zoom, setZoom, increaseZoom, decreaseZoom, resetZoom, zoomLevels } = useZoom();
 
-  const roleOptions = ['agent', 'admin', 'viewer', 'Delivery Support', 'Refund Manager', 'Kitchen Supervisor', 'Customer Support'];
+  const roleOptions = [
+    { label: 'Admin', value: 'admin' },
+    { label: 'Manager', value: 'manager' },
+    { label: 'Agent/Staff', value: 'agent' },
+    { label: 'Rider', value: 'rider' }
+  ];
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -59,7 +70,7 @@ function SettingsPage() {
     setSettings(initial);
     applyTheme(initial.theme);
     applyFontSize(initial.fontSize);
-    applyZoom(Number(initial.pageZoom));
+    setZoom(Number(initial.pageZoom || DEFAULT_ZOOM));
 
     // Check if admin
     async function checkAdmin() {
@@ -67,14 +78,21 @@ function SettingsPage() {
         const res = await fetch('/api/user');
         if (res.ok) {
           const data = await res.json();
-          setIsAdmin(data && (data.role || '').toString().toLowerCase() === 'admin');
+          const role = normalizeRole(data?.role);
+          const isAdminUser = role === 'admin';
+          setIsAdmin(isAdminUser);
+          setAdminPermissions(isAdminUser ? ['config', 'policies', 'analytics', 'roles', 'integrations'] : []);
         }
       } catch (e) {
         setIsAdmin(false);
       }
     }
     checkAdmin();
-  }, []);
+  }, [setZoom]);
+
+  useEffect(() => {
+    setSettings((current) => (current.pageZoom === String(zoom) ? current : { ...current, pageZoom: String(zoom) }));
+  }, [zoom]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -254,7 +272,12 @@ function SettingsPage() {
       setTimeout(() => setCreateMessage(''), 4000);
       return;
     }
-    if (!confirm(`Create new user ${newUser.name || newUser.email}?`)) return;
+
+    setShowCreateConfirmation(true);
+  };
+
+  const confirmCreateUser = async () => {
+    setShowCreateConfirmation(false);
 
     try {
       const res = await fetch('/api/admin/users', {
@@ -317,9 +340,10 @@ function SettingsPage() {
     }
   };
 
-  const handleZoomChange = (zoom) => {
-    setSettings({ ...settings, pageZoom: zoom });
-    applyZoom(Number(zoom));
+  const handleZoomChange = (nextZoom) => {
+    const normalizedZoom = Number(nextZoom);
+    setSettings((current) => ({ ...current, pageZoom: String(normalizedZoom) }));
+    setZoom(normalizedZoom);
   };
 
   const handleAvatarUpload = (e) => {
@@ -375,6 +399,8 @@ function SettingsPage() {
     </button>
   );
 
+  const hasPermission = (permission) => isAdmin && adminPermissions.includes(permission);
+
   const sectionMeta = {
     account: { eyebrow: 'Workspace identity', title: 'Account settings', description: 'Keep your profile and workspace targets in sync.' },
     notifications: { eyebrow: 'Signal control', title: 'Notifications', description: 'Tune the moments that deserve your attention.' },
@@ -413,7 +439,7 @@ function SettingsPage() {
                   {renderNavButton('chat', 'Chat settings', 'Customer experience', navIcon('M21 11.5a8.4 8.4 0 0 1-9 8.3 9.6 9.6 0 0 1-4-.8L3 21l1.8-4.5A8 8 0 1 1 21 11.5Z'))}
                   {renderNavButton('ai', 'AI settings', 'Automation rules', navIcon('M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z'))}
                   {renderNavButton('appearance', 'Appearance', 'Look & layout', navIcon('M12 3v18M3 12h18M7 3v4M17 17v4M3 7h4M17 7h4'))}
-                  {isAdmin && renderNavButton('admin-users', 'Admin users', 'Team permissions', navIcon('M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8'))}
+                  {hasPermission('roles') && renderNavButton('admin-users', 'Admin users', 'Team permissions', navIcon('M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8'))}
                 </nav>
                 <div className="hidden border-t border-slate-200/80 p-5 lg:block dark:border-slate-800">
                   <p className="text-xs font-semibold text-slate-500">Need a hand?</p>
@@ -775,38 +801,86 @@ function SettingsPage() {
                     </div>
 
                     <div className="border-t border-slate-200 pt-4 sm:pt-6">
-                      <label className="mb-3 block text-sm font-medium text-slate-700 dark:text-slate-100">Page Zoom</label>
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                        <button
-                          onClick={() => handleZoomChange(Math.max(25, Number(settings.pageZoom) - 5))}
-                          className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                        >
-                          −
-                        </button>
-                        <input
-                          type="range"
-                          min="25"
-                          max="150"
-                          step="5"
-                          value={settings.pageZoom}
-                          onChange={(e) => handleZoomChange(e.target.value)}
-                          className="flex-1"
-                        />
-                        <button
-                          onClick={() => handleZoomChange(Math.min(150, Number(settings.pageZoom) + 5))}
-                          className="px-3 py-2 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 transition-colors font-medium"
-                        >
-                          +
-                        </button>
-                        <span className="min-w-16 text-center text-sm font-medium text-slate-600">
-                          {settings.pageZoom}%
-                        </span>
+                      <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-brand-50 p-4 shadow-[0_18px_45px_-24px_rgba(15,23,42,0.35)] backdrop-blur dark:border-slate-700 dark:from-slate-800/80 dark:via-slate-900 dark:to-brand-950/60 sm:p-5">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-brand-600">
+                              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.16)]" />
+                              Live preview
+                            </div>
+                            <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">Adaptive workspace zoom</h3>
+                            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Adjust the interface scale smoothly while preserving spacing, sticky panels, and responsive layouts.</p>
+                          </div>
+                          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
+                            <span className="text-base">{zoom}%</span>
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            active
+                          </div>
+                        </div>
+
+                        <div className="mt-5 flex flex-col gap-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            {zoomLevels.map((level) => (
+                              <button
+                                key={level}
+                                type="button"
+                                onClick={() => handleZoomChange(level)}
+                                className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition-all ${Number(settings.pageZoom || zoom) === level ? 'border-brand-600 bg-brand-600 text-white shadow-lg shadow-brand-600/20' : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'}`}
+                              >
+                                {level}%
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-inner shadow-slate-200/40 dark:border-slate-700 dark:bg-slate-900/70 sm:flex-row sm:items-center">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                aria-label="Decrease zoom"
+                                onClick={() => decreaseZoom()}
+                                className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              >
+                                −
+                              </button>
+                              <input
+                                type="range"
+                                min="75"
+                                max="200"
+                                step="5"
+                                value={Number(settings.pageZoom || zoom)}
+                                onChange={(event) => handleZoomChange(event.target.value)}
+                                className="h-2 w-full min-w-[180px] cursor-pointer appearance-none rounded-full bg-slate-200 accent-brand-600 dark:bg-slate-700"
+                                aria-label="Adjust workspace zoom"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Increase zoom"
+                                onClick={() => increaseZoom()}
+                                className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              >
+                                +
+                              </button>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                {Number(settings.pageZoom || zoom)}%
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => resetZoom()}
+                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
                     <div className="rounded-lg border-t border-slate-200 bg-slate-50 p-4 pt-4 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 sm:pt-6">
                       <p className="text-sm text-slate-600 dark:text-slate-300">
-                        <strong>Note:</strong> Sidebar position and width changes apply immediately. Refresh the page or navigate to see full effect.
+                        <strong>Shortcuts:</strong> Ctrl/Cmd + / Ctrl/Cmd − / Ctrl/Cmd 0 adjust the app zoom instantly, and your choice is saved automatically.
                       </p>
                     </div>
 
@@ -823,7 +897,7 @@ function SettingsPage() {
               )}
 
               {/* Admin Users Section */}
-              {activeSection === 'admin-users' && isAdmin && (
+              {activeSection === 'admin-users' && hasPermission('roles') && (
                 <div>
                   <h2 className="mb-6 text-2xl font-bold text-slate-900 sm:mb-8 sm:text-3xl dark:text-white">Manage Users</h2>
 
@@ -845,21 +919,43 @@ function SettingsPage() {
                         onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
                         className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
-                      <input
-                        type="password"
-                        placeholder="Password"
-                        value={newUser.password}
-                        onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                        className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
+                      <div className="relative">
+                        <input
+                          type={showAdminUserPassword ? 'text' : 'password'}
+                          placeholder="Password"
+                          value={newUser.password}
+                          onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                          className="w-full px-4 py-2 pr-10 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowAdminUserPassword((value) => !value)}
+                          className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-500 hover:text-slate-700"
+                          aria-label={showAdminUserPassword ? 'Hide password' : 'Show password'}
+                        >
+                          {showAdminUserPassword ? (
+                            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M3 3l18 18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                              <path d="M10.58 10.58A2 2 0 0 0 13.42 13.42" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                              <path d="M9.88 5.1A10.8 10.8 0 0 1 12 5c4.3 0 8 2.2 10 6.8a11 11 0 0 1-2.9 3.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                              <path d="M6.3 7.7A14.4 14.4 0 0 0 2 11.8c1.8 4.1 4.8 6.5 8.9 7.2" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                            </svg>
+                          ) : (
+                            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                       <select
                         value={newUser.role}
                         onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
                         className="px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       >
                         {roleOptions.map((role) => (
-                          <option key={role} value={role}>
-                            {role}
+                          <option key={role.value} value={role.value}>
+                            {role.label}
                           </option>
                         ))}
                       </select>
@@ -889,6 +985,47 @@ function SettingsPage() {
                       <p className={`mt-3 ${createMessageColor}`}>{createMessage}</p>
                     )}
                   </div>
+
+                  {showCreateConfirmation && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 px-4 backdrop-blur-sm">
+                      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_24px_80px_rgba(15,23,42,0.28)] dark:border-slate-700 dark:bg-slate-900">
+                        <div className="mb-4 flex items-center gap-3">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-100 text-indigo-600 dark:bg-indigo-500/15 dark:text-indigo-300">
+                            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 8v4" />
+                              <path d="M12 16h.01" />
+                              <circle cx="12" cy="12" r="9" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">Confirm user creation</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Review this before finalizing.</p>
+                          </div>
+                        </div>
+
+                        <p className="mb-5 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                          Create the new user <span className="font-semibold text-slate-900 dark:text-white">{newUser.name || newUser.email}</span> with the <span className="font-semibold text-slate-900 dark:text-white">{newUser.role}</span> role?
+                        </p>
+
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowCreateConfirmation(false)}
+                            className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={confirmCreateUser}
+                            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700"
+                          >
+                            Confirm
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Users Table */}
                   <div className="overflow-x-auto rounded-lg bg-white shadow dark:bg-slate-900 dark:text-slate-100">
@@ -971,8 +1108,8 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           className="px-2 py-1 border border-slate-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
         >
           {roleOptions.map((option) => (
-            <option key={option} value={option}>
-              {option}
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>

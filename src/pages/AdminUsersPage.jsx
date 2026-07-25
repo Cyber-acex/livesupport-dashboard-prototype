@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
+import { hasRolePermission, normalizeRole } from '../utils/rolePermissions';
 
 function AdminUsersPage() {
   const [users, setUsers] = useState([]);
@@ -12,7 +13,12 @@ function AdminUsersPage() {
   const [createMessageColor, setCreateMessageColor] = useState('');
 
   // Roles available
-  const roleOptions = ['agent', 'admin', 'viewer', 'Delivery Support', 'Refund Manager', 'Kitchen Supervisor', 'Customer Support'];
+  const roleOptions = [
+    { label: 'Admin', value: 'admin' },
+    { label: 'Manager', value: 'manager' },
+    { label: 'Agent/Staff', value: 'agent' },
+    { label: 'Rider', value: 'rider' }
+  ];
 
   // Check admin access
   useEffect(() => {
@@ -26,7 +32,8 @@ function AdminUsersPage() {
           return;
         }
         const data = await res.json();
-        const isAdminUser = data && (data.role || '').toString().toLowerCase() === 'admin';
+        const role = normalizeRole(data?.role);
+        const isAdminUser = role === 'admin';
         setIsAdmin(isAdminUser);
         if (!isAdminUser) {
           setError('Access denied - admin only');
@@ -261,8 +268,8 @@ function AdminUsersPage() {
                   className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-900 dark:border-slate-700 dark:text-white"
                 >
                   {roleOptions.map((role) => (
-                    <option key={role} value={role}>
-                      {role}
+                    <option key={role.value} value={role.value}>
+                      {role.label}
                     </option>
                   ))}
                 </select>
@@ -343,8 +350,8 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           className="px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           {roleOptions.map((option) => (
-            <option key={option} value={option}>
-              {option}
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
