@@ -13,6 +13,8 @@ model Branch {
   id        Int      @id @default(autoincrement())
   name      String   @unique @db.VarChar(255)
   address   String?  @db.VarChar(255)
+  latitude  Float?   @db.DoublePrecision
+  longitude Float?   @db.DoublePrecision
   createdAt DateTime @default(now()) @db.Timestamp(0) @map("created_at")
   updatedAt DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
 

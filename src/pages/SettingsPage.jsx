@@ -48,7 +48,7 @@ function SettingsPage() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const requestedSection = params.get('section');
-    const validSections = ['account', 'notifications', 'chat', 'ai', 'appearance', 'admin-users'];
+    const validSections = ['account', 'notifications', 'chat', 'ai', 'appearance', 'admin-users', 'branches'];
 
     if (requestedSection && validSections.includes(requestedSection)) {
       setActiveSection(requestedSection);
@@ -407,7 +407,8 @@ function SettingsPage() {
     chat: { eyebrow: 'Conversation layer', title: 'Chat settings', description: 'Shape the first response your customers receive.' },
     ai: { eyebrow: 'Automation center', title: 'AI settings', description: 'Set the guardrails for your support copilot.' },
     appearance: { eyebrow: 'Interface system', title: 'Appearance', description: 'Make the workspace feel like your own.' },
-    'admin-users': { eyebrow: 'Access control', title: 'Manage users', description: 'Review roles, access, and active operators.' }
+    'admin-users': { eyebrow: 'Access control', title: 'Manage users', description: 'Review roles, access, and active operators.' },
+    branches: { eyebrow: 'Locations', title: 'Branch settings', description: 'Configure branch addresses and coordinates.' }
   };
   const currentMeta = sectionMeta[activeSection] || sectionMeta.account;
 
@@ -440,6 +441,7 @@ function SettingsPage() {
                   {renderNavButton('ai', 'AI settings', 'Automation rules', navIcon('M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z'))}
                   {renderNavButton('appearance', 'Appearance', 'Look & layout', navIcon('M12 3v18M3 12h18M7 3v4M17 17v4M3 7h4M17 7h4'))}
                   {hasPermission('roles') && renderNavButton('admin-users', 'Admin users', 'Team permissions', navIcon('M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8'))}
+                  {hasPermission('config') && renderNavButton('branches', 'Branches', 'Manage branches', navIcon('M12 2C8.1 2 5 5.1 5 9c0 7 7 13 7 13s7-6 7-13c0-3.9-3.1-7-7-7z'))}
                 </nav>
                 <div className="hidden border-t border-slate-200/80 p-5 lg:block dark:border-slate-800">
                   <p className="text-xs font-semibold text-slate-500">Need a hand?</p>
@@ -892,6 +894,73 @@ function SettingsPage() {
                         Save Changes
                       </button>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Branches Section */}
+              {activeSection === 'branches' && (
+                <div>
+                  <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03] sm:p-7 sm:space-y-6">
+                    <p className="text-sm text-slate-600">Manage branch addresses and coordinates. Use the Geocode button to look up coordinates from the branch address using Nominatim.</p>
+                    {branchesLoading ? (
+                      <p>Loading branches...</p>
+                    ) : (
+                      branches.map((branch, idx) => (
+                        <div key={branch.id} className="rounded-lg border p-4">
+                          <div className="mb-2 flex items-center justify-between">
+                            <h4 className="font-semibold">{branch.name}</h4>
+                            <div className="text-xs text-slate-400">ID: {branch.id}</div>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600">Address</label>
+                              <div className="flex items-center gap-2">
+                                <input type="text" value={branch.address || ''} onChange={(e) => {
+                                  const next = [...branches]; next[idx] = { ...next[idx], address: e.target.value }; setBranches(next);
+                                }} className="flex-1 rounded-md border px-3 py-2" />
+                                <button onClick={async () => {
+                                  try {
+                                    const addr = String(branches[idx].address || '');
+                                    if (!addr) { info('Enter an address to geocode'); return; }
+                                    const res = await fetch('/api/geocode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: addr }) });
+                                    if (!res.ok) { const err = await res.json().catch(() => ({})); error(`Geocode failed: ${err.error || res.statusText}`); return; }
+                                    const data = await res.json();
+                                    const next = [...branches]; next[idx] = { ...next[idx], latitude: data.lat, longitude: data.lon, address: data.display_name || addr }; setBranches(next);
+                                    success('Geocoded successfully');
+                                  } catch (e) { console.error(e); error('Geocode error'); }
+                                }} className="rounded-md bg-sky-600 px-3 py-2 text-white">Geocode</button>
+                              </div>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600">Latitude</label>
+                              <input type="number" value={branch.latitude ?? ''} onChange={(e) => {
+                                const next = [...branches]; next[idx] = { ...next[idx], latitude: e.target.value === '' ? null : Number(e.target.value) }; setBranches(next);
+                              }} className="w-full rounded-md border px-3 py-2" />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600">Longitude</label>
+                              <input type="number" value={branch.longitude ?? ''} onChange={(e) => {
+                                const next = [...branches]; next[idx] = { ...next[idx], longitude: e.target.value === '' ? null : Number(e.target.value) }; setBranches(next);
+                              }} className="w-full rounded-md border px-3 py-2" />
+                            </div>
+                            <div className="flex items-end gap-2">
+                              <button onClick={async () => {
+                                try {
+                                  const b = branches[idx];
+                                  const payload = { address: b.address ?? null, latitude: b.latitude ?? null, longitude: b.longitude ?? null };
+                                  const res = await fetch(`/api/branches/${b.id}`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                                  if (!res.ok) { const err = await res.json().catch(() => ({})); error(`Save failed: ${err.error || res.statusText}`); return; }
+                                  const updated = await res.json();
+                                  const next = [...branches]; next[idx] = { ...next[idx], ...updated }; setBranches(next);
+                                  success('Branch saved');
+                                } catch (e) { console.error(e); error('Save error'); }
+                              }} className="rounded-md bg-emerald-600 px-3 py-2 text-white">Save</button>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
                   </div>
                 </div>
               )}

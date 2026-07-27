@@ -29,10 +29,10 @@ import { shouldReuseCustomerConversation } from './utils/customerWebChat.js';
 import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
 import { resolveBranchId } from './utils/branchContext.js';
 import { createDefaultConversationSession, normalizeConversationState, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition } from './utils/conversationState.js';
-import { connectRedis, isReady } from './services/redisClient.js';
 import { saveRiderLocation, updateDeliveryRouteAndEta, getDeliveryEta, getDeliveryDistance } from './services/deliveryTrackingService.js';
 import { joinDeliveryRooms, leaveDeliveryRooms, publishDeliveryUpdates } from './sockets/deliverySocket.js';
 import { validateEnv } from './utils/validateEnv.js';
+import { buildDeliveryFromOrder, shouldCreateDeliveryForOrder } from './utils/deliveryOrderSync.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -41,9 +41,6 @@ const upload = multer({ dest: path.join(__dirname, "uploads") });
 // Initialize database connection for replies module
 initDatabase(db);
 validateEnv();
-connectRedis().catch((err) => {
-    console.warn('[Redis] startup connection failed:', err?.message || err);
-});
 
 // AI Response Control System
 // Track when agents last sent messages per conversation
@@ -1550,7 +1547,7 @@ app.use('/api/auth', createAuthRouter(prisma));
 async function ensureDefaultBranch() {
     try {
         const existingBranch = await prisma.branch.findFirst({
-            select: { id: true, name: true, createdAt: true, updatedAt: true },
+            select: { id: true, name: true, address: true, latitude: true, longitude: true, createdAt: true, updatedAt: true },
             orderBy: { name: 'asc' }
         });
         if (existingBranch) return existingBranch;
@@ -1558,7 +1555,7 @@ async function ensureDefaultBranch() {
         const fallbackName = process.env.DEFAULT_BRANCH_NAME || 'Main Branch';
         return prisma.branch.create({
             data: { name: fallbackName },
-            select: { id: true, name: true, createdAt: true, updatedAt: true }
+            select: { id: true, name: true, address: true, latitude: true, longitude: true, createdAt: true, updatedAt: true }
         });
     } catch (error) {
         console.warn('Unable to ensure a default branch exists:', error?.message || error);
@@ -1571,7 +1568,7 @@ app.get('/api/branches', async (req, res) => {
         const email = String(req.query.email || '').trim().toLowerCase();
         let branches = await prisma.branch.findMany({
             orderBy: { name: 'asc' },
-            select: { id: true, name: true, createdAt: true, updatedAt: true }
+            select: { id: true, name: true, address: true, latitude: true, longitude: true, createdAt: true, updatedAt: true }
         });
 
         if (email) {
@@ -1580,7 +1577,7 @@ app.get('/api/branches', async (req, res) => {
                 select: {
                     branch_id: true,
                     branch: {
-                        select: { id: true, name: true, createdAt: true, updatedAt: true }
+                        select: { id: true, name: true, address: true, latitude: true, longitude: true, createdAt: true, updatedAt: true }
                     }
                 }
             });
@@ -1591,6 +1588,9 @@ app.get('/api/branches', async (req, res) => {
                     || (user.branch ? {
                         id: Number(user.branch.id),
                         name: user.branch.name,
+                        address: user.branch.address,
+                        latitude: user.branch.latitude,
+                        longitude: user.branch.longitude,
                         createdAt: user.branch.createdAt,
                         updatedAt: user.branch.updatedAt
                     } : null);
@@ -1611,6 +1611,56 @@ app.get('/api/branches', async (req, res) => {
     } catch (error) {
         console.error('Failed to load branches', error);
         res.status(500).json({ error: 'Failed to load branches' });
+    }
+});
+
+// Geocoding proxy using Nominatim (OpenStreetMap)
+app.post('/api/geocode', async (req, res) => {
+    try {
+        const body = req.body || {};
+        const address = String(body.address || '').trim();
+        if (!address) return res.status(400).json({ error: 'address required' });
+
+        const params = new URLSearchParams({ q: address, format: 'json', limit: '1', addressdetails: '1' });
+        const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
+        const userAgent = process.env.NOMINATIM_USER_AGENT || 'LiveSupport/1.0 (ops@yourdomain.com)';
+        const fetchRes = await fetch(url, {
+            headers: {
+                'User-Agent': userAgent,
+                'Accept-Language': 'en',
+                'Referer': process.env.APP_URL || 'http://localhost:3000'
+            }
+        });
+        if (!fetchRes.ok) {
+            const bodyText = await fetchRes.text().catch(() => null);
+            console.error('Geocoding provider returned error', { status: fetchRes.status, body: bodyText });
+            return res.status(502).json({ error: 'geocoding provider error', status: fetchRes.status, details: bodyText });
+        }
+        const results = await fetchRes.json();
+        if (!Array.isArray(results) || results.length === 0) return res.status(404).json({ error: 'no results' });
+        const r = results[0];
+        return res.json({ lat: Number(r.lat), lon: Number(r.lon), display_name: r.display_name, raw: r });
+    } catch (err) {
+        console.error('Geocode error', err);
+        res.status(500).json({ error: 'internal error' });
+    }
+});
+
+// Update branch (address, latitude, longitude)
+app.put('/api/branches/:id', async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const body = req.body || {};
+        const data = {};
+        if (body.address !== undefined) data.address = body.address || null;
+        if (body.latitude !== undefined) data.latitude = body.latitude === null ? null : Number(body.latitude);
+        if (body.longitude !== undefined) data.longitude = body.longitude === null ? null : Number(body.longitude);
+
+        const updated = await prisma.branch.update({ where: { id }, data, select: { id: true, name: true, address: true, latitude: true, longitude: true, createdAt: true, updatedAt: true } });
+        res.json(updated);
+    } catch (err) {
+        console.error('Update branch error', err);
+        res.status(500).json({ error: 'failed to update' });
     }
 });
 
@@ -1635,7 +1685,16 @@ app.get('/api/customers/by-name/:name', async (req, res) => {
                         name: true,
                         phone: true,
                         platform: true,
-                        created_at: true
+                        created_at: true,
+                        messages: {
+                            orderBy: { created_at: 'desc' },
+                            take: 1,
+                            select: {
+                                message: true,
+                                sender: true,
+                                created_at: true
+                            }
+                        }
                     }
                 }
             }
@@ -1645,10 +1704,26 @@ app.get('/api/customers/by-name/:name', async (req, res) => {
             return res.json({ exists: false });
         }
 
+        const conversations = customer.conversations.map((conversation) => {
+            const latestMessage = conversation.messages?.[0] || null;
+            const preview = latestMessage?.message ? String(latestMessage.message).trim() : null;
+            return {
+                id: conversation.id,
+                branch_id: conversation.branch_id,
+                name: conversation.name,
+                phone: conversation.phone,
+                platform: conversation.platform,
+                created_at: conversation.created_at,
+                lastMessage: preview,
+                lastMessageSender: latestMessage?.sender || null,
+                lastMessageAt: latestMessage?.created_at || null
+            };
+        });
+
         return res.json({
             exists: true,
             customer: { id: customer.id, name: customer.name, phone: customer.phone },
-            conversations: customer.conversations
+            conversations
         });
     } catch (error) {
         console.error('Failed to check customer by name', error);
@@ -1658,9 +1733,10 @@ app.get('/api/customers/by-name/:name', async (req, res) => {
 
 app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => {
     try {
-        const { guestId, branchId, customerName, phone, channel } = req.body || {};
+        const { guestId, branchId, customerName, phone, channel, forceNew } = req.body || {};
         const normalizedBranchId = Number(branchId || 0);
         const trimmedCustomerName = String(customerName || '').trim();
+        const forceNewConversation = Boolean(forceNew);
 
         if (!normalizedBranchId) {
             return res.status(400).json({ error: 'branch_required' });
@@ -1699,9 +1775,11 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
                 }
             });
 
-            branchConversation = customerConversations.find((conversation) => Number(conversation.branch_id || 0) === normalizedBranchId) || null;
-            if (branchConversation) {
-                existingConversation = branchConversation;
+            if (!forceNewConversation) {
+                branchConversation = customerConversations.find((conversation) => Number(conversation.branch_id || 0) === normalizedBranchId) || null;
+                if (branchConversation) {
+                    existingConversation = branchConversation;
+                }
             }
         }
 
@@ -3461,21 +3539,19 @@ app.get('/api/deliveries', isAuthenticated, async (req, res) => {
             updatedAt: row.updated_at
         }));
 
-        if (isReady()) {
-            try {
-                const enriched = await Promise.all(deliveries.map(async (delivery) => {
-                    const eta = await getDeliveryEta(delivery.id);
-                    const distance = await getDeliveryDistance(delivery.id);
-                    return {
-                        ...delivery,
-                        eta: eta || delivery.eta,
-                        distance: distance != null ? distance : delivery.distance
-                    };
-                }));
-                return res.json(enriched);
-            } catch (cacheErr) {
-                console.warn('Failed to attach cached delivery metrics:', cacheErr);
-            }
+        try {
+            const enriched = await Promise.all(deliveries.map(async (delivery) => {
+                const eta = await getDeliveryEta(delivery.id);
+                const distance = await getDeliveryDistance(delivery.id);
+                return {
+                    ...delivery,
+                    eta: eta || delivery.eta,
+                    distance: distance != null ? distance : delivery.distance
+                };
+            }));
+            return res.json(enriched);
+        } catch (cacheErr) {
+            console.warn('Failed to attach delivery metrics:', cacheErr);
         }
 
         res.json(deliveries);
@@ -3955,6 +4031,11 @@ app.get('/api/voice/staff', isAuthenticated, async (req, res) => {
         const onlineByUserId = new Map();
         for (const agent of onlineAgents.values()) {
             if (agent?.userId != null) onlineByUserId.set(String(agent.userId), agent);
+        }
+        for (const voiceUser of voiceUsers.values()) {
+            if (voiceUser?.userId != null) {
+                onlineByUserId.set(String(voiceUser.userId), voiceUser);
+            }
         }
 
         res.json(staff.map((member) => {
@@ -7142,10 +7223,19 @@ async function createValidatedOrderFromPayload(payload = {}, options = {}) {
 
 // Create new order
 app.post('/api/orders', async (req, res) => {
-    const { customerName, product, menuItemId, quantity, amount, status, items, phone, voucherCode, voucherDiscount, voucherType, finalTotal, subtotal, taxRate, deliveryFee, discountAmount } = req.body;
+    const { customerName, product, menuItemId, quantity, amount, status, items, phone, voucherCode, voucherDiscount, voucherType, finalTotal, subtotal, taxRate, deliveryFee, discountAmount, riderId, riderName } = req.body;
 
     if (!customerName) {
         return res.status(400).json({ error: 'Missing required field: customerName' });
+    }
+
+    const riderIdValue = req.body.riderId;
+    const riderIdNumber = riderIdValue !== undefined && riderIdValue !== null && String(riderIdValue).trim() !== ''
+        ? Number(riderIdValue)
+        : null;
+
+    if (riderIdNumber === null) {
+        return res.status(400).json({ error: 'Missing required field: riderId. Assign a rider before creating the order.' });
     }
 
     const orderPayload = {
@@ -7167,12 +7257,11 @@ app.post('/api/orders', async (req, res) => {
         return res.status(400).json({ error: createdOrder.error });
     }
 
-    const deliveryStatus = req.body.riderId ? 'Assigned' : 'Pending Assignment';
-    const riderId = req.body.riderId ? Number(req.body.riderId) : null;
-    const riderName = req.body.riderName ? String(req.body.riderName).trim() : null;
+    const deliveryStatus = shouldCreateDeliveryForOrder(status) ? 'Assigned' : null;
+    const resolvedRiderId = riderIdNumber;
     const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0) || null;
 
-    if (deliveryStatus === 'Assigned' || deliveryStatus === 'Pending Assignment') {
+    if (deliveryStatus) {
         const deliveryInsertSql = isPg
             ? 'INSERT INTO deliveries (order_id, rider_name, delivery_status, order_confirmed_time, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW(), NOW())'
             : 'INSERT INTO deliveries (order_id, rider_name, delivery_status, order_confirmed_time, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW(), NOW())';
@@ -7194,8 +7283,31 @@ app.post('/api/orders', async (req, res) => {
         deliveryFee: createdOrder.deliveryFee,
         discountAmount: createdOrder.discountAmount,
         finalTotal: createdOrder.finalTotal,
-        confirmationMessage: createdOrder.confirmationMessage
+        confirmationMessage: createdOrder.confirmationMessage,
+        delivery: buildDeliveryFromOrder({
+            id: createdOrder.id,
+            orderId: createdOrder.orderId,
+            customerName,
+            address: req.body.address || req.body.deliveryAddress || null,
+            status: status || 'pending',
+            date: new Date().toISOString(),
+            riderName
+        })
     };
+
+    try {
+        io.emit('order-created', {
+            id: createdOrder.id,
+            orderId: createdOrder.orderId,
+            customerName,
+            product: createdOrder.product,
+            amount: createdOrder.finalTotal,
+            status: status || 'pending',
+            date: new Date().toISOString()
+        });
+    } catch (emitErr) {
+        console.error('Failed to emit order-created event', emitErr);
+    }
 
     if (riderId) {
         try {
@@ -7232,7 +7344,33 @@ app.put('/api/orders/:orderId', isAuthenticated, (req, res) => {
                 console.error('Error updating order:', err);
                 return res.status(500).json({ error: "Database error" });
             }
-            res.json({ success: true, message: "Order updated" });
+
+            const selectSql = isPg ? 'SELECT * FROM orders WHERE order_id = $1' : 'SELECT * FROM orders WHERE order_id = ?';
+            db.query(selectSql, [orderId], (selectErr, rows) => {
+                if (selectErr) {
+                    console.error('Error fetching updated order:', selectErr);
+                    return res.json({ success: true, message: "Order updated" });
+                }
+
+                const updatedOrder = rows && rows[0] ? rows[0] : null;
+                if (updatedOrder) {
+                    try {
+                        io.emit('order-updated', {
+                            id: updatedOrder.id,
+                            orderId: updatedOrder.order_id,
+                            customerName: updatedOrder.customer_name,
+                            product: updatedOrder.product,
+                            amount: Number(updatedOrder.total_amount || updatedOrder.amount || 0),
+                            status: updatedOrder.status,
+                            date: updatedOrder.order_date || updatedOrder.created_at || new Date().toISOString()
+                        });
+                    } catch (emitErr) {
+                        console.error('Failed to emit order-updated event', emitErr);
+                    }
+                }
+
+                res.json({ success: true, message: "Order updated" });
+            });
         }
     );
 });
@@ -7561,7 +7699,7 @@ io.on("connection", (socket) => {
         }
         const payload = {
             ...data,
-            fromUserId: data.caller?.userId || socket.id
+            fromUserId: data.caller?.id || data.caller?.userId || data.fromUserId || socket.id
         };
         console.log('[Voice Server] 📤 Sending call:incoming to recipient:', { recipientSocketId: recipient.socketId, payload: payload });
         io.to(recipient.socketId).emit('call:incoming', payload);
@@ -7599,11 +7737,15 @@ io.on("connection", (socket) => {
     socket.on('call:end', (data) => {
         if (!data || !data.callId || !data.toUserId) return;
         const peerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
+        const payload = {
+            callId: data.callId,
+            fromUserId: data.fromUserId || socket.id
+        };
+        if (socket?.id) {
+            io.to(socket.id).emit('call:ended', payload);
+        }
         if (peerSocket?.socketId) {
-            io.to(peerSocket.socketId).emit('call:ended', {
-                callId: data.callId,
-                fromUserId: data.fromUserId || socket.id
-            });
+            io.to(peerSocket.socketId).emit('call:ended', payload);
         }
     });
 
@@ -8812,11 +8954,7 @@ httpServer.listen(PORT, () => {
             });
         }
 
-        if (isReady()) {
-            console.log('Redis ready and connected for live delivery caching');
-        } else {
-            console.warn('Redis not available at startup; delivery caching will operate in fallback mode');
-        }
+        console.log('Delivery tracking metrics will be kept in memory for this server process.');
 
         // Ensure optional AI/staff message tables exist to avoid runtime query errors
         if (isPg) {

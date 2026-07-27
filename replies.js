@@ -702,7 +702,7 @@ function buildSupportReply(message = '', options = {}) {
     const branchContext = branchId ? `For ${branchLabel}, ` : '';
 
     if (isMenuInquiry(message)) {
-        return `${branchContext}I can share our current menu and pricing. Delivery is $${DELIVERY_FEE.toFixed(2)} per order, and orders above $${FREE_DELIVERY_THRESHOLD.toFixed(2)} qualify for free delivery. I can also highlight featured dishes or the full menu for you.`;
+        return `${branchContext}I can share our current menu and pricing. Our delivery fee is $${DELIVERY_FEE.toFixed(2)} per order, and orders above $${FREE_DELIVERY_THRESHOLD.toFixed(2)} qualify for free delivery. I can also highlight featured dishes or the full menu for you.`;
     }
 
     if (isOrderStatusInquiry(message)) {
@@ -710,7 +710,7 @@ function buildSupportReply(message = '', options = {}) {
     }
 
     if (isColdFoodComplaint(message)) {
-        return `I’m very sorry your food arrived cold. I can offer a replacement, expedited redelivery, or a manager review right away. Please tell me which option you prefer and I’ll start the resolution process.`;
+        return `I’m very sorry your food arrived cold. I sincerely apologize for the inconvenience. I can offer a replacement, expedited redelivery, or a manager review right away. Please tell me which option you prefer and I’ll start the resolution process.`;
     }
 
     if (isModificationRequest(message)) {

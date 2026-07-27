@@ -602,6 +602,16 @@ function OrdersPage() {
     const tableNumber = draft.tableNumber || null;
     let occupiedTableNumber = null;
     try {
+      if (!draft.riderId) {
+        warning('Assign a delivery rider before creating the order.');
+        return;
+      }
+
+      if (!draft.riderId) {
+        warning('Assign a delivery rider before creating the order.');
+        return;
+      }
+
       if (tableNumber) {
         const tnum = Number(tableNumber);
         const table = tables.find((t) => Number(t.number) === tnum);
@@ -1496,7 +1506,7 @@ function OrdersPage() {
                   </select>
                 </label>
                 <label className="block text-sm text-slate-700 dark:text-slate-200">
-                  Delivery Rider (Optional)
+                  Delivery Rider
                   <select
                     value={orderDraft.riderId}
                     onChange={(e) => {
@@ -1507,9 +1517,10 @@ function OrdersPage() {
                         riderName: rider ? rider.name : ''
                       }));
                     }}
+                    required
                     className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                   >
-                    <option value="">-- No rider assigned --</option>
+                    <option value="" disabled>-- Select a delivery rider --</option>
                     {riders.map((rider) => (
                       <option key={rider.id} value={rider.id} disabled={rider.availability === 'On Delivery' && !rider.allowMultipleActiveDeliveries}>
                         {rider.name} · {rider.availability}

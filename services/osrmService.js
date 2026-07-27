@@ -1,12 +1,12 @@
 import fetch from 'node-fetch';
-import { setJson, getJson, isReady } from './redisClient.js';
 
 const OSRM_URL = process.env.OSRM_URL || 'https://router.project-osrm.org';
-const ROUTE_CACHE_TTL = Number(process.env.OSRM_ROUTE_CACHE_TTL_SECONDS || '300');
+const ROUTE_CACHE_TTL_MS = Number(process.env.OSRM_ROUTE_CACHE_TTL_SECONDS || '300') * 1000;
+const routeCache = new Map();
 
 function buildRouteCacheKey(points) {
   const normalizedPoints = Array.isArray(points) ? points : [];
-  return `osrm:route:${normalizedPoints.map((point) => `${point[0]},${point[1]}`).join(':')}`;
+  return normalizedPoints.map((point) => `${Number(point[0])},${Number(point[1])}`).join(':');
 }
 
 function normalizeWaypoint(point) {
@@ -49,16 +49,20 @@ async function fetchOsrmRoute(points) {
   };
 }
 
-async function getCachedRoute(points) {
-  if (!isReady()) return null;
+function getCachedRoute(points) {
   const key = buildRouteCacheKey(points);
-  return await getJson(key);
+  const entry = routeCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.cachedAt > ROUTE_CACHE_TTL_MS) {
+    routeCache.delete(key);
+    return null;
+  }
+  return entry.route;
 }
 
-async function cacheRoute(points, route) {
-  if (!isReady()) return null;
+function cacheRoute(points, route) {
   const key = buildRouteCacheKey(points);
-  return await setJson(key, route, { EX: ROUTE_CACHE_TTL });
+  routeCache.set(key, { route, cachedAt: Date.now() });
 }
 
 async function calculateRoute(points) {
@@ -66,10 +70,10 @@ async function calculateRoute(points) {
     throw new Error('Route calculation requires at least two points');
   }
 
-  const cached = await getCachedRoute(points);
+  const cached = getCachedRoute(points);
   if (cached) return cached;
   const route = await fetchOsrmRoute(points);
-  await cacheRoute(points, route);
+  cacheRoute(points, route);
   return route;
 }
 

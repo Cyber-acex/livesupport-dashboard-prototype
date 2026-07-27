@@ -22,6 +22,29 @@ function formatDate(value) {
 
 function InboxPage({ defaultPlatform = null }) {
   const platformFilter = String(defaultPlatform || '').trim().toLowerCase() || null;
+  const isMessenger = platformFilter === 'messenger';
+  const platformLabel = isMessenger ? 'Messenger' : 'WhatsApp';
+  const platformHeroTitle = isMessenger ? 'Messenger inbox workspace' : 'WhatsApp inbox workspace';
+  const platformHeroDescription = isMessenger ? 'Manage Facebook Messenger customer conversations.' : 'Stay ahead of every WhatsApp customer conversation.';
+  const palette = isMessenger
+    ? {
+        shell: 'from-sky-600 via-blue-600 to-indigo-600',
+        accent: 'bg-sky-600 hover:bg-sky-700',
+        accentSoft: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-300',
+        border: 'border-sky-200 dark:border-sky-900/40',
+        badge: 'from-sky-500 to-blue-500',
+        incoming: 'border-slate-200 bg-white text-slate-700 shadow-[0_10px_25px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200',
+        outgoing: 'border-transparent bg-gradient-to-br from-sky-600 to-blue-600 text-white shadow-[0_12px_28px_rgba(59,130,246,0.28)]'
+      }
+    : {
+        shell: 'from-emerald-600 via-green-600 to-teal-600',
+        accent: 'bg-emerald-600 hover:bg-emerald-700',
+        accentSoft: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300',
+        border: 'border-emerald-200 dark:border-emerald-900/40',
+        badge: 'from-emerald-500 to-teal-500',
+        incoming: 'border-slate-200 bg-white text-slate-700 shadow-[0_10px_25px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200',
+        outgoing: 'border-transparent bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-[0_12px_28px_rgba(16,185,129,0.28)]'
+      };
   const { success, error, warning, info } = useNotification();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -944,20 +967,20 @@ function InboxPage({ defaultPlatform = null }) {
     return (
       <div
         key={conversation.id}
-        className={`group relative overflow-hidden rounded-2xl border p-3.5 backdrop-blur-sm transition-all duration-300 ${
+        className={`group relative overflow-hidden rounded-[24px] border p-3.5 backdrop-blur-sm transition-all duration-300 ${
           isActive
-            ? 'border-brand-500/50 bg-brand-50/70 shadow-[0_10px_24px_rgba(37,99,235,0.12)] dark:bg-brand-500/10'
-            : 'border-slate-200/80 bg-white/90 hover:border-brand-500/30 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/70 dark:hover:bg-slate-900/80'
+            ? `${palette.border} ${isMessenger ? 'bg-sky-50/90 shadow-[0_10px_24px_rgba(59,130,246,0.14)] dark:bg-sky-500/10' : 'bg-emerald-50/90 shadow-[0_10px_24px_rgba(16,185,129,0.14)] dark:bg-emerald-500/10'}`
+            : 'border-slate-200/80 bg-white/90 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-950/70 dark:hover:bg-slate-900/80'
         }`}
       >
-        <div className={`absolute inset-y-0 left-0 w-0.5 bg-brand-500 ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-40'}`} />
+        <div className={`absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${palette.badge} ${isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'}`} />
         <button
           type="button"
           onClick={() => setSelectedConversation(conversation)}
           className="w-full text-left"
         >
           <div className="flex items-start gap-3">
-            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${isActive ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${isActive ? `bg-gradient-to-br ${palette.badge} text-white` : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
               {initials}
             </div>
             <div className="min-w-0 flex-1">
@@ -966,7 +989,7 @@ function InboxPage({ defaultPlatform = null }) {
                   {conversation.name || conversation.phone || 'Customer'}
                 </p>
                 {conversation.unread_count > 0 ? (
-                  <span className="rounded-full bg-rose-500 px-2.5 py-1 text-[11px] font-semibold text-white">
+                  <span className={`rounded-full bg-gradient-to-r ${palette.badge} px-2.5 py-1 text-[11px] font-semibold text-white`}>
                     {conversation.unread_count}
                   </span>
                 ) : null}
@@ -1040,26 +1063,24 @@ function InboxPage({ defaultPlatform = null }) {
   });
 
   return (
-    <div className="min-h-screen bg-[#f4f7fb] text-slate-900 dark:bg-slate-950 dark:text-white">
+    <div className={`min-h-screen ${isMessenger ? 'bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_28%),linear-gradient(135deg,_#f8fbff_0%,_#eef4ff_100%)]' : 'bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_transparent_28%),linear-gradient(135deg,_#f7fdf9_0%,_#ecfdf5_100%)]'} text-slate-900 dark:bg-slate-950 dark:text-white`}>
       <div className="flex min-h-screen">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6">
-            <div className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950 sm:p-1">
+          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 pb-10 sm:p-4 sm:pb-12 lg:p-6 lg:pb-16">
+            <div className={`mb-4 overflow-hidden rounded-[32px] border shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-1 ${isMessenger ? 'border-sky-200 bg-gradient-to-br from-sky-600 via-blue-600 to-indigo-600 text-white' : 'border-emerald-200 bg-gradient-to-br from-emerald-600 via-green-600 to-teal-600 text-white'}`}>
               <div className="flex flex-col gap-4 px-3 py-4 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="max-w-2xl">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-brand-600 dark:text-brand-400">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <div className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] ${isMessenger ? 'text-sky-100' : 'text-emerald-100'}`}>
+                    <span className={`h-2 w-2 rounded-full ${isMessenger ? 'bg-sky-200' : 'bg-emerald-200'}`} />
                     Operations / Inbox
                   </div>
-                  <h1 className="mt-1.5 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-                    {platformFilter === 'messenger' ? 'Messenger inbox workspace' : 'Inbox workspace'}
+                  <h1 className="mt-1.5 text-2xl font-semibold tracking-tight sm:text-3xl">
+                    {platformHeroTitle}
                   </h1>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                    {platformFilter === 'messenger'
-                      ? 'Manage Facebook Messenger customer conversations.'
-                      : 'Stay ahead of every customer conversation.'}
+                  <p className={`mt-1 text-sm ${isMessenger ? 'text-sky-100/90' : 'text-emerald-100/90'}`}>
+                    {platformHeroDescription}
                   </p>
                 </div>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1071,39 +1092,39 @@ function InboxPage({ defaultPlatform = null }) {
                     <input
                       value={query}
                       onChange={(event) => setQuery(event.target.value)}
-                      placeholder="Search conversations..."
-                      className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      placeholder={`Search ${platformLabel} conversations...`}
+                      className={`w-full rounded-2xl border border-white/40 bg-white/95 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-white ${isMessenger ? 'focus:ring-2 focus:ring-sky-200' : 'focus:ring-2 focus:ring-emerald-200'}`}
                     />
                   </label>
                   <button
                     type="button"
                     onClick={() => window.location.reload()}
-                    className="inline-flex items-center justify-center rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-700"
+                    className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition shadow-sm ${isMessenger ? 'bg-white/15 hover:bg-white/25' : 'bg-white/15 hover:bg-white/25'}`}
                   >
                     Refresh
                   </button>
                 </div>
               </div>
 
-              <div className="grid gap-px border-t border-slate-200 bg-slate-200 dark:border-slate-800 dark:bg-slate-800 sm:grid-cols-3">
+              <div className={`grid gap-px border-t ${isMessenger ? 'border-sky-200/40 bg-sky-200/40' : 'border-emerald-200/40 bg-emerald-200/40'} sm:grid-cols-3`}>
                 {queueSummary.map((card) => (
-                  <div key={card.label} className="bg-white p-3.5 dark:bg-slate-950 sm:first:rounded-bl-xl sm:last:rounded-br-xl">
+                  <div key={card.label} className={`p-3.5 sm:first:rounded-bl-[24px] sm:last:rounded-br-[24px] ${isMessenger ? 'bg-sky-600/20' : 'bg-emerald-600/20'}`}>
                     <div className="flex items-center justify-between gap-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                    <div className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isMessenger ? 'text-sky-100' : 'text-emerald-100'}`}>
                       {card.label}
                     </div>
                     <span className={`h-2 w-2 rounded-full bg-gradient-to-r ${card.tone}`} />
                     </div>
                     <div className="mt-1 flex items-baseline gap-2">
-                      <p className="text-xl font-semibold text-slate-900 dark:text-white">{card.value}</p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">{card.detail}</p>
+                      <p className="text-xl font-semibold text-white">{card.value}</p>
+                      <p className={`text-xs ${isMessenger ? 'text-sky-100/90' : 'text-emerald-100/90'}`}>{card.detail}</p>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
 
-            <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex flex-1 min-h-0 flex-col overflow-visible rounded-2xl border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-950">
               <div className="grid h-full min-h-0 flex-1 gap-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_320px]">
                 <aside className="flex min-h-0 flex-1 flex-col border-b border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:border-b-0 lg:border-r">
                   <div className="rounded-[28px] border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
@@ -1152,7 +1173,7 @@ function InboxPage({ defaultPlatform = null }) {
                   </div>
                 </aside>
 
-                <section className="flex h-full min-h-0 flex-col overflow-hidden bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(241,245,249,0.94))] dark:bg-slate-950">
+                <section className="flex h-full min-h-0 flex-col overflow-visible bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(241,245,249,0.94))] dark:bg-slate-950">
                   {activeConversation ? (
                     <>
                       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-white/85 px-6 py-5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/85">
@@ -1224,8 +1245,8 @@ function InboxPage({ defaultPlatform = null }) {
                         </div>
                       </div>
 
-                      <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
-                        <div ref={messagesViewportRef} className="flex-1 min-h-0 max-h-[56vh] overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                      <div className="relative flex flex-1 min-h-0 flex-col overflow-visible">
+                        <div ref={messagesViewportRef} className="flex-1 min-h-0 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
                           <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
                             {messagesLoading ? (
                               <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
@@ -1243,8 +1264,8 @@ function InboxPage({ defaultPlatform = null }) {
                                       <div key={message.id} className={`flex ${message.sender === 'agent' ? 'justify-end' : 'justify-start'}`}>
                                         <div className={`relative max-w-[80%] rounded-[24px] border px-5 py-4 text-sm leading-7 shadow-sm ${
                                           message.sender === 'agent'
-                                            ? 'border-transparent bg-brand-600 text-white'
-                                            : 'border border-slate-200 bg-white text-slate-700 shadow-[0_10px_25px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200'
+                                            ? palette.outgoing
+                                            : palette.incoming
                                         }`}>
                                           <div className="whitespace-pre-wrap break-words">{message.content}</div>
                                           {message.createdAt ? (
@@ -1317,7 +1338,7 @@ function InboxPage({ defaultPlatform = null }) {
                                 onClick={sendMessage}
                                 className={`rounded-full px-3 py-2 text-sm font-semibold text-white transition ${isSending || !composer.trim()
                                   ? 'bg-slate-400 cursor-not-allowed hover:bg-slate-400'
-                                  : 'bg-brand-600 hover:bg-brand-700'
+                                  : palette.accent
                                 }`}
                               >
                                 {isSending ? 'Sending...' : 'Send'}

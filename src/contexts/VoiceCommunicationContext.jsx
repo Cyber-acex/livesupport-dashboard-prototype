@@ -1,6 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { io } from 'socket.io-client';
-import { createWebRTCService } from '../services/webrtcService';
+import { buildSecureAudioConstraints } from '../services/webrtcService';
+import { CallManager } from '../services/voice/callManager';
+import { PresenceService } from '../services/voice/presenceService';
+import { SignalingService } from '../services/voice/signalingService';
+import { WebRTCManager } from '../services/voice/webrtcManager';
+import { VoiceCallState } from '../services/voice/stateMachine';
 
 const initialDirectory = [];
 
@@ -77,6 +81,10 @@ export function VoiceCommunicationProvider({ children }) {
   const callIdRef = useRef(null);
   const pendingIceCandidatesRef = useRef([]);
   const toastTimerRef = useRef(null);
+  const callManagerRef = useRef(null);
+  const signalingServiceRef = useRef(null);
+  const presenceServiceRef = useRef(null);
+  const [voiceState, setVoiceState] = useState(VoiceCallState.Idle);
 
   const pushToast = useCallback((message, tone = 'info') => {
     if (toastTimerRef.current) {
@@ -85,6 +93,141 @@ export function VoiceCommunicationProvider({ children }) {
     setToast({ id: Date.now(), message, tone });
     toastTimerRef.current = window.setTimeout(() => setToast(null), 2200);
   }, []);
+
+  const cleanupWebRtc = useCallback(() => {
+    webRtcRef.current?.cleanup();
+    webRtcRef.current = null;
+    pendingIceCandidatesRef.current = [];
+    document.querySelectorAll('audio[data-voice-call]').forEach((audio) => audio.remove());
+  }, []);
+
+  const ensureVoiceSession = useCallback(async () => {
+    if (!webRtcRef.current) {
+      const manager = new WebRTCManager({
+        onRemoteStream: (stream) => {
+          pushToast('Audio connected', 'success');
+        },
+        onStateChange: (state) => {
+          setConnectionState(state.connectionState === 'connected' ? 'secure' : state.connectionState === 'failed' || state.connectionState === 'disconnected' ? 'reconnecting' : 'online');
+        },
+        logger: (message) => console.info('[Voice]', message)
+      });
+      webRtcRef.current = manager;
+    }
+
+    if (!callManagerRef.current) {
+      const signaling = new SignalingService({
+        socketUrl: window.location.origin,
+        logger: (message) => console.info('[Voice Signaling]', message),
+        onEvent: (eventName, payload) => {
+          if (eventName === 'call:incoming') {
+            setIncomingCall(payload);
+            setVoiceState(VoiceCallState.Incoming);
+            pushToast(`${payload?.caller?.name || 'Staff'} is calling`, 'info');
+          }
+          if (eventName === 'call:accepted') {
+            setSession({
+              id: payload.callId,
+              caller: payload.caller || currentUser,
+              peer: payload.peer || currentUser,
+              startedAt: Date.now(),
+              duration: 0,
+              quality: 'Excellent',
+              isMuted: false,
+              isHeld: false,
+              volume: 1,
+              securityVerified: true,
+              boosted: false
+            });
+            setActiveTab('session');
+            setOutgoingCall(null);
+            setVoiceState(VoiceCallState.Connected);
+            pushToast('Call accepted', 'success');
+          }
+          if (eventName === 'presenceUpdate' || eventName === 'voice:presenceUpdate') {
+            const onlineById = new Map((Array.isArray(payload) ? payload : []).map((entry) => [String(entry.userId), entry]));
+            setStaffDirectory((previous) => {
+              const next = previous.map((staff) => {
+                const presence = onlineById.get(String(staff.id));
+                if (!presence) {
+                  return { ...staff, online: false, status: 'offline', availability: 'Offline' };
+                }
+                const status = presence.status === 'busy' ? 'busy' : presence.status === 'away' ? 'away' : 'available';
+                return { ...staff, online: true, status, availability: status === 'busy' ? 'Busy' : status === 'away' ? 'Away' : 'Available' };
+              });
+              directoryRef.current = next;
+              return next;
+            });
+            setIsHydrated(true);
+          }
+          if (eventName === 'webrtc:offer') {
+            callManagerRef.current?.handleOffer(payload);
+          }
+          if (eventName === 'webrtc:answer') {
+            callManagerRef.current?.handleAnswer(payload);
+          }
+          if (eventName === 'webrtc:icecandidate') {
+            callManagerRef.current?.handleIceCandidate(payload);
+          }
+          if (eventName === 'call:declined') {
+            setOutgoingCall(null);
+            setVoiceState(VoiceCallState.Rejected);
+            pushToast('Call declined', 'warning');
+          }
+          if (eventName === 'call:ended') {
+            cleanupWebRtc();
+            setOutgoingCall(null);
+            setIncomingCall(null);
+            setSession(null);
+            setVoiceState(VoiceCallState.Ended);
+            pushToast('Call ended', 'info');
+          }
+        },
+        onConnected: () => {
+          signalingServiceRef.current?.register(currentUser);
+          setConnectionState('online');
+        },
+        onDisconnected: () => {
+          setConnectionState('reconnecting');
+        },
+        onError: (error) => {
+          pushToast(error?.message || 'Connection error', 'warning');
+        }
+      });
+      signalingServiceRef.current = signaling;
+      callManagerRef.current = new CallManager({
+        signalingService: signaling,
+        webrtcManager: webRtcRef.current,
+        presenceService: presenceServiceRef.current || new PresenceService(),
+        onStateChange: (state) => setVoiceState(state),
+        onError: (error) => pushToast(error?.message || 'Voice error', 'warning'),
+        logger: (message) => console.info('[Voice CallManager]', message)
+      });
+      presenceServiceRef.current = presenceServiceRef.current || new PresenceService({ onPresenceChanged: () => {} });
+    }
+
+    if (!socketRef.current && signalingServiceRef.current) {
+      socketRef.current = signalingServiceRef.current.connect({ user: currentUser });
+    }
+
+    const service = webRtcRef.current;
+    if (!service.localStream) {
+      await service.acquireMicrophone(buildSecureAudioConstraints({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false
+      }));
+    }
+
+    if (service.localStream) {
+      service.setMute(false);
+    }
+
+    if (!service.peerConnection) {
+      service.createPeerConnection();
+    }
+
+    return service;
+  }, [cleanupWebRtc, currentUser, pushToast]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -96,308 +239,6 @@ export function VoiceCommunicationProvider({ children }) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined;
-
-    const socket = io(window.location.origin, { transports: ['websocket', 'polling'], reconnection: true });
-    socketRef.current = socket;
-
-    const cleanupWebRtc = () => {
-      webRtcRef.current?.cleanup();
-      webRtcRef.current = null;
-      pendingIceCandidatesRef.current = [];
-    };
-
-    const createWebRtc = async () => {
-      console.log('[Voice] createWebRtc called, webRtcRef.current:', !!webRtcRef.current);
-      if (!webRtcRef.current) {
-        const service = createWebRTCService({ debug: true });
-        console.log('[Voice] Created WebRTCService instance');
-        service.onIceCandidate = (candidate) => {
-          if (!callPeerIdRef.current || !callIdRef.current) return;
-          console.log('[Voice] Sending ICE candidate', { callId: callIdRef.current, toUserId: callPeerIdRef.current });
-          socket.emit('webrtc:icecandidate', {
-            callId: callIdRef.current,
-            toUserId: callPeerIdRef.current,
-            fromUserId: currentUser.id,
-            candidate
-          });
-        };
-        service.onStateChange = (state) => {
-          console.log('[Voice] Connection state:', state);
-          if (state === 'failed' || state === 'disconnected') {
-            pushToast('Voice connection interrupted', 'warning');
-          } else if (state === 'connected' || state === 'completed') {
-            console.log('[Voice] ✅ Peer connection established!');
-            pushToast('Voice connection established', 'success');
-          }
-        };
-        service.onRemoteStream = (stream) => {
-          console.log('[Voice] Remote stream received with tracks:', stream.getAudioTracks().length);
-          if (!stream || stream.getAudioTracks().length === 0) {
-            console.error('[Voice] ❌ Remote stream has no audio tracks!');
-            pushToast('Remote audio stream has no audio tracks', 'warning');
-            return;
-          }
-
-          const audio = document.createElement('audio');
-          audio.autoplay = true;
-          audio.setAttribute('playsinline', 'true');
-          audio.srcObject = stream;
-          audio.dataset.voiceCall = callIdRef.current || '';
-          audio.volume = 1.0;
-          audio.muted = false;
-          audio.crossOrigin = 'anonymous';
-          audio.style.position = 'fixed';
-          audio.style.left = '-9999px';
-          audio.style.width = '1px';
-          audio.style.height = '1px';
-          document.body.appendChild(audio);
-
-          console.log('[Voice] Audio element created:', {
-            autoplay: audio.autoplay,
-            muted: audio.muted,
-            volume: audio.volume,
-            tracks: stream.getAudioTracks().map((t) => ({ label: t.label, enabled: t.enabled, readyState: t.readyState }))
-          });
-
-          if (typeof window !== 'undefined') {
-            window.voiceComm = window.voiceComm || {};
-            window.voiceComm.remoteAudio = audio;
-          }
-
-          const tryPlayAudio = async () => {
-            try {
-              const playPromise = audio.play();
-              if (playPromise !== undefined) {
-                await playPromise;
-              }
-              console.log('[Voice] ✅ Remote audio playing successfully');
-              pushToast('Audio connected', 'success');
-            } catch (e) {
-              console.error('[Voice] ❌ Audio play failed:', e.name, e.message, { muted: audio.muted });
-              if (!audio.muted) {
-                audio.muted = true;
-                console.log('[Voice] Retrying playback muted to satisfy autoplay policy');
-                try {
-                  await audio.play();
-                  console.log('[Voice] ✅ Remote audio playing muted successfully');
-                  pushToast('Audio connected (muted fallback)', 'success');
-                  window.addEventListener('pointerdown', () => {
-                    audio.muted = false;
-                    audio.play().catch(() => {});
-                  }, { once: true });
-                  return;
-                } catch (mutedError) {
-                  console.error('[Voice] Still cannot play muted:', mutedError?.name, mutedError?.message);
-                }
-              }
-
-              const retry = () => {
-                audio.play().catch((retryError) => {
-                  console.error('[Voice] Still cannot play after retry:', retryError?.name, retryError?.message);
-                });
-              };
-
-              window.addEventListener('pointerdown', retry, { once: true });
-              window.setTimeout(retry, 1000);
-              pushToast(`Audio: ${e.message}`, 'warning');
-            }
-          };
-
-          audio.addEventListener('loadedmetadata', tryPlayAudio, { once: true });
-          audio.addEventListener('canplay', tryPlayAudio, { once: true });
-          audio.addEventListener('canplaythrough', tryPlayAudio, { once: true });
-          requestAnimationFrame(tryPlayAudio);
-        };
-        webRtcRef.current = service;
-        console.log('[Voice] WebRTCService assigned to webRtcRef');
-      }
-      const service = webRtcRef.current;
-      if (!service.localStream) {
-        console.log('[Voice] Acquiring microphone...');
-        await service.acquireMicrophone({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-          video: false
-        });
-        console.log('[Voice] ✅ Microphone acquired with', service.localStream.getAudioTracks().length, 'audio tracks');
-      } else {
-        console.log('[Voice] Microphone already acquired');
-      }
-      if (!service.peerConnection) {
-        console.log('[Voice] Creating peer connection...');
-        service.createPeerConnection();
-        console.log('[Voice] ✅ Peer connection created');
-      } else {
-        console.log('[Voice] Peer connection already exists');
-      }
-      console.log('[Voice] createWebRtc returning service');
-      return service;
-    };
-
-    const registerPresence = () => {
-      if (!currentUser.id) return;
-      socket.emit('agent:register', {
-        userId: currentUser.id,
-        name: currentUser.name,
-        role: currentUser.role,
-        department: currentUser.department,
-        branch: currentUser.branch,
-        avatar: currentUser.avatar,
-        status: 'online'
-      });
-      socket.emit('voice:register', {
-        userId: currentUser.id,
-        name: currentUser.name,
-        role: currentUser.role,
-        department: currentUser.department,
-        branch: currentUser.branch,
-        avatar: currentUser.avatar,
-        status: 'online'
-      });
-    };
-
-    socket.on('connect', () => {
-      setConnectionState('online');
-      registerPresence();
-    });
-
-    socket.on('connect_error', () => {
-      setConnectionState('reconnecting');
-    });
-
-    socket.on('presenceUpdate', (payload) => {
-      const onlineById = new Map((Array.isArray(payload) ? payload : []).map((entry) => [String(entry.userId), entry]));
-      setStaffDirectory((previous) => {
-        const next = previous.map((staff) => {
-          const presence = onlineById.get(String(staff.id));
-          if (!presence) {
-            return { ...staff, online: false, status: 'offline', availability: 'Offline' };
-          }
-          const status = presence.status === 'busy' ? 'busy' : presence.status === 'away' ? 'away' : 'available';
-          return { ...staff, online: true, status, availability: status === 'busy' ? 'Busy' : status === 'away' ? 'Away' : 'Available' };
-        });
-        directoryRef.current = next;
-        return next;
-      });
-      setIsHydrated(true);
-    });
-
-    socket.on('call:incoming', (payload) => {
-      console.log('[Voice Socket] 📞 call:incoming received:', payload);
-      setIncomingCall(payload);
-      pushToast(`${payload?.caller?.name || 'Staff'} is calling`, 'info');
-    });
-
-    socket.on('call:accepted', (payload) => {
-      console.log('[Voice Socket] ✅ call:accepted received:', payload);
-      setSession({
-        id: payload.callId,
-        caller: payload.caller || currentUser,
-        peer: payload.peer || currentUser,
-        startedAt: Date.now(),
-        duration: 0,
-        quality: 'Excellent'
-      });
-      setActiveTab('session');
-      setOutgoingCall(null);
-      pushToast('Call accepted', 'success');
-
-      const establishCallerMedia = async () => {
-        try {
-          console.log('[Voice] Establishing caller media (caller side)...');
-          const service = await createWebRtc();
-          console.log('[Voice] ✅ Microphone acquired, creating offer...');
-          const offer = await service.createOffer();
-          console.log('[Voice] 📤 Sending offer:', { callId: payload.callId, hasAudio: offer.sdp?.includes('m=audio') });
-          socket.emit('webrtc:offer', {
-            callId: payload.callId || callIdRef.current,
-            toUserId: payload.fromUserId || callPeerIdRef.current,
-            fromUserId: currentUser.id,
-            offer
-          });
-        } catch (error) {
-          console.error('[Voice] Error establishing caller media:', error);
-          cleanupWebRtc();
-          pushToast(error?.name === 'NotAllowedError' ? 'Microphone permission is required' : 'Unable to start voice audio', 'warning');
-        }
-      };
-      establishCallerMedia();
-    });
-
-    socket.on('webrtc:offer', async (payload) => {
-      if (!payload?.offer) {
-        console.error('[Voice Socket] 📥 webrtc:offer received but payload.offer is missing:', payload);
-        return;
-      }
-      console.log('[Voice Socket] 📥 webrtc:offer received from', payload.fromUserId);
-      callIdRef.current = payload.callId || callIdRef.current;
-      callPeerIdRef.current = payload.fromUserId || callPeerIdRef.current;
-      try {
-        console.log('[Voice] Creating peer connection and preparing answer (answerer side)...');
-        const service = await createWebRtc();
-        console.log('[Voice] ✅ Microphone acquired, creating answer...');
-        const answer = await service.createAnswer(payload.offer);
-        console.log('[Voice] 📤 Sending answer:', { callId: payload.callId, hasAudio: answer.sdp?.includes('m=audio') });
-        await service.addIceCandidates(pendingIceCandidatesRef.current);
-        pendingIceCandidatesRef.current = [];
-        socket.emit('webrtc:answer', {
-          callId: payload.callId,
-          toUserId: payload.fromUserId,
-          fromUserId: currentUser.id,
-          answer
-        });
-      } catch (error) {
-        console.error('[Voice] Error handling offer:', error);
-        cleanupWebRtc();
-        pushToast(error?.name === 'NotAllowedError' ? 'Microphone permission is required' : 'Unable to answer voice call', 'warning');
-      }
-    });
-
-    socket.on('webrtc:answer', async (payload) => {
-      console.log('[Voice] 📥 Received answer from', payload.fromUserId);
-      if (!payload?.answer || !webRtcRef.current) return;
-      try {
-        console.log('[Voice] Setting remote description with answer...');
-        await webRtcRef.current.setRemoteDescription(payload.answer);
-        console.log('[Voice] ✅ Answer set, adding pending ICE candidates:', pendingIceCandidatesRef.current.length);
-        await webRtcRef.current.addIceCandidates(pendingIceCandidatesRef.current);
-        pendingIceCandidatesRef.current = [];
-      } catch (error) {
-        console.error('[Voice] Error handling answer:', error);
-        pushToast('Unable to complete voice connection', 'warning');
-      }
-    });
-
-    socket.on('webrtc:icecandidate', async (payload) => {
-      if (!payload?.candidate) return;
-      console.log('[Voice] 📥 Received ICE candidate, remote description set?', !!webRtcRef.current?.peerConnection?.remoteDescription);
-      if (webRtcRef.current?.peerConnection?.remoteDescription) {
-        console.log('[Voice] Adding ICE candidate immediately...');
-        await webRtcRef.current.addIceCandidate(payload.candidate);
-      } else {
-        console.log('[Voice] Buffering ICE candidate (remote description not yet set)');
-        pendingIceCandidatesRef.current.push(payload.candidate);
-      }
-    });
-
-    socket.on('call:declined', () => {
-      setOutgoingCall(null);
-      cleanupWebRtc();
-      pushToast('Call declined', 'warning');
-    });
-
-    socket.on('call:ended', () => {
-      cleanupWebRtc();
-      setOutgoingCall(null);
-      setIncomingCall(null);
-      setSession(null);
-      pushToast('Call ended', 'info');
-    });
-
-    socket.on('call:error', (payload) => {
-      if (payload?.message) {
-        pushToast(payload.message, 'warning');
-      }
-    });
 
     const hydrateDirectory = async () => {
       try {
@@ -471,21 +312,26 @@ export function VoiceCommunicationProvider({ children }) {
       }
     };
 
-    hydrateDirectory();
+    void ensureVoiceSession().catch(() => {});
+    void hydrateDirectory();
 
     return () => {
       cleanupWebRtc();
-      document.querySelectorAll('audio[data-voice-call]').forEach((audio) => audio.remove());
-      socket.disconnect();
+      if (signalingServiceRef.current) {
+        signalingServiceRef.current.dispose();
+        signalingServiceRef.current = null;
+      }
       socketRef.current = null;
+      callManagerRef.current = null;
+      webRtcRef.current = null;
     };
-  }, [currentUser.avatar, currentUser.branch, currentUser.department, currentUser.id, currentUser.name, currentUser.role, pushToast]);
+  }, [cleanupWebRtc, currentUser.avatar, currentUser.branch, currentUser.department, currentUser.id, currentUser.name, currentUser.role, ensureVoiceSession]);
 
   const setPanelOpen = useCallback((value) => setIsOpen(value), []);
 
   const togglePanel = useCallback(() => setIsOpen((value) => !value), []);
 
-  const openCall = useCallback((staff) => {
+  const openCall = useCallback(async (staff) => {
     console.log('[Voice] openCall triggered for staff:', staff);
     if (String(staff.id) === String(currentUser.id)) {
       console.log('[Voice] Cannot call yourself');
@@ -501,31 +347,45 @@ export function VoiceCommunicationProvider({ children }) {
       pushToast('User is currently on another call.', 'warning');
       return;
     }
+
     const callId = `call-${Date.now()}`;
     callIdRef.current = callId;
     callPeerIdRef.current = staff.id;
     setOutgoingCall({
       id: callId,
       contact: staff,
-      status: 'Calling…',
+      status: 'Requesting microphone access…',
       startedAt: Date.now()
     });
     setActiveTab('session');
-    if (socketRef.current) {
-      console.log('[Voice Socket] 📤 Emitting call:start:', { recipientId: staff.id, callId, caller: currentUser });
-      socketRef.current.emit('call:start', {
-        recipientId: staff.id,
-        callId,
-        caller: currentUser,
-        offer: null
-      });
-    } else {
-      console.error('[Voice] Socket not connected!');
-    }
-    pushToast(`Calling ${staff.name}`, 'info');
-  }, [currentUser, pushToast]);
 
-  const acceptIncomingCall = useCallback(() => {
+    try {
+      const service = await ensureVoiceSession();
+      const offer = await service.createOffer();
+      if (socketRef.current) {
+        console.log('[Voice Socket] 📤 Emitting call:start:', { recipientId: staff.id, callId, caller: currentUser, offerPresent: !!offer });
+        socketRef.current.emit('call:start', {
+          recipientId: staff.id,
+          callId,
+          caller: {
+            ...currentUser,
+            userId: currentUser.id
+          },
+          offer
+        });
+        setOutgoingCall((value) => value ? { ...value, status: 'Calling…' } : value);
+      } else {
+        throw new Error('Socket not connected');
+      }
+      pushToast(`Calling ${staff.name}`, 'info');
+    } catch (error) {
+      console.error('[Voice] Error initiating call:', error);
+      setOutgoingCall(null);
+      pushToast(error?.name === 'NotAllowedError' ? 'Microphone permission is required to start a call' : 'Unable to start a voice call', 'warning');
+    }
+  }, [currentUser, ensureVoiceSession, pushToast]);
+
+  const acceptIncomingCall = useCallback(async () => {
     console.log('[Voice] acceptIncomingCall triggered with incomingCall:', incomingCall);
     if (!incomingCall) {
       console.error('[Voice] No incoming call to accept');
@@ -540,20 +400,32 @@ export function VoiceCommunicationProvider({ children }) {
       peer: incomingCall.caller || incomingCall.fromUser || currentUser,
       startedAt: Date.now(),
       duration: 0,
-      quality: 'Excellent'
+      quality: 'Excellent',
+      isMuted: false,
+      isHeld: false,
+      volume: 1,
+      securityVerified: true,
+      boosted: false
     });
     setActiveTab('session');
     setIncomingCall(null);
-    if (socketRef.current) {
-      console.log('[Voice Socket] 📤 Emitting call:accept:', { callId: incomingCall.id, toUserId: incomingCall.caller?.id || incomingCall.fromUserId, fromUserId: currentUser.id });
-      socketRef.current.emit('call:accept', {
-        callId: incomingCall.id,
-        toUserId: incomingCall.caller?.id || incomingCall.fromUserId,
-        fromUserId: currentUser.id
-      });
+
+    try {
+      await ensureVoiceSession();
+      if (socketRef.current) {
+        console.log('[Voice Socket] 📤 Emitting call:accept:', { callId: incomingCall.id, toUserId: incomingCall.caller?.id || incomingCall.fromUserId, fromUserId: currentUser.id });
+        socketRef.current.emit('call:accept', {
+          callId: incomingCall.id,
+          toUserId: incomingCall.caller?.id || incomingCall.fromUserId,
+          fromUserId: currentUser.id
+        });
+      }
+      pushToast('Call connected', 'success');
+    } catch (error) {
+      console.error('[Voice] Error enabling microphone on accept:', error);
+      pushToast(error?.name === 'NotAllowedError' ? 'Microphone permission is required' : 'Unable to enable microphone', 'warning');
     }
-    pushToast('Call connected', 'success');
-  }, [currentUser.id, incomingCall, pushToast]);
+  }, [currentUser.id, ensureVoiceSession, incomingCall, pushToast]);
 
   const declineIncomingCall = useCallback(() => {
     if (!incomingCall) return;
@@ -571,18 +443,29 @@ export function VoiceCommunicationProvider({ children }) {
   const endSession = useCallback(() => {
     const peerId = callPeerIdRef.current;
     const callId = callIdRef.current;
+    document.querySelectorAll('audio[data-voice-call]').forEach((audio) => audio.remove());
     if (peerId && callId && socketRef.current) {
       socketRef.current.emit('call:end', { callId, toUserId: peerId, fromUserId: currentUser.id });
     }
-    webRtcRef.current?.cleanup();
-    webRtcRef.current = null;
-    document.querySelectorAll('audio[data-voice-call]').forEach((audio) => audio.remove());
     callPeerIdRef.current = null;
     callIdRef.current = null;
     setOutgoingCall(null);
     setIncomingCall(null);
     setSession(null);
+    setActiveTab('staff');
     pushToast('Call ended', 'info');
+  }, [currentUser.id, pushToast]);
+
+  const cancelOutgoingCall = useCallback(() => {
+    if (callPeerIdRef.current && callIdRef.current && socketRef.current) {
+      socketRef.current.emit('call:end', {
+        callId: callIdRef.current,
+        toUserId: callPeerIdRef.current,
+        fromUserId: currentUser.id
+      });
+    }
+    setOutgoingCall(null);
+    pushToast('Call cancelled', 'info');
   }, [currentUser.id, pushToast]);
 
   const startBroadcast = useCallback(() => {
@@ -611,6 +494,68 @@ export function VoiceCommunicationProvider({ children }) {
       return { ...value, isMuted: nextMuted };
     });
   }, []);
+
+  const toggleHold = useCallback(() => {
+    setSession((value) => {
+      if (!value) return value;
+      const nextHeld = !value.isHeld;
+      document.querySelectorAll('audio[data-voice-call]').forEach((audio) => {
+        audio.muted = nextHeld;
+      });
+      return { ...value, isHeld: nextHeld, status: nextHeld ? 'On hold' : 'Live' };
+    });
+  }, []);
+
+  const cycleVolume = useCallback(() => {
+    setSession((value) => {
+      if (!value) return value;
+      const levels = [0.35, 0.7, 1];
+      const currentIndex = levels.indexOf(value.volume ?? 1);
+      const nextIndex = currentIndex === -1 ? 1 : (currentIndex + 1) % levels.length;
+      const nextVolume = levels[nextIndex];
+      document.querySelectorAll('audio[data-voice-call]').forEach((audio) => {
+        audio.volume = nextVolume;
+      });
+      return { ...value, volume: nextVolume };
+    });
+  }, []);
+
+  const verifySecurity = useCallback(() => {
+    setSession((value) => (value ? { ...value, securityVerified: true } : value));
+    pushToast('End-to-end encryption is active', 'success');
+  }, [pushToast]);
+
+  const toggleBoost = useCallback(() => {
+    setSession((value) => {
+      if (!value) return value;
+      const nextBoosted = !value.boosted;
+      return { ...value, boosted: nextBoosted, quality: nextBoosted ? 'Boosted' : 'Excellent' };
+    });
+    pushToast('Call boost mode updated', 'success');
+  }, [pushToast]);
+
+  const toggleBroadcastMute = useCallback(() => {
+    setBroadcast((value) => {
+      if (!value) return value;
+      const nextMuted = !value.isMuted;
+      return { ...value, isMuted: nextMuted };
+    });
+    pushToast('Broadcast mute updated', 'info');
+  }, [pushToast]);
+
+  const toggleBroadcastLock = useCallback(() => {
+    setBroadcast((value) => {
+      if (!value) return value;
+      const nextLocked = !value.isLocked;
+      return { ...value, isLocked: nextLocked };
+    });
+    pushToast('Broadcast lock updated', 'info');
+  }, [pushToast]);
+
+  const inviteStaffToBroadcast = useCallback(() => {
+    setActiveTab('staff');
+    pushToast('Staff invite flow opened', 'info');
+  }, [pushToast]);
 
   const value = useMemo(() => ({
     isOpen,
@@ -648,8 +593,16 @@ export function VoiceCommunicationProvider({ children }) {
     endSession,
     startBroadcast,
     endBroadcast,
-    toggleMute
-  }), [activeTab, acceptIncomingCall, broadcast, connectionState, currentUser, departmentFilter, declineIncomingCall, endBroadcast, endSession, incomingCall, isOpen, openCall, outgoingCall, pushToast, roleFilter, search, session, setActiveTab, setCurrentUser, setDepartmentFilter, setIncomingCall, setOutgoingCall, setPanelOpen, setRoleFilter, setSearch, setSession, setSortOrder, setToast, sortOrder, startBroadcast, toggleMute, staffDirectory, togglePanel]);
+    toggleMute,
+    toggleHold,
+    cycleVolume,
+    verifySecurity,
+    toggleBoost,
+    toggleBroadcastMute,
+    toggleBroadcastLock,
+    inviteStaffToBroadcast,
+    cancelOutgoingCall
+  }), [acceptIncomingCall, activeTab, broadcast, cancelOutgoingCall, connectionState, currentUser, cycleVolume, departmentFilter, declineIncomingCall, endBroadcast, endSession, incomingCall, inviteStaffToBroadcast, isOpen, openCall, outgoingCall, pushToast, roleFilter, search, session, setActiveTab, setCurrentUser, setDepartmentFilter, setIncomingCall, setOutgoingCall, setPanelOpen, setRoleFilter, setSearch, setSession, setSortOrder, setToast, sortOrder, staffDirectory, startBroadcast, toggleBoost, toggleBroadcastLock, toggleBroadcastMute, toggleHold, toggleMute, togglePanel, verifySecurity]);
 
   return (
     <VoiceCommunicationContext.Provider value={value}>

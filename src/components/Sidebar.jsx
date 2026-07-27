@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
 import { getSettings } from '../services/settingsService';
-import { fetchDeliveries, fetchRiders } from '../services/deliveriesService';
 
 const menuItems = [
   { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -19,7 +18,7 @@ const menuItems = [
       { to: '/orders/tables', label: 'Tables' }
     ]
   },
-  { to: '/deliveries', label: 'Deliveries', icon: <path d="M4 7h10l3 3v7H4zM8 11h4M10 7v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  // Deliveries menu removed for presentation
   {
     to: '/inbox',
     label: 'Inbox',
@@ -39,8 +38,7 @@ function Sidebar() {
   const { sidebarToggle, closeSidebar } = useSidebar();
   const location = useLocation();
   const [isHovered, setIsHovered] = useState(false);
-  const [activeDeliveryCount, setActiveDeliveryCount] = useState(0);
-  const [onlineRiderCount, setOnlineRiderCount] = useState(0);
+  
   const [layout, setLayout] = useState(() => {
     const currentSettings = getSettings();
     return {
@@ -68,31 +66,21 @@ function Sidebar() {
     };
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    const refreshMetrics = async () => {
-      try {
-        const [deliveries, riders] = await Promise.all([fetchDeliveries(), fetchRiders()]);
-        if (!isMounted) return;
-        setActiveDeliveryCount(Array.isArray(deliveries) ? deliveries.filter((delivery) => ['Assigned', 'Rider Accepted', 'Out For Delivery'].includes(delivery.deliveryStatus)).length : 0);
-        setOnlineRiderCount(Array.isArray(riders) ? riders.filter((rider) => rider.online).length : 0);
-      } catch (err) {
-        console.error('Failed to refresh delivery sidebar metrics', err);
-      }
-    };
-
-    void refreshMetrics();
-    const intervalId = window.setInterval(refreshMetrics, 30000);
-    return () => {
-      isMounted = false;
-      window.clearInterval(intervalId);
-    };
-  }, []);
+  // Delivery metrics removed for presentation
 
   const isActivePath = (to) => {
     if (to === '/orders') {
       return location.pathname === '/orders' || location.pathname.startsWith('/orders/');
+    }
+    // Special handling for inbox routes to avoid overlap
+    if (to === '/inbox') {
+      return location.pathname === '/inbox' || (location.pathname.startsWith('/inbox/') && !location.pathname.startsWith('/inbox/chat') && !location.pathname.startsWith('/inbox/messenger'));
+    }
+    if (to === '/inbox/chat') {
+      return location.pathname === '/inbox/chat' || location.pathname.startsWith('/inbox/chat/');
+    }
+    if (to === '/inbox/messenger') {
+      return location.pathname === '/inbox/messenger' || location.pathname.startsWith('/inbox/messenger/');
     }
     return location.pathname === to || location.pathname.startsWith(`${to}/`);
   };
@@ -152,14 +140,6 @@ function Sidebar() {
 
               <ul className="mb-6 flex flex-col gap-3">
                 {menuItems.map((item) => {
-                  // Role/permission guard for Deliveries menu
-                  if (item.to === '/deliveries') {
-                    const cu = typeof window !== 'undefined' ? window.currentUser || null : null;
-                    const role = (cu && cu.role) ? String(cu.role).toLowerCase() : null;
-                    const canView = role === 'rider' || role === 'manager' || role === 'admin' || (cu && cu.canViewDeliveryTracking);
-                    if (!canView) return null;
-                  }
-
                   const active = isActivePath(item.to);
 
                   return (
@@ -181,11 +161,7 @@ function Sidebar() {
                           </svg>
                         </span>
                         <span className={`${showExpandedContent ? '' : 'lg:hidden'} truncate`}>{item.label}</span>
-                        {item.to === '/deliveries' && activeDeliveryCount > 0 ? (
-                          <span className="absolute right-3 top-2 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-2 text-[11px] font-semibold text-white">
-                            {activeDeliveryCount}
-                          </span>
-                        ) : null}
+                        {null}
                       </NavLink>
                       {item.children && active && showExpandedContent ? (
                         <ul className="mt-2 ml-10 space-y-2">
@@ -216,24 +192,7 @@ function Sidebar() {
                 })}
               </ul>
 
-              {showExpandedContent ? (
-                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                  <div className="mb-3 flex items-center justify-between">
-                    <span className="text-xs uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Delivery status</span>
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">Live</span>
-                  </div>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm dark:bg-slate-900">
-                      <span>Active deliveries</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{activeDeliveryCount}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm dark:bg-slate-900">
-                      <span>Online riders</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{onlineRiderCount}</span>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
+                  {/* Delivery status panel removed for presentation */}
             </div>
           </nav>
         </div>

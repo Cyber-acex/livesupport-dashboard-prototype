@@ -12,13 +12,15 @@ import MessengerInboxPage from './pages/MessengerInboxPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import VouchersPage from './pages/VouchersPage';
 import RefundsPage from './pages/RefundsPage';
-import DeliveriesPage from './pages/DeliveriesPage';
 import LoginPage from './pages/Login';
 import CustomerWebChatPage from './pages/CustomerWebChatPage';
 import CustomerChatOnboardingPage from './pages/CustomerChatOnboardingPage';import StaffWebChatPage from './pages/StaffWebChatPage';import FeedbackPage from './pages/FeedbackPage';
 import NotificationBanner from './components/NotificationBanner';
 import VoiceCommunicationPanel from './components/VoiceCommunicationPanel';
 import VoiceCommunicationLauncher from './components/VoiceCommunicationLauncher';
+import IncomingCallModal from './components/IncomingCallModal';
+import LiveCallHeader from './components/LiveCallHeader';
+import { useVoiceCommunication } from './contexts/VoiceCommunicationContext';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -47,6 +49,7 @@ function App() {
   const pathname = location.pathname || '';
   const isLoginRoute = pathname === '/login';
   const isFeedbackRoute = pathname.startsWith('/rate/');
+  const { incomingCall, acceptIncomingCall, declineIncomingCall } = useVoiceCommunication();
 
   return (
     <>
@@ -54,6 +57,13 @@ function App() {
       {!isLoginRoute && !isFeedbackRoute && <>
         <VoiceCommunicationLauncher />
         <VoiceCommunicationPanel />
+        <IncomingCallModal
+          open={Boolean(incomingCall)}
+          caller={incomingCall?.caller || incomingCall?.fromUser || null}
+          onAccept={acceptIncomingCall}
+          onDecline={declineIncomingCall}
+        />
+        <LiveCallHeader />
       </>}
       <Routes>
         <Route path="/login" element={<LoginPage />} />
@@ -75,7 +85,7 @@ function App() {
         <Route path="/admin-users" element={<AdminUsersPage />} />
         <Route path="/vouchers" element={<VouchersPage />} />
         <Route path="/refunds" element={<RefundsPage />} />
-        <Route path="/deliveries" element={<DeliveriesPage />} />
+        {/* Deliveries page removed for presentation build */}
       </Routes>
     </>
   );

@@ -1,61 +1,70 @@
-import { getJson, setJson, del, isReady } from './redisClient.js';
 import { calculateRoute, calcEta } from './osrmService.js';
 import { db } from '../db/database.js';
 
-const RIDER_LOCATION_KEY = (deliveryId) => `delivery:riderLocation:${deliveryId}`;
-const DELIVERY_ROUTE_KEY = (deliveryId) => `delivery:route:${deliveryId}`;
-const DELIVERY_ETA_KEY = (deliveryId) => `delivery:eta:${deliveryId}`;
-const DELIVERY_DISTANCE_KEY = (deliveryId) => `delivery:distance:${deliveryId}`;
-const DELIVERY_CACHE_TTL = Number(process.env.DELIVERY_CACHE_TTL_SECONDS || '300');
+const DELIVERY_CACHE_TTL_MS = Number(process.env.DELIVERY_CACHE_TTL_SECONDS || '300') * 1000;
+const deliveryRuntimeState = new Map();
+
+function getRuntimeState(deliveryId) {
+  const entry = deliveryRuntimeState.get(deliveryId);
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > DELIVERY_CACHE_TTL_MS) {
+    deliveryRuntimeState.delete(deliveryId);
+    return null;
+  }
+  return entry;
+}
+
+function setRuntimeState(deliveryId, patch) {
+  const existing = getRuntimeState(deliveryId) || {};
+  const next = { ...existing, ...patch, updatedAt: Date.now() };
+  deliveryRuntimeState.set(deliveryId, next);
+  return next;
+}
 
 async function saveRiderLocation(deliveryId, location) {
-  if (!isReady()) return null;
-  return setJson(RIDER_LOCATION_KEY(deliveryId), location, { EX: DELIVERY_CACHE_TTL });
+  const normalized = normalizeLocation(location);
+  if (!normalized) return null;
+  setRuntimeState(deliveryId, { riderLocation: normalized });
+  return normalized;
 }
 
 async function getRiderLocation(deliveryId) {
-  if (!isReady()) return null;
-  return getJson(RIDER_LOCATION_KEY(deliveryId));
+  return getRuntimeState(deliveryId)?.riderLocation || null;
 }
 
 async function saveDeliveryRoute(deliveryId, route) {
-  if (!isReady()) return null;
-  return setJson(DELIVERY_ROUTE_KEY(deliveryId), route, { EX: DELIVERY_CACHE_TTL });
+  if (!route) return null;
+  setRuntimeState(deliveryId, { route });
+  return route;
 }
 
 async function getDeliveryRoute(deliveryId) {
-  if (!isReady()) return null;
-  return getJson(DELIVERY_ROUTE_KEY(deliveryId));
+  return getRuntimeState(deliveryId)?.route || null;
 }
 
 async function saveDeliveryEta(deliveryId, eta) {
-  if (!isReady()) return null;
-  return setJson(DELIVERY_ETA_KEY(deliveryId), { eta }, { EX: DELIVERY_CACHE_TTL });
+  if (!eta) return null;
+  setRuntimeState(deliveryId, { eta });
+  return eta;
 }
 
 async function getDeliveryEta(deliveryId) {
-  if (!isReady()) return null;
-  const data = await getJson(DELIVERY_ETA_KEY(deliveryId));
-  return data?.eta || null;
+  return getRuntimeState(deliveryId)?.eta || null;
 }
 
 async function saveDeliveryDistance(deliveryId, distance) {
-  if (!isReady()) return null;
-  return setJson(DELIVERY_DISTANCE_KEY(deliveryId), { distance }, { EX: DELIVERY_CACHE_TTL });
+  if (distance == null) return null;
+  setRuntimeState(deliveryId, { distance });
+  return distance;
 }
 
 async function getDeliveryDistance(deliveryId) {
-  if (!isReady()) return null;
-  const data = await getJson(DELIVERY_DISTANCE_KEY(deliveryId));
-  return data?.distance || null;
+  const entry = getRuntimeState(deliveryId);
+  return entry?.distance != null ? entry.distance : null;
 }
 
 async function clearDeliveryCache(deliveryId) {
-  if (!isReady()) return null;
-  await del(RIDER_LOCATION_KEY(deliveryId));
-  await del(DELIVERY_ROUTE_KEY(deliveryId));
-  await del(DELIVERY_ETA_KEY(deliveryId));
-  await del(DELIVERY_DISTANCE_KEY(deliveryId));
+  deliveryRuntimeState.delete(deliveryId);
 }
 
 function normalizeLocation(location) {

@@ -1,5 +1,5 @@
 const requiredVars = ['DATABASE_URL', 'SESSION_SECRET'];
-const optionalVars = ['OSRM_URL', 'REDIS_URL', 'APP_URL'];
+const optionalVars = ['OSRM_URL', 'APP_URL'];
 
 function validateEnv() {
   const missing = [];
@@ -15,10 +15,6 @@ function validateEnv() {
 
   if (!process.env.OSRM_URL) {
     console.warn('[Env] OSRM_URL not configured. Using public OSRM at https://router.project-osrm.org for routing. For production, set OSRM_URL to your self-hosted OSRM instance.');
-  }
-
-  if (!process.env.REDIS_URL) {
-    console.warn('[Env] REDIS_URL not configured. Redis functionality will be disabled until Redis is available. Live tracking cache and rate-limited route caching will fallback to PostgreSQL-based route generation.');
   }
 
   if (!process.env.SESSION_SECRET || String(process.env.SESSION_SECRET).trim() === '') {

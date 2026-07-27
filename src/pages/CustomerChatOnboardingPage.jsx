@@ -14,6 +14,9 @@ export default function CustomerChatOnboardingPage() {
   const [phone, setPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [isLookingUp, setIsLookingUp] = useState(false);
+  const [lookupResults, setLookupResults] = useState(null);
+  const [selectedConversationId, setSelectedConversationId] = useState(null);
   const storage = useMemo(() => createGuestSessionStorage(window.localStorage), []);
 
   useEffect(() => {
@@ -29,6 +32,62 @@ export default function CustomerChatOnboardingPage() {
     }
   }, [storage]);
 
+  const handleStartNewConversation = async (guestId, trimmedName, branchId, phoneValue) => {
+    const response = await fetch('/api/customer-web-chat/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        guestId,
+        branchId,
+        customerName: trimmedName,
+        phone: phoneValue,
+        channel: 'web',
+        forceNew: true
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.error || 'Unable to start a conversation right now.');
+    }
+
+    const conversationId = data?.conversationId || data?.conversation?.id || null;
+    const customer = data?.customer || { name: trimmedName, phone: phoneValue };
+    const customerConversations = Array.isArray(data?.conversations) ? data.conversations : [];
+
+    const sessionPayload = {
+      guestId,
+      conversationId,
+      branchId,
+      customerName: customer.name || trimmedName,
+      phone: customer.phone || phoneValue,
+      channel: 'web',
+      customerConversations
+    };
+
+    saveGuestSession(storage, sessionPayload);
+    setError('✓ Welcome! A new conversation has been created for you.');
+    setTimeout(() => navigate('/customer-chat'), 800);
+  };
+
+  const handleResumeConversation = (conversation) => {
+    if (!conversation?.id) return;
+    const existing = loadGuestSession(storage);
+    const guestId = existing?.guestId || `guest-${Date.now()}`;
+    const sessionPayload = {
+      guestId,
+      conversationId: conversation.id,
+      branchId: Number(conversation.branch_id || selectedBranchId || 0) || null,
+      customerName: customerName.trim(),
+      phone: phone.trim(),
+      channel: 'web',
+      customerConversations: lookupResults?.conversations || []
+    };
+    saveGuestSession(storage, sessionPayload);
+    setError('✓ Resuming your previous conversation.');
+    setTimeout(() => navigate('/customer-chat'), 800);
+  };
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
@@ -43,51 +102,25 @@ export default function CustomerChatOnboardingPage() {
       return;
     }
 
+    const trimmedName = customerName.trim();
     setSubmitting(true);
-    try {
-      const trimmedName = customerName.trim();
-      const existing = loadGuestSession(storage);
-      const guestId = existing?.guestId || `guest-${Date.now()}`;
-      const response = await fetch('/api/customer-web-chat/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          guestId,
-          branchId: Number(selectedBranchId),
-          customerName: trimmedName,
-          phone: phone.trim(),
-          channel: 'web'
-        })
-      });
+    setLookupResults(null);
+    setSelectedConversationId(null);
 
+    try {
+      const response = await fetch(`/api/customers/by-name/${encodeURIComponent(trimmedName)}`);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data?.error || 'Unable to start a conversation right now.');
+        throw new Error(data?.error || 'Unable to verify your name right now.');
       }
 
-      const conversationId = data?.conversationId || data?.conversation?.id || null;
-      const customer = data?.customer || { name: trimmedName, phone: phone.trim() };
-      const customerConversations = Array.isArray(data?.conversations) ? data.conversations : [];
-
-      const sessionPayload = {
-        guestId,
-        conversationId,
-        branchId: Number(selectedBranchId),
-        customerName: customer.name || trimmedName,
-        phone: customer.phone || phone.trim(),
-        channel: 'web',
-        customerConversations
-      };
-
-      saveGuestSession(storage, sessionPayload);
-
-      if (data?.isExisting) {
-        setError('✓ We found your previous conversation and restored it.');
+      if (data?.exists && Array.isArray(data?.conversations) && data.conversations.length > 0) {
+        setLookupResults(data);
+        setSelectedConversationId(data.conversations[0]?.id || null);
+        setError('We found previous conversations. Select one to resume or start a new chat.');
       } else {
-        setError('✓ Welcome! A new conversation has been created for you.');
+        await handleStartNewConversation(`guest-${Date.now()}`, trimmedName, Number(selectedBranchId), phone.trim());
       }
-
-      setTimeout(() => navigate('/customer-chat'), 800);
     } catch (submitError) {
       setError(submitError?.message || 'Unable to start a chat right now.');
     } finally {
@@ -244,6 +277,64 @@ export default function CustomerChatOnboardingPage() {
                   </div>
                 </div>
 
+                {lookupResults?.exists && Array.isArray(lookupResults.conversations) && lookupResults.conversations.length > 0 ? (
+                  <div className="rounded-[2rem] border border-slate-200 bg-slate-950/10 p-5 shadow-sm">
+                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-orange-400">Previous conversations</p>
+                    <p className="mt-2 text-sm text-slate-300">We found prior chats for this name. Choose one to resume or start a fresh conversation.</p>
+                    <div className="mt-4 space-y-3 max-h-[260px] overflow-y-auto">
+                      {lookupResults.conversations.map((conversation) => {
+                        const isActive = conversation.id === selectedConversationId;
+                        const branchName = branches.find((entry) => Number(entry.id) === Number(conversation.branch_id))?.name || `Branch ${conversation.branch_id}`;
+                        const branchMismatch = selectedBranchId && Number(conversation.branch_id || 0) !== Number(selectedBranchId);
+                        const preview = conversation.lastMessage ? conversation.lastMessage : 'No message yet.';
+                        return (
+                          <button
+                            key={conversation.id}
+                            type="button"
+                            onClick={() => setSelectedConversationId(conversation.id)}
+                            className={`w-full rounded-2xl border px-4 py-3 text-left transition ${isActive ? 'border-orange-400 bg-orange-500/10' : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'}`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-sm font-semibold text-white truncate">{conversation.name || `Conversation #${conversation.id}`}</p>
+                                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">{new Date(conversation.created_at).toLocaleDateString()}</span>
+                                </div>
+                                <p className="mt-1 text-xs text-slate-400">Branch: {branchName}</p>
+                                <p className="mt-2 text-sm text-slate-300 line-clamp-2">{preview}</p>
+                                {branchMismatch ? (
+                                  <p className="mt-2 rounded-2xl bg-amber-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-300">
+                                    Branch mismatch: selected branch is {branches.find((entry) => String(entry.id) === String(selectedBranchId))?.name || 'your chosen branch'}, but this chat belongs to {branchName}.
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const selected = lookupResults.conversations.find((conversation) => conversation.id === selectedConversationId) || lookupResults.conversations[0];
+                          handleResumeConversation(selected);
+                        }}
+                        className="rounded-2xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-orange-600"
+                      >
+                        Resume selected chat
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleStartNewConversation(`guest-${Date.now()}`, customerName.trim(), Number(selectedBranchId), phone.trim())}
+                        className="rounded-2xl border border-white/20 bg-slate-950/80 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-900"
+                      >
+                        Start a new conversation
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
                 {error ? (
                   <div className={`rounded-2xl border px-4 py-3 text-sm font-medium backdrop-blur-sm ring-1 ${
                     error.startsWith('✓')
@@ -272,7 +363,7 @@ export default function CustomerChatOnboardingPage() {
 
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || (lookupResults?.exists && Array.isArray(lookupResults.conversations) && lookupResults.conversations.length > 0)}
                   className="group relative w-full overflow-hidden rounded-2xl bg-gradient-to-r from-orange-500 via-orange-400 to-amber-400 px-6 py-3 text-sm font-bold text-white shadow-xl shadow-orange-500/30 transition-all duration-300 hover:shadow-2xl hover:shadow-orange-500/50 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-70 disabled:scale-100"
                 >
                   <div className="absolute inset-0 -z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 blur-xl" style={{ background: 'radial-gradient(circle, rgba(249,115,22,0.4), transparent)' }} />

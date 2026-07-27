@@ -247,7 +247,7 @@ export function createAuthRouter(prisma) {
       await sendPasswordChangedEmail(user.email, user.name);
 
       // Invalidate all sessions for this user (force re-login on all devices)
-      // This would require tracking sessions in a store (Redis/DB)
+      // This would require tracking sessions in a persistent store
       console.log(`✅ Password reset successful for user: ${user.email}`);
 
       res.json({ 

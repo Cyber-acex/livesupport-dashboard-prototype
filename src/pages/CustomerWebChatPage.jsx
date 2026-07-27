@@ -227,36 +227,71 @@ export default function CustomerWebChatPage() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_24px_80px_-30px_rgba(15,23,42,0.1)]">
-                <div className="h-full overflow-y-auto px-4 py-5 sm:px-6" style={{ scrollBehavior: 'smooth' }}>
-                  <div className="space-y-4">
-                    {messages.length === 0 ? (
-                      <div className="rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm text-slate-500">
-                        No message history yet. Start the conversation with a quick message below.
-                      </div>
-                    ) : null}
+              <div className="flex h-[480px] min-h-[420px] flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_24px_80px_-30px_rgba(15,23,42,0.1)] sm:h-[560px]">
+                <div className="shrink-0 border-b border-slate-200 bg-slate-50/80 px-4 py-4 sm:px-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">Live chat</p>
+                      <p className="mt-1 text-sm text-slate-600">Messages stay in this panel and scroll vertically while you continue the conversation.</p>
+                    </div>
+                    <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700">
+                      Active
+                    </div>
+                  </div>
+                </div>
 
-                    {messages.map((message) => {
-                      const isCustomer = String(message.sender || '').toLowerCase() === 'customer';
-                      return (
-                        <div key={message.id} className={`flex ${isCustomer ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[82%] rounded-[1.75rem] px-5 py-4 shadow-sm ${isCustomer ? 'bg-gradient-to-br from-orange-500 to-amber-400 text-white shadow-[0_18px_40px_-30px_rgba(249,115,22,0.6)]' : 'border border-slate-200 bg-slate-950/5 text-slate-900'}`}>
-                            <div className={`mb-2 text-[11px] font-semibold uppercase tracking-[0.24em] ${isCustomer ? 'text-orange-100' : 'text-slate-400'}`}>
-                              {isCustomer ? session.customerName || 'You' : 'Staff'}
-                            </div>
-                            <p className="text-sm leading-7 whitespace-pre-line">{message.message || message.text || ''}</p>
-                            <div className={`mt-3 text-[11px] ${isCustomer ? 'text-orange-100/90' : 'text-slate-400'}`}>{formatTime(message.created_at || message.timestamp)}</div>
-                          </div>
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <div className="h-full overflow-y-auto px-4 py-5 sm:px-6" style={{ scrollBehavior: 'smooth' }}>
+                    <div className="space-y-4">
+                      {messages.length === 0 ? (
+                        <div className="rounded-[1.75rem] border border-dashed border-slate-300 bg-slate-50 px-5 py-6 text-sm text-slate-500">
+                          No message history yet. Start the conversation with a quick message below.
                         </div>
-                      );
-                    })}
+                      ) : null}
 
-                    {typing ? (
-                      <div className="max-w-[65%] rounded-full border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
-                        Staff is typing…
-                      </div>
-                    ) : null}
-                    <div ref={messagesEndRef} />
+                      {messages.map((message) => {
+                        const isCustomer = String(message.sender || '').toLowerCase() === 'customer';
+                        return (
+                          <div key={message.id} className={`flex ${isCustomer ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[82%] rounded-[1.75rem] px-5 py-4 shadow-sm ${isCustomer ? 'bg-gradient-to-br from-orange-500 to-amber-400 text-white shadow-[0_18px_40px_-30px_rgba(249,115,22,0.6)]' : 'border border-slate-200 bg-slate-950/5 text-slate-900'}`}>
+                              <div className={`mb-2 text-[11px] font-semibold uppercase tracking-[0.24em] ${isCustomer ? 'text-orange-100' : 'text-slate-400'}`}>
+                                {isCustomer ? session.customerName || 'You' : 'Staff'}
+                              </div>
+                              <p className="text-sm leading-7 whitespace-pre-line">{message.message || message.text || ''}</p>
+                              <div className={`mt-3 text-[11px] ${isCustomer ? 'text-orange-100/90' : 'text-slate-400'}`}>{formatTime(message.created_at || message.timestamp)}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {typing ? (
+                        <div className="max-w-[65%] rounded-full border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+                          Staff is typing…
+                        </div>
+                      ) : null}
+                      <div ref={messagesEndRef} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-200 bg-white/90 px-4 py-4 sm:px-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <textarea
+                      rows={3}
+                      value={input}
+                      onChange={(event) => setInput(event.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Type your message..."
+                      className="min-h-[96px] flex-1 resize-none rounded-[1.75rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100"
+                    />
+                    <button
+                      type="button"
+                      disabled={sending || !input.trim()}
+                      onClick={sendMessage}
+                      className="inline-flex h-14 items-center justify-center rounded-[1.75rem] bg-gradient-to-r from-orange-500 to-amber-400 px-6 text-sm font-semibold text-white shadow-lg shadow-orange-200 transition hover:from-orange-600 hover:to-amber-500 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {sending ? 'Sending…' : 'Send message'}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -324,24 +359,6 @@ export default function CustomerWebChatPage() {
 
         <footer className="border-t border-slate-200 bg-white/90 px-4 py-4 sm:px-6 lg:px-8">
           {statusMessage ? <div className="mb-3 text-sm text-slate-500">{statusMessage}</div> : null}
-          <div className="mx-auto flex max-w-6xl flex-col gap-3 sm:flex-row sm:items-end">
-            <textarea
-              rows={3}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              className="min-h-[96px] flex-1 resize-none rounded-[1.75rem] border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-900 outline-none transition focus:border-orange-400 focus:bg-white focus:ring-4 focus:ring-orange-100"
-            />
-            <button
-              type="button"
-              disabled={sending || !input.trim()}
-              onClick={sendMessage}
-              className="inline-flex h-14 items-center justify-center rounded-[1.75rem] bg-gradient-to-r from-orange-500 to-amber-400 px-6 text-sm font-semibold text-white shadow-lg shadow-orange-200 transition hover:from-orange-600 hover:to-amber-500 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {sending ? 'Sending…' : 'Send message'}
-            </button>
-          </div>
         </footer>
       </div>
     </div>

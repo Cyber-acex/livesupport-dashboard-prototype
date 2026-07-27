@@ -1,3 +1,31 @@
+export function buildSecureAudioConstraints(constraints = {}) {
+  const requestedAudio = constraints.audio ?? true;
+
+  if (requestedAudio === false) {
+    return { audio: false, video: false };
+  }
+
+  const secureAudio = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    channelCount: 1,
+    sampleRate: 48000
+  };
+
+  if (requestedAudio === true) {
+    return { audio: secureAudio, video: false };
+  }
+
+  return {
+    audio: {
+      ...secureAudio,
+      ...requestedAudio
+    },
+    video: false
+  };
+}
+
 export class WebRTCService {
   constructor({ debug = false } = {}) {
     this.debug = debug;
@@ -23,9 +51,10 @@ export class WebRTCService {
       throw new Error('This browser does not support microphone access');
     }
 
-    this.log('Requesting microphone access with constraints', constraints);
+    const secureConstraints = buildSecureAudioConstraints(constraints);
+    this.log('Requesting microphone access with constraints', secureConstraints);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(secureConstraints);
       this.localStream = stream;
       const audioTracks = stream.getAudioTracks();
       this.log('Microphone acquired', audioTracks.length, 'audio tracks');
@@ -35,8 +64,7 @@ export class WebRTCService {
       return stream;
     } catch (error) {
       this.log('Failed to acquire microphone:', error.name, error.message);
-      // Fallback: try with basic audio constraint
-      if (constraints.audio !== true && constraints.audio !== false) {
+      if (secureConstraints.audio !== false) {
         this.log('Retrying with basic audio constraint...');
         const fallbackStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
         this.localStream = fallbackStream;
@@ -52,9 +80,14 @@ export class WebRTCService {
       this.cleanupPeerConnection();
     }
 
-    const pc = new RTCPeerConnection({ iceServers });
+    const pc = new RTCPeerConnection({
+      iceServers,
+      bundlePolicy: 'max-bundle',
+      iceTransportPolicy: 'all',
+      sdpSemantics: 'unified-plan'
+    });
     this.peerConnection = pc;
-    this.log('✅ Peer connection created with STUN server');
+    this.log('✅ Peer connection created with secure transport settings');
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -127,7 +160,7 @@ export class WebRTCService {
     if (!this.peerConnection) {
       throw new Error('No peer connection available');
     }
-    const offer = await this.peerConnection.createOffer();
+    const offer = await this.peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
     await this.peerConnection.setLocalDescription(offer);
     return offer;
   }
@@ -137,7 +170,7 @@ export class WebRTCService {
       throw new Error('No peer connection available');
     }
     await this.peerConnection.setRemoteDescription(offer);
-    const answer = await this.peerConnection.createAnswer();
+    const answer = await this.peerConnection.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
     await this.peerConnection.setLocalDescription(answer);
     return answer;
   }
