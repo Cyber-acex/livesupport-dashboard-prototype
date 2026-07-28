@@ -8,6 +8,7 @@ import KnowledgePage from './pages/KnowledgePage';
 import PolicyPage from './pages/PolicyPage';
 import SettingsPage from './pages/SettingsPage';
 import InboxPage from './pages/InboxPage';
+import WhatsAppInboxPage from './pages/WhatsAppInboxPage';
 import MessengerInboxPage from './pages/MessengerInboxPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import VouchersPage from './pages/VouchersPage';
@@ -75,7 +76,7 @@ function App() {
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/knowledge/policies" element={<PolicyPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/inbox" element={<WhatsAppInboxPage />} />
         <Route path="/inbox/messenger" element={<MessengerInboxPage />} />
         <Route path="/inbox/chat" element={<StaffWebChatPage />} />
         <Route path="/inbox/chat/:conversationId" element={<StaffWebChatPage />} />

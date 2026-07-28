@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Bot, MessageCircle, Search, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
@@ -403,7 +404,12 @@ function InboxPage({ defaultPlatform = null }) {
           String(msg.created_at) === String(messageData.created_at)
         );
         if (alreadyExists) return prev;
-        return [...prev, messageData];
+        const next = [...prev, messageData];
+        // After adding a message (user sent), ensure viewport scrolls to bottom
+        window.requestAnimationFrame(() => {
+          scrollToBottom('smooth');
+        });
+        return next;
       });
 
       setConversations((prev) => prev.map((conv) => {
@@ -904,7 +910,10 @@ function InboxPage({ defaultPlatform = null }) {
     if (!container) return;
 
     const runAutoScroll = () => {
-      scrollToBottom('auto');
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom < 140) {
+        scrollToBottom('auto');
+      }
       updateScrollToBottomVisibility();
     };
 
@@ -1064,67 +1073,67 @@ function InboxPage({ defaultPlatform = null }) {
 
   return (
     <div className={`min-h-screen ${isMessenger ? 'bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_28%),linear-gradient(135deg,_#f8fbff_0%,_#eef4ff_100%)]' : 'bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_transparent_28%),linear-gradient(135deg,_#f7fdf9_0%,_#ecfdf5_100%)]'} text-slate-900 dark:bg-slate-950 dark:text-white`}>
-      <div className="flex min-h-screen">
+      <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
           <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 pb-10 sm:p-4 sm:pb-12 lg:p-6 lg:pb-16">
             <div className={`mb-4 overflow-hidden rounded-[32px] border shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-1 ${isMessenger ? 'border-sky-200 bg-gradient-to-br from-sky-600 via-blue-600 to-indigo-600 text-white' : 'border-emerald-200 bg-gradient-to-br from-emerald-600 via-green-600 to-teal-600 text-white'}`}>
-              <div className="flex flex-col gap-4 px-3 py-4 sm:px-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="max-w-2xl">
-                  <div className={`flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] ${isMessenger ? 'text-sky-100' : 'text-emerald-100'}`}>
-                    <span className={`h-2 w-2 rounded-full ${isMessenger ? 'bg-sky-200' : 'bg-emerald-200'}`} />
-                    Operations / Inbox
+              <div className="relative overflow-hidden rounded-[28px] px-3 py-4 sm:px-5 lg:px-6">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18),_transparent_35%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.12),_transparent_25%)]" />
+                <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="max-w-2xl">
+                    <div className={`inline-flex items-center gap-2 rounded-full border border-white/25 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] ${isMessenger ? 'bg-sky-400/20 text-sky-50' : 'bg-emerald-400/20 text-emerald-50'}`}>
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Premium operations center
+                    </div>
+                    <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+                      {platformHeroTitle}
+                    </h1>
+                    <p className={`mt-2 max-w-xl text-sm leading-6 ${isMessenger ? 'text-sky-100/90' : 'text-emerald-100/90'}`}>
+                      {platformHeroDescription} Every conversation is surfaced with a polished workspace designed for fast, high-touch support.
+                    </p>
                   </div>
-                  <h1 className="mt-1.5 text-2xl font-semibold tracking-tight sm:text-3xl">
-                    {platformHeroTitle}
-                  </h1>
-                  <p className={`mt-1 text-sm ${isMessenger ? 'text-sky-100/90' : 'text-emerald-100/90'}`}>
-                    {platformHeroDescription}
-                  </p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <label className="relative min-w-[240px] sm:min-w-[280px]">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                      <input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder={`Search ${platformLabel} conversations...`}
+                        className={`w-full rounded-2xl border border-white/40 bg-white/95 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-white ${isMessenger ? 'focus:ring-2 focus:ring-sky-200' : 'focus:ring-2 focus:ring-emerald-200'}`}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => window.location.reload()}
+                      className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition shadow-sm ${isMessenger ? 'bg-white/15 hover:bg-white/25' : 'bg-white/15 hover:bg-white/25'}`}
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <label className="relative min-w-[240px] sm:min-w-[280px]">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="11" cy="11" r="6" />
-                      <path d="m20 20-4.2-4.2" />
-                    </svg>
-                    <input
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder={`Search ${platformLabel} conversations...`}
-                      className={`w-full rounded-2xl border border-white/40 bg-white/95 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-white ${isMessenger ? 'focus:ring-2 focus:ring-sky-200' : 'focus:ring-2 focus:ring-emerald-200'}`}
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => window.location.reload()}
-                    className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition shadow-sm ${isMessenger ? 'bg-white/15 hover:bg-white/25' : 'bg-white/15 hover:bg-white/25'}`}
-                  >
-                    Refresh
-                  </button>
-                </div>
-              </div>
 
-              <div className={`grid gap-px border-t ${isMessenger ? 'border-sky-200/40 bg-sky-200/40' : 'border-emerald-200/40 bg-emerald-200/40'} sm:grid-cols-3`}>
-                {queueSummary.map((card) => (
-                  <div key={card.label} className={`p-3.5 sm:first:rounded-bl-[24px] sm:last:rounded-br-[24px] ${isMessenger ? 'bg-sky-600/20' : 'bg-emerald-600/20'}`}>
-                    <div className="flex items-center justify-between gap-3">
-                    <div className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isMessenger ? 'text-sky-100' : 'text-emerald-100'}`}>
-                      {card.label}
+                <div className="relative mt-4 grid gap-3 rounded-[24px] border border-white/20 bg-white/10 p-3 backdrop-blur-sm sm:grid-cols-3">
+                  {queueSummary.map((card) => (
+                    <div key={card.label} className="rounded-[18px] border border-white/15 bg-slate-950/10 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/80">
+                          {card.label}
+                        </div>
+                        <span className={`h-2.5 w-2.5 rounded-full bg-gradient-to-r ${card.tone}`} />
+                      </div>
+                      <div className="mt-2 flex items-baseline gap-2">
+                        <p className="text-xl font-semibold text-white">{card.value}</p>
+                        <p className="text-xs text-white/80">{card.detail}</p>
+                      </div>
                     </div>
-                    <span className={`h-2 w-2 rounded-full bg-gradient-to-r ${card.tone}`} />
-                    </div>
-                    <div className="mt-1 flex items-baseline gap-2">
-                      <p className="text-xl font-semibold text-white">{card.value}</p>
-                      <p className={`text-xs ${isMessenger ? 'text-sky-100/90' : 'text-emerald-100/90'}`}>{card.detail}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
-            <div className="flex flex-1 min-h-0 flex-col overflow-visible rounded-2xl border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-950">
               <div className="grid h-full min-h-0 flex-1 gap-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_320px]">
                 <aside className="flex min-h-0 flex-1 flex-col border-b border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:border-b-0 lg:border-r">
                   <div className="rounded-[28px] border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
@@ -1173,12 +1182,14 @@ function InboxPage({ defaultPlatform = null }) {
                   </div>
                 </aside>
 
-                <section className="flex h-full min-h-0 flex-col overflow-visible bg-[linear-gradient(180deg,rgba(248,250,252,0.96),rgba(241,245,249,0.94))] dark:bg-slate-950">
+                <section className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-[30px] border border-slate-200/70 bg-[linear-gradient(135deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] shadow-[0_20px_70px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.12),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.10),_transparent_24%)]" />
+                  <div className="relative flex h-full min-h-0 flex-col">
                   {activeConversation ? (
                     <>
-                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-white/85 px-6 py-5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/85">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-white/80 px-6 py-5 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80">
                         <div className="flex items-center gap-3">
-                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 to-cyan-400 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.25)]">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-500 via-sky-500 to-cyan-400 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(37,99,235,0.25)]">
                             {(activeConversation.name || activeConversation.phone || 'C').charAt(0).toUpperCase()}
                           </div>
                           <div>
@@ -1188,7 +1199,8 @@ function InboxPage({ defaultPlatform = null }) {
                               </h2>
                               <StatusBadge status={activeConversationStatus.label} type={activeConversationStatus.type} />
                             </div>
-                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                            <p className="mt-1 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+                              <MessageCircle className="h-4 w-4" />
                               {activeConversation.platform || 'Chat'} • {formatDate(activeConversation.last_message_at || activeConversation.updated_at || activeConversation.created_at)}
                             </p>
                           </div>
@@ -1245,8 +1257,8 @@ function InboxPage({ defaultPlatform = null }) {
                         </div>
                       </div>
 
-                      <div className="relative flex flex-1 min-h-0 flex-col overflow-visible">
-                        <div ref={messagesViewportRef} className="flex-1 min-h-0 overflow-y-auto bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                      <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
+                        <div ref={messagesViewportRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
                           <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
                             {messagesLoading ? (
                               <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
@@ -1300,8 +1312,8 @@ function InboxPage({ defaultPlatform = null }) {
                         </button>
                       </div>
 
-                      <div className="border-t border-slate-200/80 bg-gradient-to-r from-white via-slate-50/80 to-white p-4 dark:border-slate-800 dark:from-slate-950 dark:via-slate-900/70 dark:to-slate-950">
-                        <div className="mx-auto w-full max-w-2xl rounded-[28px] border border-slate-200/80 bg-white/90 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.09)] backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
+                      <div className="border-t border-slate-200/80 bg-white/70 p-4 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/70">
+                        <div className="mx-auto w-full max-w-2xl rounded-[28px] border border-slate-200/80 bg-slate-950/95 p-3 shadow-[0_18px_44px_rgba(15,23,42,0.09)] dark:border-slate-800">
                           <textarea
                             rows={3}
                             placeholder="Write a reply..."
@@ -1313,7 +1325,7 @@ function InboxPage({ defaultPlatform = null }) {
                                 sendMessage();
                               }
                             }}
-                            className="min-h-[112px] w-full resize-none rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                            className="min-h-[112px] w-full resize-none rounded-2xl border border-slate-700 bg-slate-900/70 px-3 py-3 text-sm text-slate-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-500/20"
                           />
                           <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-sm text-slate-500 dark:text-slate-400">
@@ -1328,19 +1340,21 @@ function InboxPage({ defaultPlatform = null }) {
                                 type="button"
                                 disabled={isGeneratingReply || !canUseAiReply(autopilotMode)}
                                 onClick={handleUseAiReply}
-                                className={`rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 ${isGeneratingReply || !canUseAiReply(autopilotMode) ? 'cursor-not-allowed opacity-70' : ''}`}
+                                className={`inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-slate-800 ${isGeneratingReply || !canUseAiReply(autopilotMode) ? 'cursor-not-allowed opacity-70' : ''}`}
                               >
+                                <Bot className="h-4 w-4" />
                                 {isGeneratingReply ? 'Generating...' : 'Use AI reply'}
                               </button>
                               <button
                                 type="button"
                                 disabled={isSending || !composer.trim()}
                                 onClick={sendMessage}
-                                className={`rounded-full px-3 py-2 text-sm font-semibold text-white transition ${isSending || !composer.trim()
+                                className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold text-white transition ${isSending || !composer.trim()
                                   ? 'bg-slate-400 cursor-not-allowed hover:bg-slate-400'
                                   : palette.accent
                                 }`}
                               >
+                                <ArrowUpRight className="h-4 w-4" />
                                 {isSending ? 'Sending...' : 'Send'}
                               </button>
                             </div>
@@ -1353,26 +1367,30 @@ function InboxPage({ defaultPlatform = null }) {
                       {loading ? 'Loading conversation thread...' : 'Select a conversation to open the thread.'}
                     </div>
                   )}
+                  </div>
                 </section>
 
                 <aside className="border-t border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 xl:border-l xl:border-t-0">
-                  <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                  <div className="rounded-[24px] border border-slate-200 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 p-4 text-white shadow-sm">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">Customer info</h3>
-                      <StatusBadge status="VIP" type="pending" />
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-400">Customer insight</h3>
+                      <div className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-100">
+                        <ShieldCheck className="mr-1 inline h-3.5 w-3.5" />
+                        VIP
+                      </div>
                     </div>
-                    <div className="mt-4 space-y-3 text-sm text-slate-600 dark:text-slate-300">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Name</p>
-                        <p className="mt-1 font-medium text-slate-900 dark:text-white">{activeConversation?.name || '—'}</p>
+                    <div className="mt-4 space-y-3 text-sm text-slate-300">
+                      <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.24em] text-slate-400">Name</p>
+                        <p className="mt-1 font-semibold text-white">{activeConversation?.name || '—'}</p>
                       </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Phone</p>
-                        <p className="mt-1 font-medium text-slate-900 dark:text-white">{activeConversation?.phone || '—'}</p>
+                      <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.24em] text-slate-400">Phone</p>
+                        <p className="mt-1 font-semibold text-white">{activeConversation?.phone || '—'}</p>
                       </div>
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Last contact</p>
-                        <p className="mt-1 font-medium text-slate-900 dark:text-white">{formatDate(activeConversation?.last_message_at || activeConversation?.updated_at || activeConversation?.created_at)}</p>
+                      <div className="rounded-2xl border border-white/10 bg-white/10 p-3">
+                        <p className="text-[11px] uppercase tracking-[0.24em] text-slate-400">Last contact</p>
+                        <p className="mt-1 font-semibold text-white">{formatDate(activeConversation?.last_message_at || activeConversation?.updated_at || activeConversation?.created_at)}</p>
                       </div>
                     </div>
                   </div>

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config as dbConfig, prisma } from './db/database.js';
 import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
+import { detectConversationIntent, shouldInjectBusinessContext, buildPromptContext, createGreetingReply } from './utils/aiConversationFlow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1459,7 +1460,13 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
 async function getMistralReply(message, phone = null, conversationId = null, branchId = null, conversationState = null) {
     try {
         console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", branchId, "state:", conversationState?.workflowState || 'none');
-        
+
+        const intent = detectConversationIntent(message);
+
+        if (intent === 'Greeting') {
+            return createGreetingReply();
+        }
+
         // Check if this is a response to an order confirmation
         if (conversationId && isOrderConfirmationResponse(message)) {
             if (isPositiveConfirmation(message)) {
@@ -1600,23 +1607,41 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             }
         }
 
-        // Get customer order history
-        let orderContext = "";
-        if (phone) {
-            console.log("Fetching order history for phone:", phone);
-            const orderHistory = await getOrderHistory(phone);
-            console.log("Order history result:", orderHistory);
-            if (orderHistory) {
-                orderContext = `\n\nCustomer Order History:\nTotal Orders: ${orderHistory.count}\nTotal Spent: $${orderHistory.totalSpent}\nRecent Orders:\n${orderHistory.summary}`;
-            } else {
-                orderContext = "\n\nCustomer Order History: No previous orders found in the system.";
+        let businessContext = {};
+        if (intent === 'Order Tracking' || intent === 'Order Status') {
+            const orderId = extractOrderId(message);
+            let resolvedOrderContext = '';
+            if (orderId) {
+                const order = await getOrderById(orderId);
+                resolvedOrderContext = order ? `Order ID ${orderId}: ${formatOrderStatusResponse(order)}` : `No order found for ${orderId}.`;
+            } else if (phone) {
+                const orderHistory = await getOrderHistory(phone);
+                if (orderHistory && orderHistory.count > 0) {
+                    resolvedOrderContext = `Customer order history:\nTotal Orders: ${orderHistory.count}\nTotal Spent: $${orderHistory.totalSpent}\nRecent Orders:\n${orderHistory.summary}`;
+                } else {
+                    resolvedOrderContext = 'No previous orders found for this customer.';
+                }
             }
-        } else {
-            console.log("No phone provided to getMistralReply");
-        }
-
-        if (branchId) {
-            orderContext += `\n\nCustomer branch context: branch ID ${branchId}. Use the branch context to route requests or confirm availability for the correct location.`;
+            if (branchId) {
+                resolvedOrderContext += `\nCustomer branch context: branch ID ${branchId}. Use the branch context to route requests or confirm availability for the correct location.`;
+            }
+            businessContext.order = resolvedOrderContext;
+        } else if (intent === 'Refund Request') {
+            businessContext.refund = phone
+                ? `Refund request detected for phone ${phone}. Ask for the order ID and the issue summary before discussing eligibility.`
+                : 'Refund request detected. Ask for the order ID and the issue summary before discussing eligibility.';
+        } else if (intent === 'Payment') {
+            businessContext.payment = phone
+                ? `Payment concern reported for phone ${phone}. Ask for the order ID, payment method, and the error message if available.`
+                : 'Payment concern reported. Ask for the order ID, payment method, and the error message if available.';
+        } else if (intent === 'Delivery') {
+            businessContext.delivery = phone
+                ? `Delivery concern reported for phone ${phone}. Ask for the order ID and a brief summary of the delivery issue.`
+                : 'Delivery concern reported. Ask for the order ID and a brief summary of the delivery issue.';
+        } else if (intent === 'Support Ticket') {
+            businessContext.ticket = phone
+                ? `Support ticket request detected for phone ${phone}. Ask for the issue summary and order ID if relevant.`
+                : 'Support ticket request detected. Ask for the issue summary and order ID if relevant.';
         }
 
         const persistedWorkflowContext = conversationState && typeof conversationState === 'object'
@@ -1649,8 +1674,6 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
         }
 
         // Craft a system prompt and user prompt for the support agent
-
-        // Craft a system prompt and user prompt for the support agent
         const policyGuidance = buildPolicyGuidance(message);
         const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.
 
@@ -1658,7 +1681,13 @@ Follow these policy guardrails when taking action:
 ${policyGuidance}
 
 Never invent compensation, refund amounts, or replacement guarantees. Only offer actions supported by the policy, verified order information, or documented escalation.`;
-        let userPrompt = `Customer message: "${message}"${kbContext}${menuContext}${orderContext}${persistedWorkflowContext}`;
+        let userPrompt = buildPromptContext({
+            intent,
+            message,
+            conversationHistory,
+            businessContext
+        });
+        userPrompt += `${kbContext}${menuContext}${persistedWorkflowContext}`;
 
         if (menuInquiry) {
             userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;

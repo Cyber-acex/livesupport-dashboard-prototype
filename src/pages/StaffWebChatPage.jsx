@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Bot, MessageCircleMore, ShieldCheck, Sparkles } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -90,11 +91,14 @@ export default function StaffWebChatPage() {
 
     const scrollToLatestMessage = () => {
       if (!messagesViewportRef.current) return;
-      const targetScrollTop = messagesViewportRef.current.scrollHeight;
-      try {
-        messagesViewportRef.current.scrollTo({ top: targetScrollTop, behavior: 'auto' });
-      } catch (error) {
-        messagesViewportRef.current.scrollTop = targetScrollTop;
+      const distanceFromBottom = messagesViewportRef.current.scrollHeight - messagesViewportRef.current.scrollTop - messagesViewportRef.current.clientHeight;
+      if (distanceFromBottom < 140) {
+        const targetScrollTop = messagesViewportRef.current.scrollHeight;
+        try {
+          messagesViewportRef.current.scrollTo({ top: targetScrollTop, behavior: 'auto' });
+        } catch (error) {
+          messagesViewportRef.current.scrollTop = targetScrollTop;
+        }
       }
     };
 
@@ -152,7 +156,17 @@ export default function StaffWebChatPage() {
         message: trimmed,
         created_at: new Date().toISOString()
       };
-      setMessages((prev) => [...prev, messageData]);
+      setMessages((prev) => {
+        const next = [...prev, messageData];
+        // Ensure viewport scrolls to bottom after sending a message
+        window.requestAnimationFrame(() => {
+          const c = messagesViewportRef.current;
+          if (c) {
+            try { c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' }); } catch { c.scrollTop = c.scrollHeight; }
+          }
+        });
+        return next;
+      });
       setComposer('');
     } catch (err) {
       setError(err.message || 'Unable to send message.');
@@ -166,46 +180,55 @@ export default function StaffWebChatPage() {
     : { label: 'Closed', type: 'success' };
 
   return (
-    <div className="min-h-screen bg-slate-950/5 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <div className="flex min-h-screen">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.12),_transparent_28%),linear-gradient(135deg,_#f8fbff_0%,_#eef4ff_100%)] text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <div className="flex min-h-0 flex-1">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="flex-1 min-h-0 overflow-hidden p-4 sm:p-6 lg:p-8">
-            <div className="mx-auto max-w-7xl space-y-6">
-              <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_28px_80px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-slate-950">
-                <div className="flex flex-col gap-4 border-b border-slate-200/80 bg-slate-50/80 px-6 py-5 dark:border-slate-800 dark:bg-slate-900/80 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-[0.32em] text-slate-500 dark:text-slate-400">Customer chat</p>
-                    <h1 className="mt-2 text-3xl font-semibold text-slate-950 dark:text-white">Staff view — customer conversation</h1>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600 dark:text-slate-400">
-                      View the customer thread and respond directly. Branch verification is enforced so staff only access conversations for their assigned branch.
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <StatusBadge status={statusBadge.label} type={statusBadge.type} />
-                    <button
-                      type="button"
-                      onClick={() => navigate('/inbox')}
-                      className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                    >
-                      Back to inbox
-                    </button>
+          <main className="flex min-h-0 flex-1 flex-col p-4 sm:p-6 lg:p-8">
+            <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col space-y-6">
+              <div className="overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white/80 shadow-[0_30px_90px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80">
+                <div className="relative overflow-hidden border-b border-slate-200/80 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-800 px-6 py-6 text-white dark:border-slate-800">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.25),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(20,184,166,0.22),_transparent_28%)]" />
+                  <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-100">
+                        <Sparkles className="h-3.5 w-3.5" />
+                        Customer chat
+                      </div>
+                      <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Staff view — premium customer conversation</h1>
+                      <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                        Review the customer thread and respond directly with a workspace designed for faster, more human support.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusBadge status={statusBadge.label} type={statusBadge.type} />
+                      <button
+                        type="button"
+                        onClick={() => navigate('/inbox')}
+                        className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
+                      >
+                        Back to inbox
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1.2fr)_360px]">
-                  <section className="space-y-6">
-                    <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900">
+                <div className="grid min-h-0 flex-1 gap-6 p-6 lg:grid-cols-[minmax(0,1.2fr)_360px]">
+                  <section className="flex min-h-0 flex-col space-y-6">
+                    <div className="rounded-[2rem] border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-800 p-5 text-white shadow-[0_20px_70px_rgba(15,23,42,0.12)]">
                       <div className="flex flex-wrap items-start justify-between gap-4">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">Conversation</p>
-                          <h2 className="mt-2 text-2xl font-semibold text-slate-950 dark:text-white">{conversation?.name || conversation?.phone || `#${conversationId}`}</h2>
-                          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">{conversation?.platform || 'Chat'} • Branch ID: {conversation?.branch_id || 'N/A'}</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Conversation</p>
+                          <h2 className="mt-2 text-2xl font-semibold text-white">{conversation?.name || conversation?.phone || `#${conversationId}`}</h2>
+                          <p className="mt-2 flex items-center gap-2 text-sm text-slate-300">
+                            <MessageCircleMore className="h-4 w-4" />
+                            {conversation?.platform || 'Chat'} • Branch ID: {conversation?.branch_id || 'N/A'}
+                          </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <StatusBadge status={conversation?.platform || 'Chat'} type="default" />
-                          <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          <div className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-slate-200">
                             {conversation?.phone || 'No phone'}
                           </div>
                         </div>
@@ -245,7 +268,7 @@ export default function StaffWebChatPage() {
                             No messages found for this conversation yet.
                           </div>
                         ) : (
-                          <div ref={messagesViewportRef} className="space-y-6 overflow-y-auto max-h-[56vh] pr-1 custom-scrollbar">
+                          <div ref={messagesViewportRef} className="flex-1 min-h-0 space-y-6 overflow-y-auto overscroll-contain pr-1 custom-scrollbar">
                             {messageGroups.map((group, index) => (
                               <div key={index} className="space-y-3">
                                 <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500 dark:text-slate-400">

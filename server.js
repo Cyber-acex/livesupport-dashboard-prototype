@@ -28,11 +28,13 @@ import { extractCsatRating } from './src/utils/csat.js';
 import { shouldReuseCustomerConversation } from './utils/customerWebChat.js';
 import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
 import { resolveBranchId } from './utils/branchContext.js';
+import { buildMenuSeedRows } from './utils/menuDb.js';
 import { createDefaultConversationSession, normalizeConversationState, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition } from './utils/conversationState.js';
 import { saveRiderLocation, updateDeliveryRouteAndEta, getDeliveryEta, getDeliveryDistance } from './services/deliveryTrackingService.js';
 import { joinDeliveryRooms, leaveDeliveryRooms, publishDeliveryUpdates } from './sockets/deliverySocket.js';
 import { validateEnv } from './utils/validateEnv.js';
 import { buildDeliveryFromOrder, shouldCreateDeliveryForOrder } from './utils/deliveryOrderSync.js';
+import { extractInsertId } from './utils/dbInsert.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -71,6 +73,8 @@ const dashboardSnapshots = new Map(); // name -> { data, saved_at }
 const conversationStateCache = new Map(); // conversationId -> session snapshot
 const recentWebhookEventIds = new Map(); // cache of recent webhook event IDs to prevent duplicate processing
 const WEBHOOK_EVENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const messageProcessingCache = new Map(); // idempotency cache for duplicate message processing
+const MESSAGE_PROCESSING_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const defaultVoiceChannels = [
     { id: 1, name: 'General Staff', description: 'Open staff channel for general coordination', createdAt: new Date().toISOString() },
@@ -1924,6 +1928,53 @@ async function persistCustomerWebChatReply(conversationId, replyText, sender = '
     return payload;
 }
 
+function buildMessageProcessingKey(conversationId, messageId) {
+    const normalizedConversationId = Number(conversationId || 0);
+    const normalizedMessageId = messageId == null ? null : String(messageId);
+    if (!normalizedConversationId) return null;
+    return normalizedMessageId ? `${normalizedConversationId}:${normalizedMessageId}` : `${normalizedConversationId}:${Date.now()}`;
+}
+
+function getCachedMessageResult(key) {
+    if (!key) return null;
+    const entry = messageProcessingCache.get(key);
+    if (!entry) return null;
+    if ((Date.now() - entry.createdAt) > MESSAGE_PROCESSING_CACHE_TTL_MS) {
+        messageProcessingCache.delete(key);
+        return null;
+    }
+    return entry;
+}
+
+function storeMessageResult(key, value) {
+    if (!key) return;
+    messageProcessingCache.set(key, { createdAt: Date.now(), value });
+}
+
+async function runWithIdempotency(key, processor) {
+    if (!key) return processor();
+    const cached = getCachedMessageResult(key);
+    if (cached?.value) {
+        return cached.value;
+    }
+    const pending = messageProcessingCache.get(key);
+    if (pending?.promise) {
+        return pending.promise;
+    }
+    const promise = Promise.resolve().then(processor);
+    messageProcessingCache.set(key, { createdAt: Date.now(), promise });
+    try {
+        const result = await promise;
+        storeMessageResult(key, result);
+        return result;
+    } finally {
+        const current = messageProcessingCache.get(key);
+        if (current?.promise) {
+            messageProcessingCache.delete(key);
+        }
+    }
+}
+
 async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessage, phone, branchId }) {
     const normalizedConversationId = Number(conversationId || 0);
     const resolvedPhone = phone || null;
@@ -2001,7 +2052,7 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
 
 app.post('/api/customer-web-chat/messages', express.json(), async (req, res) => {
     try {
-        const { guestId, conversationId, branchId, customerName, phone, message } = req.body || {};
+        const { guestId, conversationId, branchId, customerName, phone, message, messageId, clientMessageId } = req.body || {};
         const normalizedConversationId = Number(conversationId || 0);
         const normalizedBranchId = Number(branchId || 0);
         if (!normalizedConversationId || !message) {
@@ -2044,12 +2095,13 @@ app.post('/api/customer-web-chat/messages', express.json(), async (req, res) => 
         };
         emitNewMessageEvent(normalizedConversationId, messageData);
 
-        const replyPayload = await maybeGenerateCustomerWebChatReply({
+        const dedupeKey = buildMessageProcessingKey(normalizedConversationId, messageId || clientMessageId || messageInsertResult.id);
+        const replyPayload = await runWithIdempotency(dedupeKey, async () => maybeGenerateCustomerWebChatReply({
             conversationId: normalizedConversationId,
             customerMessage: message,
             phone: phone || conversationRow.phone || null,
             branchId: normalizedBranchId || Number(conversationRow.branch_id || 0)
-        });
+        }));
 
         if (replyPayload) {
             checkAndCreateTicket(normalizedConversationId, phone || conversationRow.phone || null, message);
@@ -2850,13 +2902,45 @@ app.use((req, res, next) => {
 // Expose menu to frontend
 app.get('/api/menu', (req, res) => {
     try {
-        // Prefer DB-backed menu if available
-        db.query('SELECT id, category, key_name, name, price, available, image_url FROM Menu', (err, results) => {
+        db.query('SELECT id, category, key_name, name, price, available, image_url FROM menu', (err, results) => {
             if (err) {
                 console.error('GET /api/menu db error, falling back to in-memory MENU_ITEMS', err);
                 return res.json(MENU_ITEMS || {});
             }
-            if (!results || results.length === 0) return res.json(MENU_ITEMS || {});
+
+            if (!results || results.length === 0) {
+                const seedRows = buildMenuSeedRows(MENU_ITEMS || {});
+                if (seedRows.length > 0) {
+                    const values = [];
+                    const rows = seedRows.map((item, idx) => {
+                        const base = idx * 6;
+                        values.push(item.category, item.key_name, item.name, item.price, item.available, item.image_url);
+                        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+                    });
+                    const sql = `INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
+                    db.query(sql, values, (seedErr) => {
+                        if (seedErr) {
+                            console.error('GET /api/menu seed error', seedErr);
+                        }
+                        db.query('SELECT id, category, key_name, name, price, available, image_url FROM menu', (readErr, seededResults) => {
+                            if (readErr) {
+                                console.error('GET /api/menu read-after-seed error', readErr);
+                                return res.json(MENU_ITEMS || {});
+                            }
+                            const out = {};
+                            for (const row of seededResults || []) {
+                                const cat = row.category || 'other';
+                                out[cat] = out[cat] || {};
+                                out[cat][row.key_name] = { name: row.name, price: parseFloat(row.price), available: row.available, image_url: row.image_url };
+                            }
+                            return res.json(out);
+                        });
+                    });
+                    return;
+                }
+                return res.json(MENU_ITEMS || {});
+            }
+
             const out = {};
             for (const row of results) {
                 const cat = row.category || 'other';
@@ -3114,8 +3198,8 @@ if (isPg) {
                 console.log('restaurant_tables table ready (pg)');
             }
         });
-        db.query('SELECT COUNT(*) AS cnt FROM Menu', (cErr, rows) => {
-            if (cErr) return console.error('Error counting Menu rows:', cErr);
+        db.query('SELECT COUNT(*) AS cnt FROM menu', (cErr, rows) => {
+            if (cErr) return console.error('Error counting menu rows:', cErr);
             const cnt = rows && rows[0] ? rows[0].cnt : 0;
             if (cnt === 0) {
                 const inserts = [];
@@ -3127,10 +3211,10 @@ if (isPg) {
                 if (inserts.length > 0) {
                     const valuesClause = inserts.map((_, idx) => `($${idx*6+1}, $${idx*6+2}, $${idx*6+3}, $${idx*6+4}, $${idx*6+5}, $${idx*6+6})`).join(', ');
                     const flatParams = inserts.flat();
-                    const upsertSql = `INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ${valuesClause} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
+                    const upsertSql = `INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ${valuesClause} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
                     db.query(upsertSql, flatParams, (insErr) => {
-                        if (insErr) console.error('Error seeding Menu table:', insErr);
-                        else console.log('Menu table seeded from MENU_ITEMS');
+                        if (insErr) console.error('Error seeding menu table:', insErr);
+                        else console.log('menu table seeded from MENU_ITEMS');
                     });
                 }
             }
@@ -3176,8 +3260,8 @@ if (isPg) {
             }
         });
 
-        db.query('SELECT COUNT(*) AS cnt FROM Menu', (cErr, rows) => {
-            if (cErr) return console.error('Error counting Menu rows:', cErr);
+        db.query('SELECT COUNT(*) AS cnt FROM menu', (cErr, rows) => {
+            if (cErr) return console.error('Error counting menu rows:', cErr);
             const cnt = rows && rows[0] ? rows[0].cnt : 0;
             if (cnt === 0) {
                 const inserts = [];
@@ -3187,9 +3271,9 @@ if (isPg) {
                     }
                 }
                 if (inserts.length > 0) {
-                    db.query('INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ? ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available), image_url=VALUES(image_url)', [inserts], (insErr) => {
-                        if (insErr) console.error('Error seeding Menu table:', insErr);
-                        else console.log('Menu table seeded from MENU_ITEMS');
+                    db.query('INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ? ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available), image_url=VALUES(image_url)', [inserts], (insErr) => {
+                        if (insErr) console.error('Error seeding menu table:', insErr);
+                        else console.log('menu table seeded from MENU_ITEMS');
                     });
                 }
             }
@@ -3197,9 +3281,9 @@ if (isPg) {
     });
 }
 
-// Ensure Menu table has image_url column
-db.query("ALTER TABLE Menu ADD COLUMN IF NOT EXISTS image_url TEXT NULL", (err) => {
-    if (err && err.errno !== 1060) console.error('Error adding image_url to Menu:', err);
+// Ensure menu table has image_url column
+db.query("ALTER TABLE menu ADD COLUMN IF NOT EXISTS image_url TEXT NULL", (err) => {
+    if (err && err.errno !== 1060) console.error('Error adding image_url to menu:', err);
 });
 
 // Upload image endpoint for menu images
@@ -3225,17 +3309,17 @@ app.post('/api/menu/item', express.json(), (req, res) => {
         const p = parseFloat(price || 0);
         const avail = parseInt(available || 0, 10) || 0;
 
-        db.query('SELECT id, available FROM Menu WHERE category = ? AND key_name = ? LIMIT 1', [category, key], (sErr, rows) => {
+        db.query('SELECT id, available FROM menu WHERE category = ? AND key_name = ? LIMIT 1', [category, key], (sErr, rows) => {
             if (sErr) return res.status(500).json({ error: 'db_error' });
             if (rows && rows.length > 0) {
                 const existing = rows[0];
                 const newAvailable = sumWithExisting ? (existing.available + avail) : avail;
-                db.query('UPDATE Menu SET name = ?, price = ?, available = ?, image_url = ? WHERE id = ?', [name, p, newAvailable, image_url || null, existing.id], (uErr) => {
+                db.query('UPDATE menu SET name = ?, price = ?, available = ?, image_url = ? WHERE id = ?', [name, p, newAvailable, image_url || null, existing.id], (uErr) => {
                     if (uErr) return res.status(500).json({ error: 'db_error' });
                     return res.json({ success: true });
                 });
             } else {
-                db.query('INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES (?, ?, ?, ?, ?, ?)', [category, key, name, p, avail, image_url || null], (iErr) => {
+                db.query('INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES (?, ?, ?, ?, ?, ?)', [category, key, name, p, avail, image_url || null], (iErr) => {
                     if (iErr) return res.status(500).json({ error: 'db_error' });
                     return res.json({ success: true });
                 });
@@ -3275,7 +3359,7 @@ app.post('/api/menu/bulk', express.json(), (req, res) => {
                 values.push(item.category, item.key, item.name, item.price, item.available, item.image_url);
                 return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
             });
-            const sql = `INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
+            const sql = `INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
             db.query(sql, values, (err) => {
                 if (err) {
                     console.error('/api/menu/bulk db error', err);
@@ -3289,7 +3373,7 @@ app.post('/api/menu/bulk', express.json(), (req, res) => {
             normalized.forEach(item => {
                 values.push(item.category, item.key, item.name, item.price, item.available, item.image_url);
             });
-            const sql = `INSERT INTO Menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available), image_url=VALUES(image_url)`;
+            const sql = `INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON DUPLICATE KEY UPDATE name=VALUES(name), price=VALUES(price), available=VALUES(available), image_url=VALUES(image_url)`;
             db.query(sql, values, (err) => {
                 if (err) {
                     console.error('/api/menu/bulk db error', err);
@@ -3310,7 +3394,7 @@ app.delete('/api/menu/item/:category/:key', (req, res) => {
         const category = req.params.category || 'other';
         const key = req.params.key;
         if (!key) return res.status(400).json({ error: 'missing_key' });
-        db.query('DELETE FROM Menu WHERE category = ? AND key_name = ?', [category, key], (err) => {
+        db.query('DELETE FROM menu WHERE category = ? AND key_name = ?', [category, key], (err) => {
             if (err) {
                 console.error('/api/menu/item delete db error', err);
                 return res.status(500).json({ error: 'db_error' });
@@ -3333,10 +3417,10 @@ app.post('/api/menu/item/reduce-stock', express.json(), (req, res) => {
         
         let query, params;
         if (itemId) {
-            query = 'UPDATE Menu SET available = GREATEST(available - ?, 0) WHERE id = ?';
+            query = 'UPDATE menu SET available = GREATEST(available - ?, 0) WHERE id = ?';
             params = [qty, itemId];
         } else {
-            query = 'UPDATE Menu SET available = GREATEST(available - ?, 0) WHERE category = ? AND key_name = ?';
+            query = 'UPDATE menu SET available = GREATEST(available - ?, 0) WHERE category = ? AND key_name = ?';
             params = [qty, category, key];
         }
         
@@ -3348,10 +3432,10 @@ app.post('/api/menu/item/reduce-stock', express.json(), (req, res) => {
             // Fetch updated item to return current stock
             let selectQuery, selectParams;
             if (itemId) {
-                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM Menu WHERE id = ?';
+                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM menu WHERE id = ?';
                 selectParams = [itemId];
             } else {
-                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM Menu WHERE category = ? AND key_name = ?';
+                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM menu WHERE category = ? AND key_name = ?';
                 selectParams = [category, key];
             }
             
@@ -4935,9 +5019,7 @@ function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
 
             db.query(insertSql, [phone, phone, platform], (insertErr, insertResult) => {
                 if (insertErr) return reject(insertErr);
-                const newId = isPg
-                    ? (insertResult?.rows?.[0]?.id || insertResult?.[0]?.id)
-                    : insertResult.insertId;
+                const newId = extractInsertId(insertResult);
                 if (!newId) return reject(new Error('Failed to create conversation'));
                 resolve(newId);
             });
@@ -5674,7 +5756,11 @@ app.post("/webhook", async (req, res) => {
                 : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
             db.query(insertConvSql, [phone, phone, 'whatsapp'], async (err, newConv) => {
                 if (err) return console.log("INSERT ERROR:", err);
-                const convoId = newConv.insertId;
+                const convoId = extractInsertId(newConv);
+                if (!convoId) {
+                    console.log('⚠️ WhatsApp conversation insert returned no ID', { phone, newConv });
+                    return;
+                }
                 if (sender === 'sent') {
                     db.query(
                         "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
@@ -6056,7 +6142,8 @@ app.post("/api/test-message", (req, res) => {
                 : 'INSERT INTO conversations (phone, name, platform, branch_id) VALUES (?, ?, ?, ?)';
             db.query(insertConvSql, [phone, phone, 'whatsapp', requestBranchId], (err, newConv) => {
                 if (err) return res.sendStatus(500);
-                const convoId = newConv.insertId;
+                const convoId = extractInsertId(newConv);
+                if (!convoId) return res.status(500).json({ success: false, error: 'conversation_id_missing' });
                 db.query(
                     "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, 'customer', ?, NOW())",
                     [convoId, text],

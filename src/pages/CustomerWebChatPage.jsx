@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Bot, MessageCircleMore, ShieldCheck, Sparkles } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { createGuestSessionStorage, loadGuestSession, saveGuestSession } from '../utils/webChatSession';
 
@@ -197,14 +198,17 @@ export default function CustomerWebChatPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950/5 px-4 py-8 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(249,115,22,0.16),_transparent_28%),linear-gradient(135deg,_#fff7ed_0%,_#fffaf0_100%)] px-4 py-8 sm:px-6 lg:px-8">
       <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl flex-col overflow-hidden rounded-[2rem] border border-white/70 bg-white/85 shadow-[0_40px_140px_-45px_rgba(15,23,42,0.24)] backdrop-blur-2xl">
         <div className="absolute inset-x-0 top-0 h-56 bg-[radial-gradient(circle_at_top_left,_rgba(249,115,22,0.18),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.12),_transparent_30%)]" />
         <div className="relative border-b border-slate-200/80 bg-white/90 px-6 py-6 sm:px-8 lg:px-10">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.32em] text-orange-600">{branchNames[session.branchId] || 'Branch'} support</p>
-              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Premium live support for your order.</h1>
+              <div className="inline-flex items-center gap-2 rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-sm font-semibold uppercase tracking-[0.3em] text-orange-600">
+                <Sparkles className="h-3.5 w-3.5" />
+                {branchNames[session.branchId] || 'Branch'} support
+              </div>
+              <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">Premium live support for your order.</h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">Chat securely with our staff and keep your request moving. Every conversation is routed to the right team for faster resolution.</p>
             </div>
             <div className="inline-flex items-center gap-3 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 shadow-sm">
@@ -232,7 +236,10 @@ export default function CustomerWebChatPage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">Live chat</p>
-                      <p className="mt-1 text-sm text-slate-600">Messages stay in this panel and scroll vertically while you continue the conversation.</p>
+                      <p className="mt-1 flex items-center gap-2 text-sm text-slate-600">
+                        <MessageCircleMore className="h-4 w-4" />
+                        Messages stay in this panel and scroll vertically while you continue the conversation.
+                      </p>
                     </div>
                     <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700">
                       Active
@@ -288,8 +295,9 @@ export default function CustomerWebChatPage() {
                       type="button"
                       disabled={sending || !input.trim()}
                       onClick={sendMessage}
-                      className="inline-flex h-14 items-center justify-center rounded-[1.75rem] bg-gradient-to-r from-orange-500 to-amber-400 px-6 text-sm font-semibold text-white shadow-lg shadow-orange-200 transition hover:from-orange-600 hover:to-amber-500 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="inline-flex h-14 items-center justify-center gap-2 rounded-[1.75rem] bg-gradient-to-r from-orange-500 to-amber-400 px-6 text-sm font-semibold text-white shadow-lg shadow-orange-200 transition hover:from-orange-600 hover:to-amber-500 disabled:cursor-not-allowed disabled:opacity-70"
                     >
+                      <ArrowUpRight className="h-4 w-4" />
                       {sending ? 'Sending…' : 'Send message'}
                     </button>
                   </div>
@@ -301,7 +309,10 @@ export default function CustomerWebChatPage() {
           <aside className="order-1 border-b border-slate-200 bg-slate-950/5 px-6 py-6 sm:px-8 lg:order-2 lg:w-[320px] lg:border-l lg:border-b-0">
             <div className="sticky top-6 space-y-5">
               <div className="rounded-[2rem] bg-gradient-to-br from-slate-900 via-slate-950 to-slate-800 p-5 text-white shadow-lg shadow-slate-900/20">
-                <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Conversation details</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Conversation details</p>
+                  <ShieldCheck className="h-5 w-5 text-emerald-300" />
+                </div>
                 <div className="mt-5 space-y-4 text-sm">
                   <div className="rounded-3xl bg-white/5 p-4">
                     <p className="text-slate-200">Branch</p>
@@ -346,7 +357,10 @@ export default function CustomerWebChatPage() {
               ) : null}
 
               <div className="rounded-[2rem] border border-slate-200/70 bg-white p-5 shadow-sm">
-                <p className="text-sm font-semibold text-slate-900">Tips for a faster response</p>
+                <div className="flex items-center gap-2">
+                  <Bot className="h-4 w-4 text-orange-500" />
+                  <p className="text-sm font-semibold text-slate-900">Tips for a faster response</p>
+                </div>
                 <ul className="mt-4 space-y-3 text-sm text-slate-600">
                   <li className="flex gap-2"><span className="mt-1 h-2.5 w-2.5 rounded-full bg-orange-400" />Include order or ticket number</li>
                   <li className="flex gap-2"><span className="mt-1 h-2.5 w-2.5 rounded-full bg-orange-400" />Describe your request clearly</li>

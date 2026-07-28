@@ -5,6 +5,7 @@ import { PresenceService } from '../services/voice/presenceService';
 import { SignalingService } from '../services/voice/signalingService';
 import { WebRTCManager } from '../services/voice/webrtcManager';
 import { VoiceCallState } from '../services/voice/stateMachine';
+import { mergePresenceIntoDirectory } from '../utils/voicePresence';
 
 const initialDirectory = [];
 
@@ -68,6 +69,7 @@ export function VoiceCommunicationProvider({ children }) {
   const [staffDirectory, setStaffDirectory] = useState(initialDirectory);
   const [isHydrated, setIsHydrated] = useState(false);
   const [currentUser, setCurrentUser] = useState(resolveCurrentUser);
+  const [hydrationAttempted, setHydrationAttempted] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null);
   const [outgoingCall, setOutgoingCall] = useState(null);
   const [session, setSession] = useState(null);
@@ -145,16 +147,8 @@ export function VoiceCommunicationProvider({ children }) {
             pushToast('Call accepted', 'success');
           }
           if (eventName === 'presenceUpdate' || eventName === 'voice:presenceUpdate') {
-            const onlineById = new Map((Array.isArray(payload) ? payload : []).map((entry) => [String(entry.userId), entry]));
             setStaffDirectory((previous) => {
-              const next = previous.map((staff) => {
-                const presence = onlineById.get(String(staff.id));
-                if (!presence) {
-                  return { ...staff, online: false, status: 'offline', availability: 'Offline' };
-                }
-                const status = presence.status === 'busy' ? 'busy' : presence.status === 'away' ? 'away' : 'available';
-                return { ...staff, online: true, status, availability: status === 'busy' ? 'Busy' : status === 'away' ? 'Away' : 'Available' };
-              });
+              const next = mergePresenceIntoDirectory(previous, Array.isArray(payload) ? payload : []);
               directoryRef.current = next;
               return next;
             });
@@ -263,6 +257,19 @@ export function VoiceCommunicationProvider({ children }) {
               availability: 'Available'
             };
             setCurrentUser(resolvedUser);
+            const seededDirectory = [{
+              id: resolvedUser.id,
+              name: resolvedUser.name,
+              role: resolvedUser.role,
+              department: resolvedUser.department || 'Operations',
+              branch: resolvedUser.branch || 'Current Branch',
+              online: true,
+              status: 'available',
+              avatar: resolvedUser.avatar || 'ST',
+              availability: 'Available'
+            }];
+            directoryRef.current = seededDirectory;
+            setStaffDirectory(seededDirectory);
           }
         }
 
@@ -284,9 +291,11 @@ export function VoiceCommunicationProvider({ children }) {
           };
         });
 
-        const me = mapped.find((entry) => String(entry.id) === String(authenticatedUser?.id || currentUser.id));
+        const mergedDirectory = mergePresenceIntoDirectory(mapped, Array.isArray(staffUsers) ? staffUsers : []);
+
+        const me = mergedDirectory.find((entry) => String(entry.id) === String(authenticatedUser?.id || currentUser.id));
         if (!me && (authenticatedUser?.id || currentUser.id)) {
-          mapped.unshift({
+          mergedDirectory.unshift({
             id: authenticatedUser?.id || currentUser.id,
             name: authenticatedUser?.name || currentUser.name || 'Staff',
             role: authenticatedUser?.role || currentUser.role || 'staff',
@@ -299,16 +308,18 @@ export function VoiceCommunicationProvider({ children }) {
           });
         }
 
-        const primaryDirectory = mapped.length > 0 ? mapped : [];
+        const primaryDirectory = mergedDirectory.length > 0 ? mergedDirectory : [];
         directoryRef.current = primaryDirectory;
         setStaffDirectory(primaryDirectory);
         setIsHydrated(true);
+        setHydrationAttempted(true);
       } catch (error) {
         console.warn('Unable to hydrate voice staff directory', error);
         const fallback = [];
         directoryRef.current = fallback;
         setStaffDirectory(fallback);
         setIsHydrated(true);
+        setHydrationAttempted(true);
       }
     };
 
