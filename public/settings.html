@@ -999,9 +999,22 @@ input:checked + .slider {
               
               const result = await response.json();
               if(result.url && preview) {
-                preview.src = result.url;
+                const cacheBustedUrl = `${result.url}${result.url.includes('?') ? '&' : '?'}_=${Date.now()}`;
+                preview.src = cacheBustedUrl;
                 preview.style.display = 'block';
-                console.log('Avatar uploaded:', result.url);
+                localStorage.setItem('avatarUrl', cacheBustedUrl);
+                localStorage.setItem('userAvatar', cacheBustedUrl);
+                try {
+                  const savedUser = JSON.parse(localStorage.getItem('livesupport_user') || 'null');
+                  if (savedUser) {
+                    const refreshedUser = { ...savedUser, avatar_url: cacheBustedUrl, avatarUrl: cacheBustedUrl, image_url: cacheBustedUrl };
+                    localStorage.setItem('livesupport_user', JSON.stringify(refreshedUser));
+                    window.currentUser = refreshedUser;
+                  }
+                } catch (e) {
+                  console.warn('Unable to sync cached user avatar', e);
+                }
+                console.log('Avatar uploaded:', cacheBustedUrl);
                 
                 // Refresh profile button avatar
                 try {

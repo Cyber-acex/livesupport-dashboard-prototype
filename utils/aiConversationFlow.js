@@ -1,13 +1,32 @@
-const GREETING_PHRASES = [
-  'hi',
-  'hello',
-  'hey',
-  'good morning',
-  'good afternoon',
-  'good evening',
-  "what's up",
-  'whats up',
-  'yo'
+const GREETING_ONLY_PATTERNS = [
+  /^hi(?: there| everyone| all)?$/,
+  /^hello(?: there| everyone| all)?$/,
+  /^hey(?: there| everyone| all)?$/,
+  /^good morning(?: everyone| all)?$/,
+  /^good afternoon(?: everyone| all)?$/,
+  /^good evening(?: everyone| all)?$/,
+  /^(what(?:'s| is) up|whats up)$/,
+  /^yo$/
+];
+
+const GENERAL_CONVERSATION_PATTERNS = [
+  /^how are you(?: today)?$/,
+  /^how is it going$/,
+  /^how's it going$/,
+  /^(are you there|can you hear me|is anyone there)$/,
+  /^(can you help me|can you assist me)$/,
+  /^(thank you|thanks|thanks a lot|thanks so much|thank you very much)$/
+];
+
+const ORDER_HELP_PATTERNS = [
+  /help(?:ing)? (?:with )?my order/, 
+  /need help (?:with )?my order/, 
+  /order help/, 
+  /help me with my order/, 
+  /problem with my order/, 
+  /issue with my order/, 
+  /order question/, 
+  /about my order/
 ];
 
 export const SUPPORTED_INTENTS = [
@@ -32,10 +51,17 @@ function normalizeText(message = '') {
 function isGreetingOnly(message = '') {
   const normalized = normalizeText(message);
   if (!normalized) return false;
-  if (normalized.length > 40) return false;
   const cleaned = normalized.replace(/[!?.,]/g, '').trim();
   if (!cleaned) return false;
-  return GREETING_PHRASES.some((phrase) => cleaned === phrase || cleaned.startsWith(phrase + ' ') || cleaned.endsWith(' ' + phrase));
+  return GREETING_ONLY_PATTERNS.some((pattern) => pattern.test(cleaned));
+}
+
+function isGeneralConversationOnly(message = '') {
+  const normalized = normalizeText(message);
+  if (!normalized) return false;
+  const cleaned = normalized.replace(/[!?.,]/g, '').trim();
+  if (!cleaned) return false;
+  return GENERAL_CONVERSATION_PATTERNS.some((pattern) => pattern.test(cleaned));
 }
 
 function hasQuestionMark(message = '') {
@@ -48,6 +74,14 @@ export function detectConversationIntent(message = '') {
 
   if (isGreetingOnly(message)) {
     return 'Greeting';
+  }
+
+  if (isGeneralConversationOnly(message)) {
+    return 'General Conversation';
+  }
+
+  if (ORDER_HELP_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return 'Order Tracking';
   }
 
   const isOrderTracking = /(track|tracking|where is|where's|eta|estimated time|delivery status|arrived yet|arriving|on the way|out for delivery)/i.test(normalized);
@@ -94,6 +128,20 @@ export function shouldInjectBusinessContext(intent = 'Unknown') {
   return ['Order Tracking', 'Order Status', 'Refund Request', 'Payment', 'Delivery', 'Support Ticket'].includes(intent);
 }
 
+function formatBusinessContextValue(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return JSON.stringify(value, null, 2);
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value).map(([key, item]) => {
+      if (typeof item === 'object' && item !== null) {
+        return `${key}: ${JSON.stringify(item, null, 2)}`;
+      }
+      return `${key}: ${item}`;
+    }).join('\n');
+  }
+  return String(value);
+}
+
 export function buildPromptContext({
   intent = 'Unknown',
   message = '',
@@ -121,19 +169,19 @@ export function buildPromptContext({
 
   const injectedSections = [];
   if (businessContext?.order) {
-    injectedSections.push(`Order context:\n${businessContext.order}`);
+    injectedSections.push(`Order context:\n${formatBusinessContextValue(businessContext.order)}`);
   }
   if (businessContext?.refund) {
-    injectedSections.push(`Refund context:\n${businessContext.refund}`);
+    injectedSections.push(`Refund context:\n${formatBusinessContextValue(businessContext.refund)}`);
   }
   if (businessContext?.payment) {
-    injectedSections.push(`Payment context:\n${businessContext.payment}`);
+    injectedSections.push(`Payment context:\n${formatBusinessContextValue(businessContext.payment)}`);
   }
   if (businessContext?.delivery) {
-    injectedSections.push(`Delivery context:\n${businessContext.delivery}`);
+    injectedSections.push(`Delivery context:\n${formatBusinessContextValue(businessContext.delivery)}`);
   }
   if (businessContext?.ticket) {
-    injectedSections.push(`Ticket context:\n${businessContext.ticket}`);
+    injectedSections.push(`Ticket context:\n${formatBusinessContextValue(businessContext.ticket)}`);
   }
 
   if (injectedSections.length > 0) {

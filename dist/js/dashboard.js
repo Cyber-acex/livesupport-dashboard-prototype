@@ -568,8 +568,9 @@ dashboardReady(()=>{
           try{
             let src = String(profileImage || '').trim();
             if(src && src.charAt(0) === '/') src = (window.location.origin || '') + src;
+            const cacheBustedSrc = src.includes('data:') ? src : `${src}${src.includes('?') ? '&' : '?'}_=${Date.now()}`;
             // set image and show it; on error revert to initials
-            avatarImg.src = src;
+            avatarImg.src = cacheBustedSrc;
             avatarImg.style.display = 'inline-block';
             avatarImg.onload = function(){ if(avatarSm) avatarSm.style.display = 'none'; };
             avatarImg.onerror = function(){ avatarImg.style.display = 'none'; if(avatarSm) avatarSm.style.display = ''; };

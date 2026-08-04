@@ -1531,7 +1531,65 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
 
         const ticketRequest = isTicketCreationRequest(message);
         const problemReportRequest = isProblemReportRequest(message);
-        const quickChoice = parseQuickOption(message);
+        // Determine quick-choice but skip it when the last message in the conversation
+        // is the branch-selection system prompt (so selecting '1'/'2' is handled by
+        // the branch-selection flow instead of old quick-menu logic).
+        let quickChoice = null;
+        try {
+            if (conversationId) {
+                const lastRow = await new Promise((resolve) => {
+                    const sql = isPg
+                        ? 'SELECT sender, message FROM messages WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1'
+                        : 'SELECT sender, message FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1';
+                    db.query(sql, isPg ? [conversationId] : [conversationId], (err, rows) => {
+                        if (err || !rows || !rows.length) return resolve(null);
+                        return resolve(rows[0]);
+                    });
+                });
+                const lastMsgText = lastRow && lastRow.message ? String(lastRow.message).toLowerCase() : '';
+                const lastMsgSender = lastRow && lastRow.sender ? String(lastRow.sender).toLowerCase() : '';
+                const appearsToBeBranchPrompt = lastMsgSender === 'system' && (
+                    lastMsgText.includes('please choose the branch') ||
+                    lastMsgText.includes('reply with the number') ||
+                    lastMsgText.includes('please choose a branch')
+                );
+                if (!appearsToBeBranchPrompt) {
+                    quickChoice = parseQuickOption(message);
+                }
+            } else {
+                // No conversation yet — if there's an active pending branch-selection session
+                // for this phone, treat numeric replies as branch selections and skip quick-option parsing.
+                if (phone) {
+                    try {
+                        const pending = await new Promise((resolve) => {
+                            const sql = isPg
+                                ? `SELECT id, expires_at FROM chat_sessions WHERE platform_user_id = $1 AND state = $2 ORDER BY created_at DESC LIMIT 1`
+                                : `SELECT id, expires_at FROM chat_sessions WHERE platform_user_id = ? AND state = ? ORDER BY created_at DESC LIMIT 1`;
+                            db.query(sql, isPg ? [phone, 'WAITING_FOR_BRANCH'] : [phone, 'WAITING_FOR_BRANCH'], (err, rows) => {
+                                if (err || !rows || !rows.length) return resolve(null);
+                                return resolve(rows[0]);
+                            });
+                        });
+                        if (pending) {
+                            const expiresAt = pending.expires_at ? new Date(pending.expires_at).getTime() : 0;
+                            if (expiresAt > Date.now()) {
+                                quickChoice = null;
+                            } else {
+                                quickChoice = parseQuickOption(message);
+                            }
+                        } else {
+                            quickChoice = parseQuickOption(message);
+                        }
+                    } catch (err) {
+                        quickChoice = parseQuickOption(message);
+                    }
+                } else {
+                    quickChoice = parseQuickOption(message);
+                }
+            }
+        } catch (err) {
+            quickChoice = parseQuickOption(message);
+        }
         if (quickChoice) {
             return await handleQuickOption(quickChoice, phone, conversationId);
         }

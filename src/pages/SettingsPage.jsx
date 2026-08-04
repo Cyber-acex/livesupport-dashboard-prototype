@@ -135,9 +135,15 @@ function SettingsPage() {
             const data = await res.json();
             const avatarUrl = data && data.url ? (data.url.startsWith('http') ? data.url : window.location.origin + data.url) : null;
             if (avatarUrl) {
-              window.localStorage.setItem('userAvatar', avatarUrl);
-              setAvatarPreview(avatarUrl);
+              const cacheBustedAvatarUrl = `${avatarUrl}${avatarUrl.includes('?') ? '&' : '?'}_=${Date.now()}`;
+              window.localStorage.setItem('userAvatar', cacheBustedAvatarUrl);
+              window.localStorage.setItem('avatarUrl', cacheBustedAvatarUrl);
+              if (typeof window !== 'undefined' && window.currentUser) {
+                window.currentUser = { ...window.currentUser, avatar_url: cacheBustedAvatarUrl, avatarUrl: cacheBustedAvatarUrl };
+              }
+              setAvatarPreview(cacheBustedAvatarUrl);
               window.dispatchEvent(new Event('avatar:updated'));
+              window.dispatchEvent(new Event('profile:updated'));
             }
           } else {
             console.warn('Avatar upload failed', res.statusText);

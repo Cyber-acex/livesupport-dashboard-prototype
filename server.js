@@ -35,6 +35,7 @@ import { joinDeliveryRooms, leaveDeliveryRooms, publishDeliveryUpdates } from '.
 import { validateEnv } from './utils/validateEnv.js';
 import { buildDeliveryFromOrder, shouldCreateDeliveryForOrder } from './utils/deliveryOrderSync.js';
 import { extractInsertId } from './utils/dbInsert.js';
+import { routeIncomingPlatformMessage } from './services/platformConversationService.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -75,6 +76,7 @@ const recentWebhookEventIds = new Map(); // cache of recent webhook event IDs to
 const WEBHOOK_EVENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const messageProcessingCache = new Map(); // idempotency cache for duplicate message processing
 const MESSAGE_PROCESSING_CACHE_TTL_MS = 5 * 60 * 1000;
+const CHAT_SESSION_TTL_MS = 30 * 60 * 1000;
 
 const defaultVoiceChannels = [
     { id: 1, name: 'General Staff', description: 'Open staff channel for general coordination', createdAt: new Date().toISOString() },
@@ -130,6 +132,160 @@ function normalizeVoiceUser(socket, data) {
         speaking: !!data.speaking,
         currentChannelId: data.currentChannelId || null
     };
+}
+
+async function ensureBranchSelectionTables() {
+    try {
+        await db.promise().query("ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE");
+        await db.promise().query("ALTER TABLE branches ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE");
+        await db.promise().query("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS platform_user_id VARCHAR(255)");
+        await db.promise().query("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'OPEN'");
+        await db.promise().query("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS assigned_staff_id INTEGER");
+        await db.promise().query("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        await db.promise().query("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+        await db.promise().query("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS order_id INTEGER");
+        await db.promise().query(`
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id SERIAL PRIMARY KEY,
+                platform VARCHAR(50) NOT NULL,
+                platform_user_id VARCHAR(255) NOT NULL,
+                state VARCHAR(50) NOT NULL DEFAULT 'WAITING_FOR_BRANCH',
+                pending_messages TEXT,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await db.promise().query("CREATE INDEX IF NOT EXISTS idx_chat_sessions_platform_user_id ON chat_sessions (platform_user_id)");
+        await db.promise().query("CREATE INDEX IF NOT EXISTS idx_chat_sessions_state ON chat_sessions (state)");
+        await db.promise().query("CREATE INDEX IF NOT EXISTS idx_chat_sessions_expires_at ON chat_sessions (expires_at)");
+        await db.promise().query("CREATE INDEX IF NOT EXISTS idx_conversations_platform_user_id ON conversations (platform_user_id)");
+        await db.promise().query("CREATE INDEX IF NOT EXISTS idx_conversations_status ON conversations (status)");
+    } catch (error) {
+        console.warn('Unable to ensure branch-selection tables exist:', error?.message || error);
+    }
+}
+
+async function getSelectableBranches() {
+    try {
+        const rows = await db.promise().query(`
+            SELECT id, name, is_active, is_archived
+            FROM branches
+            WHERE COALESCE(is_archived, FALSE) = FALSE
+              AND COALESCE(is_active, TRUE) = TRUE
+            ORDER BY name ASC
+        `);
+        return Array.isArray(rows) ? rows : [];
+    } catch (error) {
+        console.warn('Unable to load selectable branches:', error?.message || error);
+        return [];
+    }
+}
+
+async function getBranchSelectionSession(platform, platformUserId) {
+    try {
+        const rows = await db.promise().query(
+            'SELECT id, platform, platform_user_id, state, pending_messages, expires_at, created_at, updated_at FROM chat_sessions WHERE platform = ? AND platform_user_id = ? ORDER BY created_at DESC LIMIT 1',
+            [platform, platformUserId]
+        );
+        const session = Array.isArray(rows) && rows.length ? rows[0] : null;
+        if (!session) return null;
+        const expiresAt = new Date(session.expires_at || session.created_at || new Date());
+        if (expiresAt.getTime() <= Date.now()) {
+            await db.promise().query('DELETE FROM chat_sessions WHERE id = ?', [session.id]);
+            console.log('🕒 Chat session expired', { platform, platformUserId, sessionId: session.id });
+            return null;
+        }
+        return session;
+    } catch (error) {
+        console.warn('Unable to read chat session:', error?.message || error);
+        return null;
+    }
+}
+
+async function deleteSession(platform, platformUserId) {
+    try {
+        await db.promise().query('DELETE FROM chat_sessions WHERE platform = ? AND platform_user_id = ?', [platform, platformUserId]);
+    } catch (error) {
+        console.warn('Unable to delete chat session:', error?.message || error);
+    }
+}
+
+async function createBranchSelectionSession(platform, platformUserId, initialMessage) {
+    try {
+        await deleteSession(platform, platformUserId);
+        const pendingMessages = initialMessage ? [initialMessage] : [];
+        const expiresAt = new Date(Date.now() + CHAT_SESSION_TTL_MS);
+        const rows = await db.promise().query(
+            'INSERT INTO chat_sessions (platform, platform_user_id, state, pending_messages, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW()) RETURNING id',
+            [platform, platformUserId, 'WAITING_FOR_BRANCH', JSON.stringify(pendingMessages), expiresAt]
+        );
+        const insertedId = Array.isArray(rows) && rows.length ? rows[0]?.id : null;
+        if (insertedId) {
+            console.log('🗂️ Chat session created', { platform, platformUserId, sessionId: insertedId });
+        }
+        return insertedId || null;
+    } catch (error) {
+        console.warn('Unable to create chat session:', error?.message || error);
+        return null;
+    }
+}
+
+async function sendBranchSelectionPrompt(platform, platformUserId, messageTarget, promptText) {
+    try {
+        await sendAutoReply(messageTarget, promptText, platform);
+        console.log('📣 Branch selection prompt sent', { platform, platformUserId });
+    } catch (error) {
+        console.error('Branch selection prompt delivery failed:', error?.message || error);
+    }
+}
+
+async function createConversationFromBranchSelection({ platform, platformUserId, phone, branchId, branchName, initialMessages = [], selectionReply, promptText }) {
+    try {
+        const insertConvSql = isPg
+            ? 'INSERT INTO conversations (phone, name, platform, platform_user_id, branch_id, status, created_at, updated_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()) RETURNING id'
+            : 'INSERT INTO conversations (phone, name, platform, platform_user_id, branch_id, status, created_at, updated_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW())';
+        const insertResult = await db.promise().query(insertConvSql, [phone, phone, platform, platformUserId, branchId, 'OPEN']);
+        const convoId = extractInsertId(insertResult);
+        if (!convoId) {
+            throw new Error('conversation_id_missing');
+        }
+
+        for (const message of initialMessages) {
+            await db.promise().query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convoId, 'received', message]);
+        }
+
+        await db.promise().query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convoId, 'system', promptText]);
+        await db.promise().query('INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())', [convoId, 'received', selectionReply]);
+
+        await db.promise().query('UPDATE conversations SET last_message_at = NOW(), updated_at = NOW() WHERE id = ?', [convoId]);
+        await deleteSession(platform, platformUserId);
+
+        const branchLabel = branchName || 'Selected';
+        const welcomeMessage = `✅ You're now connected to our ${branchLabel} Branch.\n\nA staff member will respond shortly.`;
+        await sendAutoReply(phone, welcomeMessage, platform);
+
+        io.to(`branch:${branchId}`).emit('conversation:new', {
+            conversationId: convoId,
+            branchId,
+            platform,
+            platformUserId,
+            createdAt: new Date().toISOString()
+        });
+        io.to('inbox').emit('conversation:new', {
+            conversationId: convoId,
+            branchId,
+            platform,
+            platformUserId,
+            createdAt: new Date().toISOString()
+        });
+        console.log('✅ Conversation created', { conversationId: convoId, branchId, platform, platformUserId });
+        console.log('📢 Staff notified', { conversationId: convoId, branchId, platform, platformUserId });
+        return convoId;
+    } catch (error) {
+        console.error('Conversation creation failed:', error?.message || error);
+        return null;
+    }
 }
 
 function emitHighRiskEscalation(payload) {
@@ -1827,10 +1983,7 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
             const values = [phone || null, trimmedCustomerName, channel || 'web', normalizedBranchId, customer.id];
             db.query(insertSql, values, (err, result) => {
                 if (err) return reject(err);
-                if (isPg && Array.isArray(result) && result[0]?.id != null) return resolve({ id: Number(result[0].id) });
-                if (isPg) return resolve({ id: Number(result?.insertId || null) });
-                if (result && typeof result === 'object' && 'insertId' in result) return resolve({ id: Number(result.insertId) });
-                resolve({ id: Number(result?.id || result?.insertId || null) });
+                return resolve({ id: extractInsertId(result) });
             });
         });
 
@@ -1900,10 +2053,7 @@ async function persistCustomerWebChatReply(conversationId, replyText, sender = '
             : 'INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())';
         db.query(insertSql, [normalizedConversationId, sender, replyText, null], (err, result) => {
             if (err) return reject(err);
-            if (isPg && Array.isArray(result) && result[0]?.id != null) return resolve({ id: Number(result[0].id) });
-            if (isPg) return resolve({ id: Number(result?.insertId || null) });
-            if (result && typeof result === 'object' && 'insertId' in result) return resolve({ id: Number(result.insertId) });
-            resolve({ id: Number(result?.id || result?.insertId || null) });
+            return resolve({ id: extractInsertId(result) });
         });
     });
 
@@ -2079,10 +2229,7 @@ app.post('/api/customer-web-chat/messages', express.json(), async (req, res) => 
         const messageInsertResult = await new Promise((resolve, reject) => {
             db.query(insertMessageSql, [normalizedConversationId, 'customer', message], (err, result) => {
                 if (err) return reject(err);
-                if (isPg && Array.isArray(result) && result[0]?.id != null) return resolve({ id: Number(result[0].id) });
-                if (isPg) return resolve({ id: Number(result?.insertId || null) });
-                if (result && typeof result === 'object' && 'insertId' in result) return resolve({ id: Number(result.insertId) });
-                resolve({ id: Number(result?.id || result?.insertId || null) });
+                return resolve({ id: extractInsertId(result) });
             });
         });
 
@@ -2712,7 +2859,7 @@ app.get('/auth/google/callback', async (req, res) => {
                     return res.redirect('/login?error=google_create_failed');
                 }
                 
-                const newUser = { id: result.insertId, email, name, role: 'agent' };
+                const newUser = { id: extractInsertId(result), email, name, role: 'agent' };
                 return finishLogin(newUser);
             });
         });
@@ -2800,7 +2947,7 @@ app.post('/auth/google', async (req, res) => {
                     console.error('Failed to create user from Google info', insertErr);
                     return res.status(500).json({ error: 'db_insert_failed', details: insertErr.message });
                 }
-                const newId = result.insertId;
+                const newId = extractInsertId(result);
                 db.query('SELECT * FROM users WHERE id = ?', [newId], (err2, newRows) => {
                     if (err2 || !newRows || newRows.length === 0) {
                         console.error('Failed to fetch newly created Google user', err2);
@@ -3532,6 +3679,8 @@ app.get("/api/user", (req, res) => {
 
         const avatarUrl = avatarResult && avatarResult[0] && avatarResult[0].url ? (avatarResult[0].url.startsWith('http') ? avatarResult[0].url : base + avatarResult[0].url) : null;
 
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+        res.set('Pragma', 'no-cache');
         res.json({
             id: req.session.userId,
             name: req.session.user.name,
@@ -3856,7 +4005,7 @@ app.post('/api/admin/users', isAuthenticated, isAdmin, async (req, res) => {
         }
         const insertedId = Array.isArray(result)
             ? (result[0] && result[0].id) || null
-            : result && (result.insertId || result.lastID || (result.rows && result.rows[0] && result.rows[0].id) || null);
+            : extractInsertId(result);
         console.log('Staff created id=', insertedId);
         try { io.emit('admin:users:changed', { action: 'create', id: insertedId, email }); } catch (e) { console.error('Emit admin users changed error', e); }
         res.json({ success: true, id: insertedId });
@@ -5463,11 +5612,9 @@ app.post("/api/send-message", async (req, res) => {
         }
 
         try {
-            console.log("Sending message", { conversation_id, targetIdentifier: targetIdentifier.slice(0, 64), platform: targetPlatform, message: message.slice(0, 120) });
-            const data = await sendPlatformMessage(targetIdentifier, message, targetPlatform);
-            console.log(`${targetPlatform} response:`, data);
+            console.log("Persisting staff message before external send", { conversation_id, targetIdentifier: targetIdentifier.slice(0, 64), platform: targetPlatform, message: message.slice(0, 120) });
 
-            // Save to DB
+            // Save to DB first so staff sees the message even if external send fails
             db.query(
                 "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
                 [conversation_id, 'sent', message, req.session ? req.session.userId : null],
@@ -5480,7 +5627,7 @@ app.post("/api/send-message", async (req, res) => {
                     db.query(
                         "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
                         [conversation_id, 'sent', message, req.session ? req.session.userId : null],
-                        (err) => {
+                        async (err) => {
                             if (err) {
                                 console.log("STAFF_MESSAGE INSERT ERROR:", err);
                                 return res.status(500).send("Message save failed");
@@ -5493,17 +5640,28 @@ app.post("/api/send-message", async (req, res) => {
                                 created_at: new Date().toISOString()
                             };
 
-                            // Emit via Socket.IO with sender name attached
+                            // Emit via Socket.IO with sender name attached so staff UI updates immediately
                             emitNewMessageEvent(conversation_id, messageData);
-                            res.json({ success: true, message: messageData });
+
+                            // Attempt external send but do not treat failures as DB failures
+                            try {
+                                console.log("Sending message to platform", { targetIdentifier: targetIdentifier.slice(0, 64), platform: targetPlatform });
+                                const data = await sendPlatformMessage(targetIdentifier, message, targetPlatform);
+                                console.log(`${targetPlatform} response:`, data);
+                                return res.json({ success: true, message: messageData });
+                            } catch (sendErr) {
+                                console.warn('External send failed after persisting message:', sendErr?.message || sendErr);
+                                // Return success but include send error details for diagnostics
+                                return res.json({ success: true, message: messageData, sendError: String(sendErr?.message || sendErr) });
+                            }
                         }
                     );
                 }
             );
 
         } catch (error) {
-            console.log("SEND ERROR:", error);
-            res.status(500).json({ error: error.message || 'Send error' });
+            console.log("SEND FLOW ERROR:", error);
+            res.status(500).json({ error: error.message || 'Send flow error' });
         }
     });
 });
@@ -5746,186 +5904,50 @@ app.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
     }
 
-    db.query("SELECT * FROM conversations WHERE phone = ? AND platform = 'whatsapp'", [phone], async (err, result) => {
-        if (err) return console.log("🔥 REAL DB ERROR:", err);
-
-        if (!result || result.length === 0) {
-            // Create new conversation
-            const insertConvSql = isPg
-                ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
-                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
-            db.query(insertConvSql, [phone, phone, 'whatsapp'], async (err, newConv) => {
-                if (err) return console.log("INSERT ERROR:", err);
-                const convoId = extractInsertId(newConv);
-                if (!convoId) {
-                    console.log('⚠️ WhatsApp conversation insert returned no ID', { phone, newConv });
-                    return;
-                }
-                if (sender === 'sent') {
-                    db.query(
-                        "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
-                        [convoId, 'sent', text, null],
-                        (err) => {
-                            if (err) console.log("MESSAGE INSERT ERROR:", err);
-                        }
-                    );
-                    db.query(
-                        "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
-                        [convoId, 'sent', text, null],
-                        async (err) => {
-                            if (err) {
-                                console.log("STAFF_MESSAGE INSERT ERROR:", err);
-                                return;
-                            }
-
-                            emitNewMessageEvent(convoId, {
-                                sender: sender,
-                                message: text,
-                                created_at: new Date().toISOString()
-                            });
-
-                            disableAIForConversation(convoId);
-                            console.log(`Agent message received, AI disabled for conversation ${convoId}`);
-
-                            if (text && text.toLowerCase().includes("refund")) {
-                                db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
-                                    if (err) console.log("ESCALATION INSERT ERROR:", err);
-                                });
-                            }
-                        }
-                    );
-                } else {
-                    db.query(
-                        "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())",
-                        [convoId, sender, text],
-                        async (err) => {
-                            if (err) console.log("MESSAGE INSERT ERROR:", err);
-                            else {
-                                emitNewMessageEvent(convoId, {
-                                    sender: sender,
-                                    message: text,
-                                    created_at: new Date().toISOString()
-                                });
-
-                                if (isCustomerGreeting(text) && isStaffIdleForThreeMinutes(convoId)) {
-                                    enableAIForConversation(convoId);
-                                }
-                                const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
-                                if (isHighRiskAnalysis.shouldEscalate) {
-                                    if (isHighRiskAnalysis.reply) {
-                                        await sendAutoReply(phone, isHighRiskAnalysis.reply);
-                                    }
-                                    console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
-                                } else {
-                                    // Only process customer messages for AI response
-                                    // Check if this is an order confirmation
-                                    const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-                                    const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                                    if (orderConfirmed && orderConfirmed.orderId) {
-                                        await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
-                                    } else {
-                                        const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                        if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                                            const reply = await getMistralReply(text, phone, convoId);
-                                            await sendAutoReply(phone, reply);
-                                        } else {
-                                            console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
-                                        }
-                                    }
-                                }
-
-                                if (sender !== 'sent') {
-                                    checkAndCreateTicket(convoId, phone, text);
-                                }
-                            }
-                        }
-                    );
-                }
-            });
-        } else {
-            const convoId = result[0].id;
-            if (sender === 'sent') {
-                db.query(
-                    "INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
-                    [convoId, 'sent', text, null],
-                    (err) => {
-                        if (err) console.log("MESSAGE INSERT ERROR:", err);
-                    }
-                );
-                db.query(
-                    "INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())",
-                    [convoId, 'sent', text, null],
-                    async (err) => {
-                        if (err) {
-                            console.log("STAFF_MESSAGE INSERT ERROR:", err);
-                            return;
-                        }
-
-                        emitNewMessageEvent(convoId, {
-                            sender: sender,
-                            message: text,
-                            created_at: new Date().toISOString()
-                        });
-
-                        disableAIForConversation(convoId);
-                        console.log(`Agent message received, AI disabled for conversation ${convoId}`);
-
-                        if (text && text.toLowerCase().includes("refund")) {
-                            db.query("INSERT INTO escalations (conversation_id, customer_name) VALUES (?, ?)", [convoId, phone], (err) => {
-                                if (err) console.log("ESCALATION INSERT ERROR:", err);
-                            });
-                        }
-                    }
-                );
-            } else {
-                db.query(
-                    "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())",
-                    [convoId, sender, text],
-                    async (err) => {
-                        if (err) console.log("MESSAGE INSERT ERROR:", err);
-                        else {
-                            emitNewMessageEvent(convoId, {
-                                sender: sender,
-                                message: text,
-                                created_at: new Date().toISOString()
-                            });
-
-                            if (isCustomerGreeting(text)) {
-                                enableAIForConversation(convoId);
-                            }
-                            const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
-                            if (isHighRiskAnalysis.shouldEscalate) {
-                                if (isHighRiskAnalysis.reply) {
-                                    await sendAutoReply(phone, isHighRiskAnalysis.reply);
-                                }
-                                console.log(`High-risk escalation triggered for conversation ${convoId}: ${isHighRiskAnalysis.detection.detectedIntent || 'unknown'}`);
-                            } else {
-                                // Only process customer messages for AI response
-                                // Check if this is an order confirmation
-                                const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-                                const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                                if (orderConfirmed && orderConfirmed.orderId) {
-                                    await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
-                                } else {
-                                    const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                    if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                                        const reply = await getMistralReply(text, phone, convoId);
-                                        await sendAutoReply(phone, reply);
-                                    } else {
-                                        console.log(`AI response skipped for conversation ${convoId} - agent mode is not auto or agent recently active`);
-                                    }
-                                }
-                            }
-
-                            if (sender !== 'sent') {
-                                checkAndCreateTicket(convoId, phone, text);
-                            }
-                        }
-                    }
-                );
-            }
+    const serviceResult = await routeIncomingPlatformMessage({
+        platform: 'whatsapp',
+        platformUserId: phone,
+        phone,
+        sender,
+        messageId: msgId,
+        text,
+        customerName: contactWaId || phone,
+        messageType: text ? 'text' : 'unknown',
+        attachments: msg.audio || msg.image || msg.document ? [msg.audio || msg.image || msg.document] : [],
+        timestamp: new Date().toISOString(),
+        // Use platform-only send here to avoid creating conversations or writing DB rows
+        // when sending branch-selection prompts. Conversation creation is handled
+        // atomically by the router after a branch is selected.
+        sendReply: async (target, message, platformName = 'whatsapp') => {
+            await sendPlatformMessage(target, message, platformName);
         }
     });
+
+    if (serviceResult?.path === 'existing-conversation' && serviceResult?.conversationId && sender !== 'sent') {
+        const convoId = serviceResult.conversationId;
+        if (isCustomerGreeting(text)) {
+            enableAIForConversation(convoId);
+        }
+        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
+        if (isHighRiskAnalysis.shouldEscalate) {
+            if (isHighRiskAnalysis.reply) {
+                await sendAutoReply(phone, isHighRiskAnalysis.reply);
+            }
+        } else {
+            const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
+            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+            if (orderConfirmed && orderConfirmed.orderId) {
+                await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+            } else {
+                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
+                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
+                    const reply = await getMistralReply(text, phone, convoId);
+                    await sendAutoReply(phone, reply);
+                }
+            }
+        }
+        checkAndCreateTicket(convoId, phone, text);
+    }
 
     res.sendStatus(200);
 });
@@ -6026,87 +6048,47 @@ app.post('/webhook/messenger', async (req, res) => {
         return res.sendStatus(200);
     }
 
-    db.query('SELECT * FROM conversations WHERE phone = ? AND platform = ?', [conversationIdValue, platform], async (err, result) => {
-        if (err) {
-            console.error('Messenger webhook DB error:', err);
-            return res.sendStatus(200);
-        }
-
-        const storeMessage = async (convoId) => {
-            if (senderType === 'sent') {
-                db.query(
-                    'INSERT INTO replies (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
-                    [convoId, 'sent', text, null],
-                    (err) => { if (err) console.log('MESSENGER REPLY INSERT ERROR:', err); }
-                );
-                db.query(
-                    'INSERT INTO staff_messages (conversation_id, sender, message, user_id, created_at) VALUES (?, ?, ?, ?, NOW())',
-                    [convoId, 'sent', text, null],
-                    (err) => { if (err) console.log('MESSENGER STAFF_MESSAGE INSERT ERROR:', err); }
-                );
-                emitNewMessageEvent(convoId, { conversation_id: convoId, sender: 'sent', message: text, created_at: new Date().toISOString() });
-            } else {
-                db.query(
-                    'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())',
-                    [convoId, 'received', text],
-                    async (err) => {
-                        if (err) {
-                            console.log('MESSENGER MESSAGE INSERT ERROR:', err);
-                            return;
-                        }
-                        emitNewMessageEvent(convoId, { conversation_id: convoId, sender: 'received', message: text, created_at: new Date().toISOString() });
-
-                        if (isCustomerGreeting(text)) {
-                            enableAIForConversation(convoId);
-                        }
-
-                        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone: conversationIdValue, branchId: null, customerId: null });
-                        if (isHighRiskAnalysis.shouldEscalate) {
-                            if (isHighRiskAnalysis.reply) {
-                                await sendAutoReply(conversationIdValue, isHighRiskAnalysis.reply, platform);
-                            }
-                        } else {
-                            const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text);
-                            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                            if (orderConfirmed && orderConfirmed.orderId) {
-                                await sendAutoReply(conversationIdValue, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`, platform);
-                            } else {
-                                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                                    const reply = await getMistralReply(text, conversationIdValue, convoId);
-                                    await sendAutoReply(conversationIdValue, reply, platform);
-                                } else {
-                                    console.log(`AI response skipped for Messenger conversation ${convoId} - agent mode is not auto or agent recently active`);
-                                }
-                            }
-                        }
-                        checkAndCreateTicket(convoId, conversationIdValue, text);
-                    }
-                );
-            }
-        };
-
-        if (!result || result.length === 0) {
-            const insertConvSql = isPg
-                ? 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?) RETURNING id'
-                : 'INSERT INTO conversations (phone, name, platform) VALUES (?, ?, ?)';
-            db.query(insertConvSql, [conversationIdValue, conversationIdValue, platform], async (err, newConv) => {
-                if (err) {
-                    console.error('Messenger INSERT ERROR:', err);
-                    return res.sendStatus(200);
-                }
-                const convoId = isPg ? (newConv?.rows?.[0]?.id || newConv?.[0]?.id) : newConv.insertId;
-                if (!convoId) {
-                    console.error('Messenger conversation creation failed');
-                    return res.sendStatus(200);
-                }
-                await storeMessage(convoId);
-            });
-        } else {
-            const convoId = result[0].id;
-            await storeMessage(convoId);
+    const serviceResult = await routeIncomingPlatformMessage({
+        platform,
+        platformUserId: conversationIdValue,
+        phone: conversationIdValue,
+        sender: senderType,
+        messageId,
+        text,
+        customerName: senderId || conversationIdValue,
+        messageType: text ? 'text' : 'unknown',
+        attachments: Array.isArray(message.attachments) ? message.attachments : [],
+        timestamp: new Date().toISOString(),
+        sendReply: async (target, messageText, platformName = platform) => {
+            await sendPlatformMessage(target, messageText, platformName);
         }
     });
+
+    if (serviceResult?.path === 'existing-conversation' && serviceResult?.conversationId && senderType !== 'sent') {
+        const convoId = serviceResult.conversationId;
+        if (isCustomerGreeting(text)) {
+            enableAIForConversation(convoId);
+        }
+        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone: conversationIdValue, branchId: null, customerId: null });
+        if (isHighRiskAnalysis.shouldEscalate) {
+            if (isHighRiskAnalysis.reply) {
+                await sendAutoReply(conversationIdValue, isHighRiskAnalysis.reply, platform);
+            }
+        } else {
+            const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text);
+            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
+            if (orderConfirmed && orderConfirmed.orderId) {
+                await sendAutoReply(conversationIdValue, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`, platform);
+            } else {
+                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
+                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
+                    const reply = await getMistralReply(text, conversationIdValue, convoId);
+                    await sendAutoReply(conversationIdValue, reply, platform);
+                }
+            }
+        }
+        checkAndCreateTicket(convoId, conversationIdValue, text);
+    }
 
     res.sendStatus(200);
 });
@@ -6143,7 +6125,10 @@ app.post("/api/test-message", (req, res) => {
             db.query(insertConvSql, [phone, phone, 'whatsapp', requestBranchId], (err, newConv) => {
                 if (err) return res.sendStatus(500);
                 const convoId = extractInsertId(newConv);
-                if (!convoId) return res.status(500).json({ success: false, error: 'conversation_id_missing' });
+                if (!convoId) {
+                    console.error('Test message conversation insert returned no id', { phone, requestBranchId, newConv });
+                    return res.status(500).json({ success: false, error: 'conversation_id_missing' });
+                }
                 db.query(
                     "INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, 'customer', ?, NOW())",
                     [convoId, text],
@@ -6255,14 +6240,15 @@ app.post("/api/receipts", (req, res) => {
             console.error('Error inserting receipt:', err);
             return res.status(500).json({ error: 'Failed to save receipt' });
         }
+        const receiptId = extractInsertId(result);
         const receipt = {
-            id: result.insertId,
+            id: receiptId,
             content,
             created_at: new Date().toISOString()
         };
         // Emit a socket event so any connected dashboard can display an update instantly
         io.emit("receiptCreated", receipt);
-        res.json({ id: result.insertId, success: true });
+        res.json({ id: receiptId, success: true });
     });
 });
 
@@ -6314,7 +6300,7 @@ app.post('/api/tickets', upload.array('files'), (req, res, next) => {
                     console.error('Error inserting ticket with attachments:', err);
                     return res.status(500).json({ error: 'Failed to save ticket' });
                 }
-                const ticketId = result?.insertId ?? (Array.isArray(result) && result[0]?.id) ?? result?.id ?? null;
+                const ticketId = extractInsertId(result);
                 const ticket = { id: ticketId, ticket_type: ticket_type || null, subject, customer_name, customer_phone, assignee, priority, status: status || 'Open', content, tags: tagsText, attachments, sla_due: slaDueDate.toISOString(), created_at: new Date().toISOString(), branch_id: branchId > 0 ? branchId : null };
                 io.emit('ticketCreated', ticket);
                 res.json({ id: ticketId, success: true });
@@ -6345,7 +6331,7 @@ app.post("/api/tickets", (req, res) => {
                 console.error('Error inserting ticket:', err);
                 return res.status(500).json({ error: 'Failed to save ticket' });
             }
-            const ticketId = result?.insertId ?? (Array.isArray(result) && result[0]?.id) ?? result?.id ?? null;
+            const ticketId = extractInsertId(result);
             const ticket = {
                 id: ticketId,
                 ticket_type: ticket_type || null,
@@ -7265,7 +7251,7 @@ async function createValidatedOrderFromPayload(payload = {}, options = {}) {
             const orderRecord = {
                 success: true,
                 orderId,
-                id: isPg ? result?.rows?.[0]?.id : result?.insertId,
+                id: extractInsertId(result),
                 customerName,
                 phone,
                 product: orderProduct,
@@ -7501,6 +7487,8 @@ app.get('/api/settings', (req, res) => {
                 settingsData.avatar_url = avatarResult[0].url;
             }
             
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+            res.set('Pragma', 'no-cache');
             res.json(settingsData);
         });
     });
@@ -7609,7 +7597,7 @@ app.post('/api/settings/avatar', isAuthenticated, handleAvatarUpload, (req, res)
                 console.error('Error inserting into user_avatars', err);
                 return res.status(500).json({ error: 'db_error', message: err.message || 'Failed to save avatar metadata' });
             }
-            const avatarId = result?.insertId ?? (Array.isArray(result) && result[0] && result[0].id) ?? null;
+            const avatarId = extractInsertId(result);
             // Return success - avatar is stored in user_avatars table
             // GET /api/settings will fetch it from there
             res.json({ success: true, url, avatarId });
@@ -7635,6 +7623,7 @@ const io = new Server(httpServer, {
     reconnectionDelayMax: 5000,
     reconnectionAttempts: 5
 });
+globalThis.io = io;
 
 io.on("connection", (socket) => {
     console.log("New client connected:", socket.id);

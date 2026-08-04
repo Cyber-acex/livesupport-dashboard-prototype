@@ -113,8 +113,10 @@
       await loadSessionInfo();
       let displayName = null;
       let profileImage = null;
+      const storedAvatar = localStorage.getItem('avatarUrl') || localStorage.getItem('userAvatar') || null;
+      if (storedAvatar) profileImage = storedAvatar;
       try{
-        const sres = await fetch('/api/settings');
+        const sres = await fetch('/api/settings', { cache: 'no-store' });
         if(sres.ok){
           const settings = await sres.json();
           if(settings){
@@ -127,7 +129,7 @@
       let user = window.currentUser || null;
       if((!displayName || !profileImage) && !user){
         try{
-          const ures = await fetch('/api/user', { credentials: 'same-origin' });
+          const ures = await fetch('/api/user', { credentials: 'same-origin', cache: 'no-store' });
           if(ures.ok) user = await ures.json();
         }catch(e){}
       }
@@ -147,7 +149,8 @@
         try{
           let src = String(profileImage || '').trim();
           if(src && src.charAt(0) === '/') src = (window.location.origin || '') + src;
-          avatarImg.src = src;
+          const cacheBustedSrc = src.includes('data:') ? src : `${src}${src.includes('?') ? '&' : '?'}_=${Date.now()}`;
+          avatarImg.src = cacheBustedSrc;
           avatarImg.style.display = 'inline-block';
           avatarImg.onload = function(){ if(avatarSm) avatarSm.style.display = 'none'; };
           avatarImg.onerror = function(){ avatarImg.style.display = 'none'; if(avatarSm) avatarSm.style.display = ''; };

@@ -98,6 +98,7 @@ function InboxPage({ defaultPlatform = null }) {
   const selectedConversationIdRef = useRef(null);
   const activeConversationRoomRef = useRef(null);
   const messagesViewportRef = useRef(null);
+  const messagesEndRef = useRef(null);
 
   useEffect(() => {
     let active = true;
@@ -848,12 +849,17 @@ function InboxPage({ defaultPlatform = null }) {
     const container = messagesViewportRef.current;
     if (!container) return;
 
-    const targetScrollTop = container.scrollHeight;
-    try {
-      container.scrollTo({ top: targetScrollTop, behavior });
-    } catch (error) {
-      container.scrollTop = targetScrollTop;
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior });
+    } else {
+      const targetScrollTop = container.scrollHeight;
+      try {
+        container.scrollTo({ top: targetScrollTop, behavior });
+      } catch (error) {
+        container.scrollTop = targetScrollTop;
+      }
     }
+
     setShowScrollToBottom(false);
   }
 
@@ -927,6 +933,11 @@ function InboxPage({ defaultPlatform = null }) {
       window.clearTimeout(timeoutId2);
     };
   }, [activeConversation?.id, messagesLoading, conversationMessages.length]);
+
+  useEffect(() => {
+    if (!activeConversation || messagesLoading) return;
+    scrollToBottom('auto');
+  }, [activeConversation?.id, messagesLoading]);
 
   async function saveConversationName(conversation) {
     const trimmedName = editingConversationName.trim();
@@ -1296,6 +1307,7 @@ function InboxPage({ defaultPlatform = null }) {
                                 No message history found for this conversation yet.
                               </div>
                             )}
+                            <div ref={messagesEndRef} />
                           </div>
                         </div>
 

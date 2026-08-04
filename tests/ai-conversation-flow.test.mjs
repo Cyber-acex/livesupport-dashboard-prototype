@@ -38,3 +38,9 @@ test('only injects order context for order-related intents', () => {
   assert.match(context, /ORD-123/);
   assert.doesNotMatch(context, /refund|payment|ticket/i);
 });
+
+test('does not classify issue-free greetings as a greeting intent when additional request text is present', () => {
+  const intent = detectConversationIntent('Hi there, I need help with my order');
+  assert.notEqual(intent, 'Greeting');
+  assert.equal(intent, 'Order Tracking');
+});

@@ -17,6 +17,7 @@ function TopBar({ onSidebarToggle }) {
   const [userOpen, setUserOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [currentUser, setCurrentUser] = useState({ name: 'Staff', role: 'agent', avatar_url: null });
+  const [avatarVersion, setAvatarVersion] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState(() => {
     if (typeof window === 'undefined') return Date.now();
     const stored = window.localStorage.getItem('sessionStartedAt');
@@ -61,8 +62,16 @@ function TopBar({ onSidebarToggle }) {
       const storedAvatar = typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null;
       if (storedAvatar) {
         setCurrentUser((prev) => ({ ...prev, avatar_url: storedAvatar }));
+        if (typeof window !== 'undefined') {
+          window.currentUser = { ...(window.currentUser || {}), avatar_url: storedAvatar };
+        }
       }
     }
+
+    const handleAvatarUpdated = () => {
+      setAvatarVersion(Date.now());
+      syncAvatarFromStorage();
+    };
 
     async function loadCurrentUser() {
       const storedDisplayName = typeof window !== 'undefined' ? window.localStorage.getItem('displayName') : null;
@@ -126,13 +135,13 @@ function TopBar({ onSidebarToggle }) {
 
     loadCurrentUser();
     if (typeof window !== 'undefined') {
-      window.addEventListener('avatar:updated', syncAvatarFromStorage);
+      window.addEventListener('avatar:updated', handleAvatarUpdated);
       window.addEventListener('profile:updated', loadCurrentUser);
     }
 
     return () => {
       if (typeof window !== 'undefined') {
-        window.removeEventListener('avatar:updated', syncAvatarFromStorage);
+        window.removeEventListener('avatar:updated', handleAvatarUpdated);
         window.removeEventListener('profile:updated', loadCurrentUser);
       }
     };
@@ -281,7 +290,9 @@ function TopBar({ onSidebarToggle }) {
   const displayName = currentUser.name || 'Staff';
   const displayRole = currentUser.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Agent';
   const activeBranchName = currentUser.branchName || currentUser.branch_name || currentUser.branch?.name || 'No branch';
-  const avatarUrl = currentUser.avatar_url || currentUser.avatarUrl || (typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null);
+  const storedAvatarUrl = typeof window !== 'undefined' ? (window.localStorage.getItem('avatarUrl') || window.localStorage.getItem('userAvatar')) : null;
+  const avatarUrl = currentUser.avatar_url || currentUser.avatarUrl || storedAvatarUrl;
+  const avatarSrc = avatarUrl ? `${avatarUrl}${avatarUrl.includes('?') ? '&' : '?'}v=${avatarVersion || Date.now()}` : null;
 
   const handleSignOut = async () => {
     try {
@@ -439,8 +450,8 @@ function TopBar({ onSidebarToggle }) {
           <div className="relative ml-4" ref={userRef}>
             <button onClick={(e) => { e.stopPropagation(); setUserOpen(!userOpen); }} className="flex items-center rounded-full px-1 py-1 text-gray-700 transition hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 sm:px-2">
               <span className="mr-2 flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-semibold text-slate-800 sm:mr-3 sm:h-11 sm:w-11 dark:bg-slate-700 dark:text-white">
-                {avatarUrl ? (
-                  <img src={avatarUrl} alt={displayName} className="h-full w-full object-cover" />
+                {avatarSrc ? (
+                  <img key={avatarSrc} src={avatarSrc} alt={displayName} className="h-full w-full object-cover" />
                 ) : (
                   userInitials
                 )}

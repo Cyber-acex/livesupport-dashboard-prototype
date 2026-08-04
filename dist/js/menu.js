@@ -163,10 +163,12 @@
     if (window._profileWidgetInited) return;
     try{
       const name = localStorage.getItem('profileName') || 'Ops';
-      const avatar = localStorage.getItem('avatarUrl');
+      const avatar = localStorage.getItem('avatarUrl') || localStorage.getItem('userAvatar') || null;
       if(profileNameEl) profileNameEl.textContent = name;
       if(avatarImgEl && avatar){
-        avatarImgEl.src = avatar;
+        const resolvedAvatar = avatar.startsWith('http') ? avatar : (window.location.origin + avatar);
+        const cacheBustedAvatar = resolvedAvatar.includes('data:') ? resolvedAvatar : `${resolvedAvatar}${resolvedAvatar.includes('?') ? '&' : '?'}_=${Date.now()}`;
+        avatarImgEl.src = cacheBustedAvatar;
         avatarImgEl.style.display = 'inline-block';
         if(avatarLetterEl) avatarLetterEl.style.display = 'none';
       } else if(avatarLetterEl) {
@@ -497,10 +499,12 @@
     if (window._profileWidgetInited) return;
     try{
       const name = localStorage.getItem('profileName') || 'Ops';
-      const avatar = localStorage.getItem('avatarUrl');
+      const avatar = localStorage.getItem('avatarUrl') || localStorage.getItem('userAvatar') || null;
       if(profileNameEl) profileNameEl.textContent = name;
       if(avatarImgEl && avatar){
-        avatarImgEl.src = avatar;
+        const resolvedAvatar = avatar.startsWith('http') ? avatar : (window.location.origin + avatar);
+        const cacheBustedAvatar = resolvedAvatar.includes('data:') ? resolvedAvatar : `${resolvedAvatar}${resolvedAvatar.includes('?') ? '&' : '?'}_=${Date.now()}`;
+        avatarImgEl.src = cacheBustedAvatar;
         avatarImgEl.style.display = 'inline-block';
         if(avatarLetterEl) avatarLetterEl.style.display = 'none';
       } else if(avatarLetterEl) {
