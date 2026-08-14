@@ -1,6 +1,11 @@
 // Settings Service - localStorage and appearance helpers
-import { normalizeAutopilotMode } from './autopilotMode';
-import { DEFAULT_ZOOM, normalizeZoomValue } from '../utils/zoom';
+import { normalizeAutopilotMode } from './autopilotMode.js';
+import { DEFAULT_ZOOM, normalizeZoomValue } from '../utils/zoom.js';
+
+export function canChangeAiTone(role) {
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  return normalizedRole === 'admin' || normalizedRole === 'manager';
+}
 
 export function getSettings() {
   const savedTarget = Number(localStorage.getItem('monthlyTargetAmount'));
@@ -22,6 +27,7 @@ export function getSettings() {
     chatEnabled: localStorage.getItem('chatEnabled') || 'on',
     autopilotMode: normalizeAutopilotMode(localStorage.getItem('autopilotMode') || 'assist'),
     autoAssign: localStorage.getItem('autoAssign') || 'on',
+    aiTone: localStorage.getItem('aiTone') || 'warm',
     monthlyTargetAmount
   };
 }
@@ -45,10 +51,34 @@ export function saveSettings(settings) {
   if (settings.chatEnabled !== undefined) localStorage.setItem('chatEnabled', settings.chatEnabled);
   if (settings.autopilotMode !== undefined) localStorage.setItem('autopilotMode', settings.autopilotMode);
   if (settings.autoAssign !== undefined) localStorage.setItem('autoAssign', settings.autoAssign);
+  if (settings.aiTone !== undefined) localStorage.setItem('aiTone', settings.aiTone);
   if (settings.monthlyTargetAmount !== undefined) {
     localStorage.setItem('monthlyTargetAmount', String(Number(settings.monthlyTargetAmount || 0)));
   }
 }
+
+export const AI_TONE_OPTIONS = {
+  warm: {
+    label: 'Warm',
+    description: 'Friendly, empathetic, and customer-first.',
+    sample: 'I’m really sorry about that. I can help with this right away and I’ll make the next step as easy as possible for you.'
+  },
+  professional: {
+    label: 'Professional',
+    description: 'Clear, polished, and efficient.',
+    sample: 'Thank you for flagging this. I can review the issue and provide the next step promptly so we can resolve it efficiently.'
+  },
+  friendly: {
+    label: 'Friendly',
+    description: 'Casual and conversational while staying helpful.',
+    sample: 'No worries — I can help sort this out. Send me the order details and I’ll take it from there.'
+  },
+  concise: {
+    label: 'Concise',
+    description: 'Short, direct, and to the point.',
+    sample: 'I can help with that. Please send your order ID or the issue details, and I’ll take the next step.'
+  }
+};
 
 export function applyTheme(theme) {
   try {

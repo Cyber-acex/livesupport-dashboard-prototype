@@ -6,25 +6,64 @@ function normalizeBranchSelectionReply(value) {
     .replace(/[^0-9]/g, '');
 }
 
-function buildBranchSelectionPrompt(branches = []) {
-  const normalizedBranches = Array.isArray(branches)
-    ? branches.filter((branch) => branch && branch.id != null && branch.name)
-    : [];
+function normalizeSelectableBranches(branches = []) {
+  if (!Array.isArray(branches)) return [];
+
+  return branches
+    .filter((branch) => branch && typeof branch === 'object')
+    .map((branch) => {
+      const normalizedName = typeof branch.name === 'string' ? branch.name.trim() : '';
+      const normalizedId = branch.id ?? branch.branch_id ?? null;
+      return {
+        ...branch,
+        id: normalizedId,
+        name: normalizedName,
+        is_active: branch.is_active !== false,
+        is_archived: Boolean(branch.is_archived)
+      };
+    })
+    .filter((branch) => branch.id != null && branch.name)
+    .filter((branch) => branch.is_active !== false && !branch.is_archived);
+}
+
+function buildBranchSelectionMessage(branches = [], platform = 'whatsapp') {
+  const normalizedPlatform = String(platform || 'whatsapp').toLowerCase();
+  const isMessenger = normalizedPlatform === 'messenger';
+  const isPlainText = isMessenger;
+  const normalizedBranches = normalizeSelectableBranches(branches);
 
   if (!normalizedBranches.length) {
-    return '👋 Welcome to Our Restaurant!\n\nPlease choose the branch you would like to contact.\n\nReply with the number.\n\n1️⃣ Branch unavailable';
+    const fallbackMessage = isPlainText
+      ? '👋 Welcome to Our Restaurant!\n\nPlease choose the branch you would like to contact.\n\nReply with the number.\n\n1. Branch unavailable'
+      : '👋 Welcome to Our Restaurant!\n\nPlease choose the branch you would like to contact.\n\nReply with the number.\n\n1️⃣ Branch unavailable';
+    return fallbackMessage;
   }
 
-  const lines = normalizedBranches.map((branch, index) => `${index + 1}️⃣ ${branch.name}`);
-  return [
+  const lines = normalizedBranches.map((branch, index) => {
+    const numberPrefix = isPlainText ? `${index + 1}.` : `${index + 1}️⃣`;
+    return `${numberPrefix} ${branch.name}`;
+  });
+
+  const prompt = [
     '👋 Welcome to Our Restaurant!',
     '',
-    'Please choose the branch you would like to contact.',
+    "Please choose the branch you'd like to contact.",
     '',
     'Reply with the number.',
     '',
     ...lines
   ].join('\n');
+
+  if (isMessenger) {
+    console.log('[Messenger Branch Selection] Available branches:', JSON.stringify(normalizedBranches));
+    console.log('[Messenger Branch Selection] Generated message:\n' + prompt);
+  }
+
+  return prompt;
+}
+
+function buildBranchSelectionPrompt(branches = [], platform = 'whatsapp') {
+  return buildBranchSelectionMessage(branches, platform);
 }
 
 function resolveBranchSelection(reply, branches = []) {

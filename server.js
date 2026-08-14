@@ -36,6 +36,7 @@ import { validateEnv } from './utils/validateEnv.js';
 import { buildDeliveryFromOrder, shouldCreateDeliveryForOrder } from './utils/deliveryOrderSync.js';
 import { extractInsertId } from './utils/dbInsert.js';
 import { routeIncomingPlatformMessage } from './services/platformConversationService.js';
+import { ensureNotificationsTable, getNotificationsForUser, markNotificationRead, markAllNotificationsRead, dismissNotification, createNotification, createBranchNotification } from './services/notificationService.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -44,6 +45,9 @@ const upload = multer({ dest: path.join(__dirname, "uploads") });
 // Initialize database connection for replies module
 initDatabase(db);
 validateEnv();
+ensureNotificationsTable().catch((err) => {
+    console.warn('Unable to ensure notifications table on startup:', err?.message || err);
+});
 
 // AI Response Control System
 // Track when agents last sent messages per conversation
@@ -1662,6 +1666,9 @@ app.use((req, res, next) => {
 
 // Middleware to protect HTML pages
 app.use((req, res, next) => {
+    // DEV: allow bypass when SKIP_AUTH=1 for local debugging
+    if (process.env.SKIP_AUTH === '1') return next();
+
     if (req.path.endsWith('.html') && req.path !== '/login.html') {
         // Allow public password reset pages without authentication
         if (req.path === '/forgot-password.html' || 
@@ -1898,18 +1905,13 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
         const trimmedCustomerName = String(customerName || '').trim();
         const forceNewConversation = Boolean(forceNew);
 
-        if (!normalizedBranchId) {
-            return res.status(400).json({ error: 'branch_required' });
-        }
-
         if (!trimmedCustomerName) {
             return res.status(400).json({ error: 'customer_name_required' });
         }
 
-        const branch = await prisma.branch.findUnique({ where: { id: normalizedBranchId }, select: { id: true, name: true } });
-        if (!branch) {
-            return res.status(404).json({ error: 'branch_not_found' });
-        }
+        const branch = normalizedBranchId
+            ? await prisma.branch.findUnique({ where: { id: normalizedBranchId }, select: { id: true, name: true } })
+            : null;
 
         // Check if customer already exists
         let customer = await prisma.customer.findUnique({
@@ -1956,7 +1958,7 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
             return res.json({
                 success: true,
                 conversationId: existingConversation.id,
-                branch: branch.name,
+                branch: branch?.name || null,
                 isExisting: true,
                 customer: customer ? { id: customer.id, name: customer.name, phone: customer.phone } : null,
                 conversations: customerConversations
@@ -1975,55 +1977,26 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
             });
         }
 
-        // Create new conversation for customer
-        const conversationResult = await new Promise((resolve, reject) => {
-            const insertSql = isPg
-                ? 'INSERT INTO conversations (phone, name, platform, branch_id, customer_id, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP) RETURNING id'
-                : 'INSERT INTO conversations (phone, name, platform, branch_id, customer_id, created_at) VALUES (?, ?, ?, ?, ?, NOW())';
-            const values = [phone || null, trimmedCustomerName, channel || 'web', normalizedBranchId, customer.id];
-            db.query(insertSql, values, (err, result) => {
-                if (err) return reject(err);
-                return resolve({ id: extractInsertId(result) });
-            });
-        });
-
-        const conversationId = Number(conversationResult?.id || 0);
-        if (!conversationId) {
-            return res.status(500).json({ error: 'conversation_create_failed' });
-        }
-
-        await new Promise((resolve, reject) => {
-            const messageSql = isPg
-                ? 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)'
-                : 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())';
-            db.query(messageSql, [conversationId, 'customer', `Welcome to ${branch.name}. We will respond shortly.`], (err) => { if (err) return reject(err); resolve(); });
-        });
-
-        const newConversation = {
-            id: conversationId,
-            branch_id: normalizedBranchId,
-            name: trimmedCustomerName,
-            phone: phone || null,
-            platform: 'web',
-            created_at: new Date().toISOString()
-        };
-        customerConversations = [newConversation, ...customerConversations];
+        const nextGuestId = guestId || `guest-${Date.now()}`;
+        const sessionConversationId = existingConversation?.id || null;
 
         saveGuestSessionToStore({
-            guestId: guestId || `guest-${Date.now()}`,
-            conversationId,
+            guestId: nextGuestId,
+            conversationId: sessionConversationId,
             branchId: normalizedBranchId,
             customerName: trimmedCustomerName,
-            phone: phone || '',
+            phone: phone || customer.phone || '',
             channel: channel || 'web',
             conversations: customerConversations
         });
+
         return res.json({
             success: true,
-            conversationId,
-            branch: branch.name,
-            isExisting: false,
-            customer: { id: customer.id, name: customer.name, phone: customer.phone },
+            conversationId: sessionConversationId,
+            branch: branch?.name || null,
+            isExisting: Boolean(existingConversation),
+            requiresBranchSelection: !sessionConversationId,
+            customer: customer ? { id: customer.id, name: customer.name, phone: customer.phone } : null,
             conversations: customerConversations
         });
     } catch (error) {
@@ -2205,56 +2178,83 @@ app.post('/api/customer-web-chat/messages', express.json(), async (req, res) => 
         const { guestId, conversationId, branchId, customerName, phone, message, messageId, clientMessageId } = req.body || {};
         const normalizedConversationId = Number(conversationId || 0);
         const normalizedBranchId = Number(branchId || 0);
-        if (!normalizedConversationId || !message) {
-            return res.status(400).json({ error: 'conversation_and_message_required' });
+        if (!message) {
+            return res.status(400).json({ error: 'message_required' });
         }
 
-        const conversationRow = await new Promise((resolve, reject) => {
-            db.query('SELECT id, branch_id, name, phone FROM conversations WHERE id = ? LIMIT 1', [normalizedConversationId], (err, rows) => {
-                if (err) return reject(err);
-                resolve(Array.isArray(rows) && rows.length ? rows[0] : null);
-            });
+        const runtimeReplies = [];
+        const serviceResult = await routeIncomingPlatformMessage({
+            platform: 'web',
+            platformUserId: guestId || phone || `web-${Date.now()}`,
+            phone: phone || null,
+            sender: 'received',
+            messageId: messageId || clientMessageId || null,
+            text: message,
+            customerName: customerName || null,
+            messageType: 'text',
+            attachments: [],
+            timestamp: new Date().toISOString(),
+            sendReply: async (target, replyText, platformName = 'web') => {
+                runtimeReplies.push({
+                    id: `reply-${Date.now()}-${Math.random()}`,
+                    sender: 'system',
+                    message: replyText,
+                    created_at: new Date().toISOString(),
+                    platform: platformName,
+                    target
+                });
+            }
         });
 
-        if (!conversationRow) {
-            return res.status(404).json({ error: 'conversation_not_found' });
-        }
-        if (normalizedBranchId && Number(conversationRow.branch_id) !== normalizedBranchId) {
-            return res.status(403).json({ error: 'branch_mismatch' });
-        }
-
-        const insertMessageSql = isPg
-            ? 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) RETURNING id'
-            : 'INSERT INTO messages (conversation_id, sender, message, created_at) VALUES (?, ?, ?, NOW())';
-        const messageInsertResult = await new Promise((resolve, reject) => {
-            db.query(insertMessageSql, [normalizedConversationId, 'customer', message], (err, result) => {
-                if (err) return reject(err);
-                return resolve({ id: extractInsertId(result) });
+        const resolvedConversationId = Number(serviceResult?.conversationId || normalizedConversationId || 0);
+        let conversationRow = null;
+        if (resolvedConversationId) {
+            conversationRow = await new Promise((resolve, reject) => {
+                db.query('SELECT id, branch_id, name, phone FROM conversations WHERE id = ? LIMIT 1', [resolvedConversationId], (err, rows) => {
+                    if (err) return reject(err);
+                    resolve(Array.isArray(rows) && rows.length ? rows[0] : null);
+                });
             });
-        });
+        }
 
-        const messageData = {
-            id: messageInsertResult.id,
-            conversation_id: normalizedConversationId,
-            sender: 'customer',
-            message,
-            created_at: new Date().toISOString()
+        const resolvedBranchId = Number(normalizedBranchId || conversationRow?.branch_id || serviceResult?.normalized?.branchId || 0) || null;
+        if (guestId) {
+            saveGuestSessionToStore({
+                guestId,
+                conversationId: resolvedConversationId || null,
+                branchId: resolvedBranchId,
+                customerName: customerName || '',
+                phone: phone || '',
+                channel: 'web',
+                conversations: []
+            });
+        }
+
+        if (resolvedConversationId && serviceResult?.path === 'existing-conversation' && conversationRow) {
+            const dedupeKey = buildMessageProcessingKey(resolvedConversationId, messageId || clientMessageId || `web-${Date.now()}`);
+            const replyPayload = await runWithIdempotency(dedupeKey, async () => maybeGenerateCustomerWebChatReply({
+                conversationId: resolvedConversationId,
+                customerMessage: message,
+                phone: phone || conversationRow.phone || null,
+                branchId: normalizedBranchId || Number(conversationRow.branch_id || 0)
+            }));
+
+            if (replyPayload) {
+                runtimeReplies.push(replyPayload);
+                checkAndCreateTicket(resolvedConversationId, phone || conversationRow.phone || null, message);
+            }
+        }
+
+        const responsePayload = {
+            success: true,
+            conversationId: resolvedConversationId || null,
+            branchId: resolvedBranchId,
+            reply: runtimeReplies[0] || null,
+            replies: runtimeReplies,
+            path: serviceResult?.path || null
         };
-        emitNewMessageEvent(normalizedConversationId, messageData);
 
-        const dedupeKey = buildMessageProcessingKey(normalizedConversationId, messageId || clientMessageId || messageInsertResult.id);
-        const replyPayload = await runWithIdempotency(dedupeKey, async () => maybeGenerateCustomerWebChatReply({
-            conversationId: normalizedConversationId,
-            customerMessage: message,
-            phone: phone || conversationRow.phone || null,
-            branchId: normalizedBranchId || Number(conversationRow.branch_id || 0)
-        }));
-
-        if (replyPayload) {
-            checkAndCreateTicket(normalizedConversationId, phone || conversationRow.phone || null, message);
-        }
-
-        res.json({ success: true, message: messageData, reply: replyPayload || null });
+        res.json(responsePayload);
     } catch (error) {
         console.error('Failed to save customer web chat message', error);
         res.status(500).json({ error: error?.message || 'Failed to save customer web chat message' });
@@ -3046,6 +3046,30 @@ app.use((req, res, next) => {
 
 // Menu page removed
 
+function loadMenuStockMap(callback) {
+    const stockSql = isPg
+        ? 'SELECT item_name, category, stock_quantity FROM "menu stock"'
+        : 'SELECT item_name, category, stock_quantity FROM `menu stock`';
+
+    db.query(stockSql, (err, rows) => {
+        if (err) {
+            console.error('GET /api/menu stock lookup error', err);
+            return callback({}, err);
+        }
+
+        const stockMap = {};
+        for (const row of rows || []) {
+            const category = String(row.category || 'other');
+            const itemName = String(row.item_name || '').trim();
+            if (!itemName) continue;
+            stockMap[category] = stockMap[category] || {};
+            stockMap[category][itemName] = Number(row.stock_quantity || 0);
+        }
+
+        callback(stockMap, null);
+    });
+}
+
 // Expose menu to frontend
 app.get('/api/menu', (req, res) => {
     try {
@@ -3055,46 +3079,54 @@ app.get('/api/menu', (req, res) => {
                 return res.json(MENU_ITEMS || {});
             }
 
-            if (!results || results.length === 0) {
-                const seedRows = buildMenuSeedRows(MENU_ITEMS || {});
-                if (seedRows.length > 0) {
-                    const values = [];
-                    const rows = seedRows.map((item, idx) => {
-                        const base = idx * 6;
-                        values.push(item.category, item.key_name, item.name, item.price, item.available, item.image_url);
-                        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
-                    });
-                    const sql = `INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
-                    db.query(sql, values, (seedErr) => {
-                        if (seedErr) {
-                            console.error('GET /api/menu seed error', seedErr);
-                        }
-                        db.query('SELECT id, category, key_name, name, price, available, image_url FROM menu', (readErr, seededResults) => {
-                            if (readErr) {
-                                console.error('GET /api/menu read-after-seed error', readErr);
-                                return res.json(MENU_ITEMS || {});
-                            }
-                            const out = {};
-                            for (const row of seededResults || []) {
-                                const cat = row.category || 'other';
-                                out[cat] = out[cat] || {};
-                                out[cat][row.key_name] = { name: row.name, price: parseFloat(row.price), available: row.available, image_url: row.image_url };
-                            }
-                            return res.json(out);
-                        });
-                    });
-                    return;
-                }
-                return res.json(MENU_ITEMS || {});
-            }
+            loadMenuStockMap((stockMap) => {
+                const buildMenuPayload = (rows) => {
+                    const out = {};
+                    for (const row of rows || []) {
+                        const cat = row.category || 'other';
+                        const stockValue = Number(stockMap?.[cat]?.[row.key_name]);
+                        const resolvedAvailable = Number.isFinite(stockValue) ? stockValue : Number(row.available || 0);
+                        out[cat] = out[cat] || {};
+                        out[cat][row.key_name] = {
+                            name: row.name,
+                            price: parseFloat(row.price),
+                            available: resolvedAvailable,
+                            stock: resolvedAvailable,
+                            image_url: row.image_url
+                        };
+                    }
+                    return out;
+                };
 
-            const out = {};
-            for (const row of results) {
-                const cat = row.category || 'other';
-                out[cat] = out[cat] || {};
-                out[cat][row.key_name] = { name: row.name, price: parseFloat(row.price), available: row.available, image_url: row.image_url };
-            }
-            res.json(out);
+                if (!results || results.length === 0) {
+                    const seedRows = buildMenuSeedRows(MENU_ITEMS || {});
+                    if (seedRows.length > 0) {
+                        const values = [];
+                        const rows = seedRows.map((item, idx) => {
+                            const base = idx * 6;
+                            values.push(item.category, item.key_name, item.name, item.price, item.available, item.image_url);
+                            return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`;
+                        });
+                        const sql = `INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES ${rows.join(', ')} ON CONFLICT (category, key_name) DO UPDATE SET name = EXCLUDED.name, price = EXCLUDED.price, available = EXCLUDED.available, image_url = EXCLUDED.image_url`;
+                        db.query(sql, values, (seedErr) => {
+                            if (seedErr) {
+                                console.error('GET /api/menu seed error', seedErr);
+                            }
+                            db.query('SELECT id, category, key_name, name, price, available, image_url FROM menu', (readErr, seededResults) => {
+                                if (readErr) {
+                                    console.error('GET /api/menu read-after-seed error', readErr);
+                                    return res.json(MENU_ITEMS || {});
+                                }
+                                return res.json(buildMenuPayload(seededResults));
+                            });
+                        });
+                        return;
+                    }
+                    return res.json(MENU_ITEMS || {});
+                }
+
+                return res.json(buildMenuPayload(results));
+            });
         });
     } catch (e) {
         console.error('GET /api/menu error', e);
@@ -3305,6 +3337,38 @@ app.put('/api/tables/:number', express.json(), async (req, res) => {
     }
 });
 
+// Create menu stock table for menu inventory persistence
+const menuStockTableSql = isPg
+    ? `
+        CREATE TABLE IF NOT EXISTS "menu stock" (
+            id SERIAL PRIMARY KEY,
+            item_name VARCHAR(255) NOT NULL,
+            category VARCHAR(100) NOT NULL,
+            stock_quantity INT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    `
+    : `
+        CREATE TABLE IF NOT EXISTS \`menu stock\` (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            item_name VARCHAR(255) NOT NULL,
+            category VARCHAR(100) NOT NULL,
+            stock_quantity INT NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_menu_stock_item (category, item_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `;
+
+db.query(menuStockTableSql, (menuStockErr) => {
+    if (menuStockErr) {
+        console.error('Error creating menu stock table:', menuStockErr);
+        return;
+    }
+    console.log('menu stock table ready');
+});
+
 // Create menu table for menu persistence
 if (isPg) {
     db.query(`
@@ -3447,6 +3511,16 @@ app.post('/api/menu/upload', upload.single('image'), (req, res) => {
     }
 });
 
+function upsertMenuStockRow(category, key, stockQuantity, callback) {
+    const stockSql = isPg
+        ? 'INSERT INTO "menu stock" (item_name, category, stock_quantity, updated_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP) ON CONFLICT (category, item_name) DO UPDATE SET stock_quantity = EXCLUDED.stock_quantity, updated_at = CURRENT_TIMESTAMP'
+        : 'INSERT INTO `menu stock` (item_name, category, stock_quantity, updated_at) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE stock_quantity = VALUES(stock_quantity), updated_at = NOW()';
+
+    db.query(stockSql, [key, category, Number(stockQuantity || 0)], (err) => {
+        if (callback) callback(err);
+    });
+}
+
 // Upsert or add menu item
 app.post('/api/menu/item', express.json(), (req, res) => {
     try {
@@ -3463,12 +3537,18 @@ app.post('/api/menu/item', express.json(), (req, res) => {
                 const newAvailable = sumWithExisting ? (existing.available + avail) : avail;
                 db.query('UPDATE menu SET name = ?, price = ?, available = ?, image_url = ? WHERE id = ?', [name, p, newAvailable, image_url || null, existing.id], (uErr) => {
                     if (uErr) return res.status(500).json({ error: 'db_error' });
-                    return res.json({ success: true });
+                    upsertMenuStockRow(category, key, newAvailable, (stockErr) => {
+                        if (stockErr) return res.status(500).json({ error: 'db_error' });
+                        return res.json({ success: true });
+                    });
                 });
             } else {
                 db.query('INSERT INTO menu (category, key_name, name, price, available, image_url) VALUES (?, ?, ?, ?, ?, ?)', [category, key, name, p, avail, image_url || null], (iErr) => {
                     if (iErr) return res.status(500).json({ error: 'db_error' });
-                    return res.json({ success: true });
+                    upsertMenuStockRow(category, key, avail, (stockErr) => {
+                        if (stockErr) return res.status(500).json({ error: 'db_error' });
+                        return res.json({ success: true });
+                    });
                 });
             }
         });
@@ -3512,7 +3592,15 @@ app.post('/api/menu/bulk', express.json(), (req, res) => {
                     console.error('/api/menu/bulk db error', err);
                     return res.status(500).json({ error: 'db_error' });
                 }
-                res.json({ success: true });
+                const upsertStockQueries = normalized.map((item) => new Promise((resolve) => {
+                    upsertMenuStockRow(item.category, item.key, item.available, (stockErr) => resolve(stockErr));
+                }));
+                Promise.all(upsertStockQueries).then((stockErrors) => {
+                    if (stockErrors.some(Boolean)) {
+                        return res.status(500).json({ error: 'db_error' });
+                    }
+                    return res.json({ success: true });
+                }).catch(() => res.status(500).json({ error: 'db_error' }));
             });
         } else {
             const values = [];
@@ -3526,7 +3614,15 @@ app.post('/api/menu/bulk', express.json(), (req, res) => {
                     console.error('/api/menu/bulk db error', err);
                     return res.status(500).json({ error: 'db_error' });
                 }
-                res.json({ success: true });
+                const upsertStockQueries = normalized.map((item) => new Promise((resolve) => {
+                    upsertMenuStockRow(item.category, item.key, item.available, (stockErr) => resolve(stockErr));
+                }));
+                Promise.all(upsertStockQueries).then((stockErrors) => {
+                    if (stockErrors.some(Boolean)) {
+                        return res.status(500).json({ error: 'db_error' });
+                    }
+                    return res.json({ success: true });
+                }).catch(() => res.status(500).json({ error: 'db_error' }));
             });
         }
     } catch (e) {
@@ -3559,39 +3655,41 @@ app.post('/api/menu/item/reduce-stock', express.json(), (req, res) => {
     try {
         const { itemId, category, key, quantity } = req.body || {};
         if (!itemId && (!category || !key)) return res.status(400).json({ error: 'missing_fields' });
-        
+
         const qty = Math.max(1, parseInt(quantity || 1, 10));
-        
-        let query, params;
+
+        let query, params, selectQuery, selectParams;
         if (itemId) {
             query = 'UPDATE menu SET available = GREATEST(available - ?, 0) WHERE id = ?';
             params = [qty, itemId];
+            selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM menu WHERE id = ?';
+            selectParams = [itemId];
         } else {
             query = 'UPDATE menu SET available = GREATEST(available - ?, 0) WHERE category = ? AND key_name = ?';
             params = [qty, category, key];
+            selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM menu WHERE category = ? AND key_name = ?';
+            selectParams = [category, key];
         }
-        
+
         db.query(query, params, (err) => {
             if (err) {
                 console.error('/api/menu/item/reduce-stock db error', err);
                 return res.status(500).json({ error: 'db_error' });
             }
-            // Fetch updated item to return current stock
-            let selectQuery, selectParams;
-            if (itemId) {
-                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM menu WHERE id = ?';
-                selectParams = [itemId];
-            } else {
-                selectQuery = 'SELECT id, category, key_name, name, price, available, image_url FROM menu WHERE category = ? AND key_name = ?';
-                selectParams = [category, key];
-            }
-            
+
             db.query(selectQuery, selectParams, (sErr, rows) => {
                 if (sErr || !rows || rows.length === 0) {
                     return res.json({ success: true, stock: 0 });
                 }
+
                 const item = rows[0];
-                res.json({ success: true, stock: item.available, item: { id: item.id, name: item.name, category: item.category, stock: item.available } });
+                const updatedStock = Math.max(0, Number(item.available || 0) - qty);
+                upsertMenuStockRow(item.category, item.key_name, updatedStock, (stockErr) => {
+                    if (stockErr) {
+                        console.error('/api/menu/item/reduce-stock stock error', stockErr);
+                    }
+                    res.json({ success: true, stock: updatedStock, item: { id: item.id, name: item.name, category: item.category, stock: updatedStock } });
+                });
             });
         });
     } catch (e) {
@@ -3691,6 +3789,56 @@ app.get("/api/user", (req, res) => {
             branchName: req.session.branchName || req.session.branch?.name || req.session.user?.branch_name || null
         });
     });
+});
+
+app.get('/api/notifications', isAuthenticated, async (req, res) => {
+    const userId = req.session.userId || req.session.user?.id;
+    if (!userId) return res.status(401).json({ error: 'not_logged_in' });
+    try {
+        const result = await getNotificationsForUser(userId, { limit: 50 });
+        return res.json(result);
+    } catch (err) {
+        console.error('Error loading notifications:', err);
+        return res.status(500).json({ error: 'failed_to_load_notifications' });
+    }
+});
+
+app.patch('/api/notifications/:id/read', isAuthenticated, async (req, res) => {
+    const notificationId = Number(req.params.id);
+    const userId = req.session.userId || req.session.user?.id;
+    if (!notificationId || !userId) return res.status(400).json({ error: 'invalid_request' });
+    try {
+        await markNotificationRead(notificationId, userId);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error marking notification read:', err);
+        return res.status(500).json({ error: 'failed_to_mark_read' });
+    }
+});
+
+app.post('/api/notifications/mark-all-read', isAuthenticated, async (req, res) => {
+    const userId = req.session.userId || req.session.user?.id;
+    if (!userId) return res.status(400).json({ error: 'invalid_request' });
+    try {
+        await markAllNotificationsRead(userId);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error marking all notifications read:', err);
+        return res.status(500).json({ error: 'failed_to_mark_all_read' });
+    }
+});
+
+app.delete('/api/notifications/:id', isAuthenticated, async (req, res) => {
+    const notificationId = Number(req.params.id);
+    const userId = req.session.userId || req.session.user?.id;
+    if (!notificationId || !userId) return res.status(400).json({ error: 'invalid_request' });
+    try {
+        await dismissNotification(notificationId, userId);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('Error dismissing notification:', err);
+        return res.status(500).json({ error: 'failed_to_dismiss_notification' });
+    }
 });
 
 // Return minimal session info for UI (login time and last activity)
@@ -4886,26 +5034,31 @@ async function sendPlatformMessage(target, message, platform = 'whatsapp') {
             throw new Error('Messenger page access token is not configured. Add MESSENGER_PAGE_ACCESS_TOKEN to your .env.');
         }
 
-        const response = await fetch(
-            `https://graph.facebook.com/v18.0/me/messages`,
-            {
-                method: 'POST',
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    recipient: { id: target },
-                    message: { text: message }
-                })
-            }
-        );
+        try {
+            const response = await fetch(
+                `https://graph.facebook.com/v18.0/me/messages`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        recipient: { id: target },
+                        message: { text: message }
+                    })
+                }
+            );
 
-        const data = await response.json();
-        if (!response.ok || (data && data.error)) {
-            throw new Error(JSON.stringify({ status: response.status, data }));
+            const data = await response.json();
+            if (!response.ok || (data && data.error)) {
+                throw new Error(JSON.stringify({ status: response.status, data }));
+            }
+            return data;
+        } catch (error) {
+            console.warn('Messenger outbound message delivery failed:', error?.message || error);
+            return null;
         }
-        return data;
     }
 
     let formattedPhone = target;
@@ -6103,6 +6256,24 @@ app.get('/webhook/messenger', (req, res) => {
         return res.status(200).send(challenge);
     }
     res.sendStatus(403);
+});
+
+app.post('/debug/messenger-payload', async (req, res) => {
+    const { target, message, platform = 'messenger' } = req.body || {};
+    const recipientId = target || req.query.target || 'debug-recipient';
+    const bodyText = message || req.query.message || 'Debug Messenger payload';
+    const payload = {
+        recipient: { id: recipientId },
+        message: { text: bodyText }
+    };
+
+    console.log('[Debug Messenger Payload]', JSON.stringify(payload, null, 2));
+    return res.json({
+        ok: true,
+        platform,
+        payload,
+        note: 'This endpoint logs the exact Messenger payload that would be sent without calling the Facebook API.'
+    });
 });
 
 // ---------------------------
@@ -7502,6 +7673,12 @@ app.post('/api/settings', async (req, res) => {
         return res.status(401).json({ error: 'not_logged_in' });
     }
 
+    const userRole = String(req.session?.user?.role || '').trim().toLowerCase();
+    const isBranchToneUpdate = typeof data?.aiTone === 'string' && data.aiTone.trim();
+    if (isBranchToneUpdate && userRole !== 'admin' && userRole !== 'manager') {
+        return res.status(403).json({ error: 'admin_or_manager_required_for_ai_tone' });
+    }
+
     try {
         const settingsData = {
             displayName: data.displayName || undefined,
@@ -7514,8 +7691,13 @@ app.post('/api/settings', async (req, res) => {
             autopilotMode: data.autopilotMode || undefined,
             priority: data.priority || undefined,
             autoAssign: data.autoAssign || undefined,
+            aiTone: data.aiTone || undefined,
             theme: data.theme || 'Light'
         };
+
+        if (data.aiTone && typeof data.aiTone === 'string') {
+            process.env.AI_TONE = data.aiTone;
+        }
 
         // Remove undefined values to keep existing data
         Object.keys(settingsData).forEach(key => {
@@ -7588,19 +7770,25 @@ app.post('/api/settings/avatar', isAuthenticated, handleAvatarUpload, (req, res)
         const url = `/uploads/${req.file.filename}`;
         const userId = req.session.userId || (req.session.user && req.session.user.id);
         if (!userId) return res.status(401).json({ error: 'not_logged_in' });
-        // store avatar metadata in user_avatars table
-        const insertSql = isPg
-            ? 'INSERT INTO user_avatars (user_id, filename, url) VALUES (?, ?, ?) RETURNING id'
-            : 'INSERT INTO user_avatars (user_id, filename, url) VALUES (?, ?, ?)';
-        db.query(insertSql, [userId, req.file.filename, url], (err, result) => {
-            if (err) {
-                console.error('Error inserting into user_avatars', err);
-                return res.status(500).json({ error: 'db_error', message: err.message || 'Failed to save avatar metadata' });
-            }
-            const avatarId = extractInsertId(result);
-            // Return success - avatar is stored in user_avatars table
-            // GET /api/settings will fetch it from there
+
+        const respondWithSuccess = (avatarId = null) => {
             res.json({ success: true, url, avatarId });
+        };
+
+        const insertSql = isPg
+            ? 'INSERT INTO user_avatars (user_id, filename, url) VALUES ($1, $2, $3) RETURNING id'
+            : 'INSERT INTO user_avatars (user_id, filename, url) VALUES (?, ?, ?)';
+
+        const params = [userId, req.file.filename, url];
+
+        db.query(insertSql, params, (err, result) => {
+            if (err) {
+                console.warn('Avatar metadata insert failed, falling back to local upload response:', err.message);
+                return respondWithSuccess(null);
+            }
+
+            const avatarId = extractInsertId(result);
+            respondWithSuccess(avatarId);
         });
     } catch (e) {
         console.error('avatar upload error', e);
@@ -7628,6 +7816,15 @@ globalThis.io = io;
 io.on("connection", (socket) => {
     console.log("New client connected:", socket.id);
     socket.join("inbox");
+
+    socket.on('notification:join', (data) => {
+        if (!data || !data.userId) return;
+        try {
+            socket.join(`user:${data.userId}`);
+        } catch (err) {
+            console.warn('Failed to join notification room:', err?.message || err);
+        }
+    });
 
     socket.on("conversation:join", (data) => {
         if (!data || !data.conversationId) return;

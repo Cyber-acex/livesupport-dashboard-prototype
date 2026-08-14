@@ -1,5 +1,6 @@
-import { db } from '../db/database.js';
+import { db, prisma } from '../db/database.js';
 import { extractInsertId } from '../utils/dbInsert.js';
+import { createBranchNotification } from './notificationService.js';
 import { buildBranchSelectionPrompt, resolveBranchSelection } from '../utils/branchSelection.js';
 
 function normalizeIncomingPlatformMessage(input = {}) {
@@ -46,19 +47,54 @@ function createPendingSessionKey(platform, platformUserId) {
   return `${platform}:${platformUserId}`;
 }
 
+function shouldBypassBranchSelectionForPlatform(platform, branches = []) {
+  const normalizedPlatform = String(platform || '').toLowerCase();
+  if (normalizedPlatform !== 'messenger') return false;
+  if (!Array.isArray(branches)) return true;
+  const activeBranches = branches.filter((branch) => {
+    if (!branch || typeof branch !== 'object') return false;
+    const id = branch.id ?? branch.branch_id ?? null;
+    const isActive = branch.is_active !== false;
+    const isArchived = Boolean(branch.is_archived);
+    const hasName = typeof branch.name === 'string' && branch.name.trim().length > 0;
+    return id != null && isActive && !isArchived && hasName;
+  });
+  return activeBranches.length === 0;
+}
+
 async function getSelectableBranches() {
   try {
-    const rows = await db.promise().query(`
-      SELECT id, name, is_active, is_archived
-      FROM branches
-      WHERE COALESCE(is_archived, FALSE) = FALSE
-        AND COALESCE(is_active, TRUE) = TRUE
-      ORDER BY name ASC
-    `);
+    const rows = await prisma.branch.findMany({
+      where: {
+        is_archived: false,
+        is_active: true
+      },
+      select: {
+        id: true,
+        name: true,
+        is_active: true,
+        is_archived: true
+      },
+      orderBy: {
+        name: 'asc'
+      }
+    });
     return Array.isArray(rows) ? rows : [];
   } catch (error) {
-    console.warn('Unable to load selectable branches:', error?.message || error);
-    return [];
+    console.warn('Unable to load selectable branches via Prisma, retrying with raw DB query:', error?.message || error);
+    try {
+      const fallbackRows = await db.promise().query(`
+        SELECT id, name, is_active, is_archived
+        FROM branches
+        WHERE COALESCE(is_archived, FALSE) = FALSE
+          AND COALESCE(is_active, TRUE) = TRUE
+        ORDER BY name ASC
+      `);
+      return Array.isArray(fallbackRows) ? fallbackRows : [];
+    } catch (fallbackError) {
+      console.warn('Unable to load selectable branches:', fallbackError?.message || fallbackError);
+      return [];
+    }
   }
 }
 
@@ -146,6 +182,18 @@ async function notifyBranchConversation(conversationId, branchId, platform, plat
       platformUserId,
       createdAt: new Date().toISOString()
     });
+    await createBranchNotification({
+      branchId,
+      type: 'conversation',
+      icon: 'message-circle',
+      title: 'New conversation started',
+      message: `A new ${platform} conversation has been created.`,
+      priority: 'important',
+      entityType: 'conversation',
+      entityId: conversationId,
+      route: `/inbox/${conversationId}`,
+      metadata: { platform, platformUserId }
+    });
     return true;
   } catch (error) {
     console.warn('Unable to emit branch notifications:', error?.message || error);
@@ -166,6 +214,18 @@ async function notifyConversationUpdate(conversationId) {
       platform: conversation.platform,
       platformUserId: conversation.platform_user_id,
       updatedAt: new Date().toISOString()
+    });
+    await createBranchNotification({
+      branchId: conversation.branch_id,
+      type: 'message',
+      icon: 'message-circle',
+      title: 'Conversation updated',
+      message: `Existing conversation #${conversationId} received a new message.`,
+      priority: 'normal',
+      entityType: 'conversation',
+      entityId: conversationId,
+      route: `/inbox/${conversationId}`,
+      metadata: { platform: conversation.platform, platformUserId: conversation.platform_user_id }
     });
   } catch (error) {
     console.warn('Unable to emit conversation update notification:', error?.message || error);
@@ -266,9 +326,26 @@ async function processPlatformMessage(input = {}) {
     return { normalized, handled: true, conversationId: openConversation.id, path: 'existing-conversation', continueWithLegacyWorkflow: true };
   }
 
+  const branches = await getSelectableBranches();
+  const forceBypassBranchSelection = shouldBypassBranchSelectionForPlatform(platform, branches);
+  if (platform === 'messenger') {
+    console.log('[Messenger Branch Selection] Available branches for routing:', JSON.stringify(branches));
+    console.log('[Messenger Branch Selection] Bypass branch selection:', forceBypassBranchSelection);
+  }
+
+  if (forceBypassBranchSelection) {
+    if (typeof sendReply === 'function') {
+      await sendReply(platformUserId, 'Hi! Thanks for reaching out. We’ve received your message and a staff member will get back to you shortly.', platform);
+    }
+    console.log('🟡 Messenger branch selection bypassed; treating as direct conversation intake.', { platform, platformUserId, messageId });
+    return { normalized, handled: true, path: 'messenger-direct-inbox', continueWithLegacyWorkflow: false };
+  }
+
   const pendingSession = await getPendingSession(platform, platformUserId);
   if (pendingSession) {
-    const branches = await getSelectableBranches();
+    if (platform === 'messenger') {
+      console.log('[Messenger Branch Selection] Available branches for pending session:', JSON.stringify(branches));
+    }
     const selectedBranch = resolveBranchSelection(text, branches);
     if (!selectedBranch) {
       const pendingMessages = normalizePendingMessageList(pendingSession.pending_messages ? JSON.parse(pendingSession.pending_messages) : []);
@@ -279,7 +356,7 @@ async function processPlatformMessage(input = {}) {
         '',
         'Please reply with one of the available branch numbers.',
         '',
-        buildBranchSelectionPrompt(branches)
+        buildBranchSelectionPrompt(branches, platform)
       ].join('\n');
       if (typeof sendReply === 'function') {
         await sendReply(platformUserId, invalidPrompt, platform);
@@ -298,7 +375,7 @@ async function processPlatformMessage(input = {}) {
       branchId: selectedBranch.id,
       branchName: selectedBranch.name,
       initialMessages: previousMessages,
-      promptText: buildBranchSelectionPrompt(branches),
+      promptText: buildBranchSelectionPrompt(branches, platform),
       selectionReply: text,
       messageId,
       sendReply
@@ -308,7 +385,7 @@ async function processPlatformMessage(input = {}) {
     return { normalized, handled: true, conversationId, path: 'branch-selected', continueWithLegacyWorkflow: false };
   }
 
-  const branchPrompt = buildBranchSelectionPrompt(await getSelectableBranches());
+  const branchPrompt = buildBranchSelectionPrompt(branches, platform);
   const sessionId = await createPendingSession(platform, platformUserId, text);
   if (typeof sendReply === 'function') {
     await sendReply(platformUserId, branchPrompt, platform);
@@ -333,5 +410,6 @@ export {
   getOpenConversation,
   getPendingSession,
   createPendingSession,
-  notifyConversationUpdate
+  notifyConversationUpdate,
+  shouldBypassBranchSelectionForPlatform
 };

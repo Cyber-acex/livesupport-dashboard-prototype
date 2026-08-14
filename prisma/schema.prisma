@@ -309,6 +309,7 @@ model Setting {
   translateLang    String? @db.VarChar(10) @map("translate_lang")
   avatarUrl        String? @db.Text @map("avatar_url")
   autopilotMode    String? @db.VarChar(20) @map("autopilotmode")
+  aiTone           String? @db.VarChar(20) @map("ai_tone")
 
   user          User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -500,10 +501,26 @@ model Menu {
   updated_at DateTime @default(now()) @db.Timestamp(0)
   branch_id  Int?
   branch     Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  stockEntries MenuStockEntry[]
 
   @@map("menu")
   @@unique([category, key_name], name: "uk_category_key")
   @@index([branch_id])
+}
+
+model MenuStockEntry {
+  id              Int      @id @default(autoincrement())
+  menu_id         Int?
+  item_name       String   @db.VarChar(255)
+  category        String   @db.VarChar(100)
+  stock_quantity  Int      @default(0)
+  created_at      DateTime @default(now()) @db.Timestamp(0)
+  updated_at      DateTime @updatedAt @db.Timestamp(0)
+  menu            Menu?    @relation(fields: [menu_id], references: [id], onDelete: SetNull)
+
+  @@map("menu_stock")
+  @@unique([category, item_name], name: "uk_menu_stock_item")
+  @@index([menu_id])
 }
 
 model Table {

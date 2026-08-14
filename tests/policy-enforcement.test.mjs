@@ -28,37 +28,43 @@ test('new support helper detections work for reservation, modification, refund, 
   assert.equal(isColdFoodComplaint('Food arrived cold'), true);
 });
 
-test('buildSupportReply covers the key customer support use cases with branch-aware guidance', () => {
-  const menuReply = buildSupportReply('What is your menu and prices?');
+test('order confirmation without identifiable order details returns a clarification instead of a generic processing apology', async () => {
+  const reply = await replies.getMistralReply('yes', '1234567890', 42);
+  assert.match(reply, /order details/i);
+  assert.doesNotMatch(reply, /couldn't process your order/i);
+});
+
+test('buildSupportReply covers the key customer support use cases with branch-aware guidance', async () => {
+  const menuReply = await buildSupportReply('What is your menu and prices?');
   assert.match(menuReply, /delivery fee/i);
   assert.match(menuReply, /free delivery/i);
 
-  const statusReply = buildSupportReply('Where is my order?');
+  const statusReply = await buildSupportReply('Where is my order?');
   assert.match(statusReply, /status/i);
   assert.match(statusReply, /eta/i);
   assert.match(statusReply, /order id/i);
 
-  const coldReply = buildSupportReply('Food arrived cold');
+  const coldReply = await buildSupportReply('Food arrived cold');
   assert.match(coldReply, /apolog/i);
   assert.match(coldReply, /replacement|redelivery/i);
   assert.match(coldReply, /manager/i);
 
-  const modificationReply = buildSupportReply('Remove onions and add extra chicken');
+  const modificationReply = await buildSupportReply('Remove onions and add extra chicken');
   assert.match(modificationReply, /allowed/i);
   assert.match(modificationReply, /order id/i);
 
-  const refundReply = buildSupportReply('I want my money back');
+  const refundReply = await buildSupportReply('I want my money back');
   assert.match(refundReply, /manager/i);
   assert.match(refundReply, /eligibility/i);
 
-  const reservationReply = buildSupportReply('Can I book for 6?');
+  const reservationReply = await buildSupportReply('Can I book for 6?');
   assert.match(reservationReply, /availability/i);
   assert.match(reservationReply, /party/i);
 
-  const missingItemReply = buildSupportReply('You forgot my drink');
+  const missingItemReply = await buildSupportReply('You forgot my drink');
   assert.match(missingItemReply, /replacement/i);
   assert.match(missingItemReply, /voucher|credit/i);
 
-  const branchReply = buildSupportReply('I need help with my order', { branchId: 2 });
+  const branchReply = await buildSupportReply('I need help with my order', { branchId: 2 });
   assert.match(branchReply, /lekki/i);
 });

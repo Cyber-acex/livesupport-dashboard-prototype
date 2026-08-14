@@ -32,31 +32,13 @@ export async function updateOrder(orderId, payload) {
   return res.json();
 }
 
+import { flattenMenuItems } from '../../utils/menuPayload.js';
+
 export async function fetchMenuItems() {
   const res = await fetch('/api/menu', { credentials: 'same-origin' });
   if (!res.ok) throw new Error('Failed to load menu items');
   const data = await res.json();
-  const menu = [];
-  Object.keys(data || {}).forEach((category) => {
-    const section = data[category] || {};
-    Object.keys(section).forEach((key) => {
-      const item = section[key];
-      menu.push({
-        id: key,
-        key,
-        name: item.name || key,
-        category,
-        subtype: item.subtype || '',
-        price: Number(item.price || 0),
-        available: Boolean(item.available),
-        stock: Number(item.available || 0),
-        tags: item.tags || [],
-        description: item.description || '',
-        image_url: item.image_url || null
-      });
-    });
-  });
-  return menu;
+  return flattenMenuItems(data);
 }
 
 export async function saveMenuItem(payload) {

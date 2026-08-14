@@ -19,6 +19,17 @@ test('builds a dynamic branch selection prompt from active branches', () => {
   assert.match(prompt, /2️⃣/);
 });
 
+test('uses plain numbering for Messenger branch prompts', () => {
+  const prompt = buildBranchSelectionPrompt([
+    { id: 10, name: 'Ikeja' },
+    { id: 20, name: 'Lekki' }
+  ], 'messenger');
+
+  assert.match(prompt, /1\. Ikeja/);
+  assert.match(prompt, /2\. Lekki/);
+  assert.doesNotMatch(prompt, /1️⃣/);
+});
+
 test('resolves a valid selection to a real active branch', () => {
   const branches = [
     { id: 10, name: 'Ikeja', is_active: true, is_archived: false },

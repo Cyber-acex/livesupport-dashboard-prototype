@@ -143,7 +143,7 @@ export default function CustomerWebChatPage() {
   const sendMessage = async () => {
     const trimmed = input.trim();
     const activeConversationId = selectedConversationId || session?.conversationId;
-    if (!activeConversationId || !trimmed || sending) return;
+    if (!trimmed || sending) return;
     setSending(true);
     setStatusMessage('');
     setInput('');
@@ -164,15 +164,52 @@ export default function CustomerWebChatPage() {
       if (!response.ok) {
         throw new Error(data?.error || 'Unable to send your message.');
       }
-      setMessages((prev) => [...prev, {
-        id: data?.message?.id || `${Date.now()}-${Math.random()}`,
+
+      const nextConversationId = Number(data?.conversationId || activeConversationId || 0) || null;
+      if (nextConversationId) {
+        setSelectedConversationId(nextConversationId);
+        const nextSession = {
+          ...session,
+          conversationId: nextConversationId,
+          branchId: Number(data?.branchId || session?.branchId || 0) || null,
+          customerConversations: Array.isArray(session?.customerConversations) && session.customerConversations.length
+            ? session.customerConversations.some((conversation) => Number(conversation.id) === nextConversationId)
+              ? session.customerConversations
+              : [
+                  ...session.customerConversations,
+                  {
+                    id: nextConversationId,
+                    branch_id: Number(data?.branchId || session?.branchId || 0) || null,
+                    name: session.customerName || 'Conversation',
+                    phone: session.phone || '',
+                    platform: 'web',
+                    created_at: new Date().toISOString()
+                  }
+                ]
+            : []
+        };
+        setSession(nextSession);
+        saveGuestSession(storage, nextSession);
+      }
+
+      const replyMessages = Array.isArray(data?.replies) ? data.replies : data?.reply ? [data.reply] : [];
+      const customerMessage = {
+        id: `${Date.now()}-${Math.random()}`,
         sender: 'customer',
         message: trimmed,
         created_at: new Date().toISOString()
-      }]);
+      };
+      const systemReplies = replyMessages.map((reply, index) => ({
+        id: reply?.id || `${Date.now()}-${index}`,
+        sender: 'system',
+        message: reply?.message || reply?.text || '',
+        created_at: reply?.created_at || new Date().toISOString()
+      })).filter((reply) => reply.message);
+
+      setMessages((prev) => [...prev, customerMessage, ...systemReplies]);
       setStatusMessage('Message sent');
       if (socketRef.current?.connected) {
-        socketRef.current.emit('typing', { conversationId: session.conversationId, userId: session.guestId, name: session.customerName });
+        socketRef.current.emit('typing', { conversationId: nextConversationId || selectedConversationId || session.conversationId, userId: session.guestId, name: session.customerName });
       }
     } catch (error) {
       setStatusMessage(error.message || 'Unable to send');
@@ -193,7 +230,7 @@ export default function CustomerWebChatPage() {
     return <div className="flex min-h-screen items-center justify-center bg-slate-950/5 text-slate-700">Loading your chat…</div>;
   }
 
-  if (!session?.guestId || !session?.conversationId) {
+  if (!session?.guestId) {
     return <div className="flex min-h-screen items-center justify-center bg-slate-950/5 px-4 text-center text-slate-700">Start the onboarding flow first to open the chat.</div>;
   }
 

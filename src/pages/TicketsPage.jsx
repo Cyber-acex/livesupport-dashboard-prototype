@@ -164,7 +164,7 @@ function TicketCard({ ticket, onEscalate, onDelete, onResolve, onOpenResolveModa
 }
 
 function TicketsPage() {
-  const { success, error, markLocalTicketCreated, markLocalTicketDeleted, markLocalTicketEscalated } = useNotification();
+  const { success, error, markLocalTicketCreationRequested, markLocalTicketCreated, markLocalTicketDeleted, markLocalTicketEscalated } = useNotification();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const localTicketActionsRef = useRef({ created: new Set(), deleted: new Set(), escalated: new Set() });
@@ -268,8 +268,8 @@ function TicketsPage() {
   const summary = useMemo(() => {
     const open = tickets.filter((ticket) => String(ticket.status || 'Open').toLowerCase() === 'open').length;
     const escalated = tickets.filter((ticket) => ticket.escalated || String(ticket.status || 'Open').toLowerCase() === 'escalated').length;
-    const closed = tickets.filter((ticket) => String(ticket.status || 'Open').toLowerCase() === 'closed').length;
-    return { total: tickets.length, open, escalated, closed };
+    const resolved = tickets.filter((ticket) => isResolvedTicket(ticket)).length;
+    return { total: tickets.length, open, escalated, resolved };
   }, [tickets]);
 
   const handleEscalate = async (ticket) => {
@@ -369,6 +369,8 @@ function TicketsPage() {
       return;
     }
 
+    const clientTicketId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    markLocalTicketCreationRequested(clientTicketId);
     setCreatingTicket(true);
     try {
       const res = await fetch('/api/tickets', {
@@ -377,7 +379,8 @@ function TicketsPage() {
         body: JSON.stringify({
           ...createForm,
           subject: finalSubject || 'New Ticket',
-          content: trimmedContent
+          content: trimmedContent,
+          client_ticket_id: clientTicketId
         })
       });
       if (!res.ok) throw new Error('Create failed');
@@ -487,8 +490,8 @@ function TicketsPage() {
                   <path d="M5 7h14M5 12h8M5 17h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
                 </svg>
               )}
-              label="Closed"
-              value={summary.closed}
+              label="Resolved"
+              value={summary.resolved}
               change={null}
             />
           </div>

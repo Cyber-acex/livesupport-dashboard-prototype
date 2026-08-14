@@ -13,7 +13,37 @@ const prisma = new PrismaClient({ adapter });
 
 function convertSqlPlaceholders(sql) {
   let paramIndex = 0;
-  return sql.replace(/\?/g, () => `$${++paramIndex}`);
+  let converted = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+
+  for (let i = 0; i < sql.length; i += 1) {
+    const char = sql[i];
+    const prevChar = sql[i - 1];
+    const nextChar = sql[i + 1];
+
+    if (char === "'" && !inDoubleQuote && (prevChar !== '\\')) {
+      inSingleQuote = !inSingleQuote;
+      converted += char;
+      continue;
+    }
+
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      converted += char;
+      continue;
+    }
+
+    if (!inSingleQuote && !inDoubleQuote && char === '?') {
+      paramIndex += 1;
+      converted += `$${paramIndex}`;
+      continue;
+    }
+
+    converted += char;
+  }
+
+  return converted;
 }
 
 const db = {

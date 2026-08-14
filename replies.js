@@ -15,6 +15,42 @@ const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
 // Friendly fallback and conversational guidance used when the model/API fails
 const FALLBACK_REPLY = "Sorry, I'm having trouble processing that right now. Please try again in a moment or type 'help' for assistance.";
 const CLARIFICATION_OPTIONS = "Tell me what you'd like help with, and I'll guide you from there.";
+const AI_TONE_PRESETS = {
+    warm: 'Use a warm, empathetic, customer-first tone. Be friendly, reassuring, and conversational without being overly casual.',
+    professional: 'Use a polished, professional tone. Be clear, efficient, and confident while staying calm and courteous.',
+    friendly: 'Use a friendly and conversational tone. Keep it approachable and upbeat while still sounding trustworthy and helpful.',
+    concise: 'Use a concise tone. Keep replies short, direct, and easy to scan, with minimal fluff and clear action steps.'
+};
+
+export function resolveAiTone(tone = process.env.AI_TONE || 'warm') {
+    const selected = String(tone || 'warm').trim().toLowerCase();
+    return AI_TONE_PRESETS[selected] || AI_TONE_PRESETS.warm;
+}
+
+async function getConfiguredAiTone() {
+    const envTone = process.env.AI_TONE;
+    const envKey = typeof envTone === 'string' ? envTone.trim().toLowerCase() : '';
+    if (envKey && AI_TONE_PRESETS[envKey]) {
+        return envKey;
+    }
+
+    try {
+        if (prisma && typeof prisma.setting?.findFirst === 'function') {
+            const latestSetting = await prisma.setting.findFirst({
+                orderBy: { id: 'desc' },
+                select: { aiTone: true }
+            });
+            const dbTone = typeof latestSetting?.aiTone === 'string' ? latestSetting.aiTone.trim().toLowerCase() : '';
+            if (dbTone && AI_TONE_PRESETS[dbTone]) {
+                return dbTone;
+            }
+        }
+    } catch (error) {
+        console.warn('Unable to read persisted AI tone:', error.message);
+    }
+
+    return 'warm';
+}
 
 let knowledgeBase = [];
 let cannedResponses = [];
@@ -312,12 +348,38 @@ async function getMenuItemsFromDb() {
                 { name: 'asc' }
             ]
         });
-        return Array.isArray(items) ? items.map(item => ({
+        const mapped = Array.isArray(items) ? items.map(item => ({
             category: item.category || 'Menu',
             name: item.name || item.key_name || 'Unknown item',
             price: Number(item.price || 0),
             available: typeof item.available === 'number' ? item.available : 0
         })) : [];
+
+        // Also attempt to read from a possibly separately-created quoted table "Menu" (capital M)
+        try {
+            const raw = await prisma.$queryRawUnsafe('SELECT * FROM "Menu" ORDER BY category ASC, name ASC');
+            if (Array.isArray(raw) && raw.length > 0) {
+                const mappedRaw = raw.map(item => ({
+                    category: item.category || 'Menu',
+                    name: item.name || item.key_name || 'Unknown item',
+                    price: Number(item.price || 0),
+                    available: typeof item.available === 'number' ? item.available : 0
+                }));
+
+                // Merge, preferring non-empty names and deduplicate by name+category
+                const seen = new Map();
+                for (const it of [...mapped, ...mappedRaw]) {
+                    const key = `${(it.category||'').toLowerCase()}::${(it.name||'').toLowerCase()}`;
+                    if (!seen.has(key)) seen.set(key, it);
+                }
+                return Array.from(seen.values());
+            }
+        } catch (err) {
+            // ignore errors querying quoted table, return mapped results
+            console.warn('getMenuItemsFromDb quoted "Menu" read failed:', err?.message || err);
+        }
+
+        return mapped;
     } catch (error) {
         console.log('getMenuItemsFromDb error:', error?.message || error);
         return [];
@@ -696,13 +758,25 @@ function getBranchDisplayName(branchId = null) {
     return branchMap[normalizedBranchId] || 'your branch';
 }
 
-function buildSupportReply(message = '', options = {}) {
+async function buildSupportReply(message = '', options = {}) {
     const lowerMessage = String(message || '').toLowerCase();
     const branchId = options?.branchId;
     const branchLabel = getBranchDisplayName(branchId);
     const branchContext = branchId ? `For ${branchLabel}, ` : '';
 
     if (isMenuInquiry(message)) {
+        // Try reading live menu from the database first; fall back to canned text when unavailable
+        try {
+            const menuItems = await getMenuItemsFromDb();
+            if (Array.isArray(menuItems) && menuItems.length > 0) {
+                const quick = formatQuickPricingInfo(menuItems);
+                return `${branchContext}${quick}`;
+            }
+        } catch (err) {
+            console.warn('buildSupportReply getMenuItemsFromDb failed:', err?.message || err);
+        }
+
+        // Fallback canned message
         return `${branchContext}I can share our current menu and pricing. Our delivery fee is $${DELIVERY_FEE.toFixed(2)} per order, and orders above $${FREE_DELIVERY_THRESHOLD.toFixed(2)} qualify for free delivery. I can also highlight featured dishes or the full menu for you.`;
     }
 
@@ -1378,7 +1452,11 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
 
     if (!orderPayload) {
         console.log("createOrderFromConversation: Could not find order details in conversation");
-        return null;
+        return {
+            success: false,
+            needsDetails: true,
+            message: "I’m ready to place your order, but I’m missing the actual items and quantities. Please send the menu items you’d like to order and any delivery details you want me to include."
+        };
     }
 
     const customerName = await getCustomerName(phone, conversationId);
@@ -1475,10 +1553,13 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
                 if (order && order.success) {
                     return order.message;
                 }
+                if (order && order.needsDetails) {
+                    return order.message;
+                }
                 if (order && order.message) {
                     return order.message;
                 }
-                return "I apologize, but I couldn't process your order at this time. Please try again or contact our support team for assistance.";
+                return "I’m ready to help with your order, but I need the order details first. Please send the items you’d like to order and any delivery instructions.";
             } else {
                 console.log("Customer declined order confirmation");
                 return "No problem! Your order has not been placed. If you'd like to modify your order or try again, just let me know!";
@@ -1500,7 +1581,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
         }
 
-        const supportReply = buildSupportReply(message, { branchId });
+        const supportReply = await buildSupportReply(message, { branchId });
         if (supportReply) {
             return supportReply;
         }
@@ -1733,7 +1814,19 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
 
         // Craft a system prompt and user prompt for the support agent
         const policyGuidance = buildPolicyGuidance(message);
-        const systemPrompt = `You are a professional customer support assistant for a food delivery service. Reply directly to the customer without any meta-commentary. Do not start with "Got it", "Here’s how I’d respond", "I would", "As a support agent", or any other explanation of how you are generating the reply. Keep the answer polite, clear, and concise as if you were replying directly to the customer.
+        const activeTone = resolveAiTone(await getConfiguredAiTone());
+        const systemPrompt = `You are a live customer support agent for a food delivery service. Reply in a warm, natural, human tone that sounds like a real agent in chat. Lead with empathy when appropriate, keep the message short and clear, and give the customer a direct next step.
+
+Tone guidance: ${activeTone}
+
+Style rules:
+- Write as if you are actively helping a customer in real time.
+- Use natural phrasing such as "I’m sorry about that", "I can help with that", and "Here’s the quickest next step."
+- Be concise: usually 1-3 sentences, unless the customer needs a clear multi-step explanation.
+- Ask at most one focused question when more detail is needed.
+- Never mention that you are an AI, that you are generating a response, or that you are following instructions.
+- Do not start with meta phrases like "Got it", "Here’s how I’d respond", "I would", or "As a support agent."
+- Be helpful, conversational, and action-oriented.
 
 Follow these policy guardrails when taking action:
 ${policyGuidance}
@@ -1783,7 +1876,7 @@ The customer appears to be placing an order but I couldn't identify the specific
             }
         }
 
-        console.log("Sending to Mistral with prompt context (KB: " + (kbContext ? "yes" : "no") + ", Orders: " + (orderContext ? "yes" : "no") + ")");
+        console.log("Sending to Mistral with prompt context (KB: " + (kbContext ? "yes" : "no") + ", Orders: " + (menuContext ? "yes" : "no") + ")");
         
         const response = await fetch(MISTRAL_API_URL, {
             method: "POST",
@@ -1837,4 +1930,4 @@ The customer appears to be placing an order but I couldn't identify the specific
     }
 }
 
-export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize };
+export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, createOrderFromConversation, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize };

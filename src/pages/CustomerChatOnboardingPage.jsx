@@ -2,14 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createGuestSessionStorage, getGuestDisplayName, loadGuestSession, saveGuestSession } from '../utils/webChatSession';
 
-const branches = [
-  { id: 1, name: 'Ikeja' },
-  { id: 2, name: 'Lekki' }
-];
-
 export default function CustomerChatOnboardingPage() {
   const navigate = useNavigate();
-  const [selectedBranchId, setSelectedBranchId] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [phone, setPhone] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -21,9 +15,6 @@ export default function CustomerChatOnboardingPage() {
 
   useEffect(() => {
     const existing = loadGuestSession(storage);
-    if (existing?.branchId) {
-      setSelectedBranchId(String(existing.branchId));
-    }
     if (existing?.customerName) {
       setCustomerName(existing.customerName);
     }
@@ -32,13 +23,12 @@ export default function CustomerChatOnboardingPage() {
     }
   }, [storage]);
 
-  const handleStartNewConversation = async (guestId, trimmedName, branchId, phoneValue) => {
+  const handleStartNewConversation = async (guestId, trimmedName, phoneValue) => {
     const response = await fetch('/api/customer-web-chat/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         guestId,
-        branchId,
         customerName: trimmedName,
         phone: phoneValue,
         channel: 'web',
@@ -58,7 +48,7 @@ export default function CustomerChatOnboardingPage() {
     const sessionPayload = {
       guestId,
       conversationId,
-      branchId,
+      branchId: null,
       customerName: customer.name || trimmedName,
       phone: customer.phone || phoneValue,
       channel: 'web',
@@ -66,7 +56,7 @@ export default function CustomerChatOnboardingPage() {
     };
 
     saveGuestSession(storage, sessionPayload);
-    setError('✓ Welcome! A new conversation has been created for you.');
+    setError('✓ Welcome! We will ask you to choose a branch after your first message.');
     setTimeout(() => navigate('/customer-chat'), 800);
   };
 
@@ -77,7 +67,7 @@ export default function CustomerChatOnboardingPage() {
     const sessionPayload = {
       guestId,
       conversationId: conversation.id,
-      branchId: Number(conversation.branch_id || selectedBranchId || 0) || null,
+      branchId: Number(conversation.branch_id || 0) || null,
       customerName: customerName.trim(),
       phone: phone.trim(),
       channel: 'web',
@@ -91,11 +81,6 @@ export default function CustomerChatOnboardingPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
-
-    if (!selectedBranchId) {
-      setError('Please select a branch to continue.');
-      return;
-    }
 
     if (!customerName.trim()) {
       setError('Please enter your name to continue.');
@@ -119,7 +104,7 @@ export default function CustomerChatOnboardingPage() {
         setSelectedConversationId(data.conversations[0]?.id || null);
         setError('We found previous conversations. Select one to resume or start a new chat.');
       } else {
-        await handleStartNewConversation(`guest-${Date.now()}`, trimmedName, Number(selectedBranchId), phone.trim());
+        await handleStartNewConversation(`guest-${Date.now()}`, trimmedName, phone.trim());
       }
     } catch (submitError) {
       setError(submitError?.message || 'Unable to start a chat right now.');
@@ -217,33 +202,9 @@ export default function CustomerChatOnboardingPage() {
               </div>
 
               <form className="space-y-6" onSubmit={handleSubmit}>
-                <div className="space-y-4">
-                  <label className="text-sm font-semibold text-white">Choose branch</label>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {branches.map((branch) => {
-                      const isActive = String(branch.id) === String(selectedBranchId);
-                      return (
-                        <button
-                          key={branch.id}
-                          type="button"
-                          onClick={() => setSelectedBranchId(String(branch.id))}
-                          className={`group relative overflow-hidden rounded-2xl border p-4 text-left transition-all duration-300 ${
-                            isActive
-                              ? 'border-orange-400 bg-gradient-to-br from-orange-500/20 to-amber-500/10 shadow-lg shadow-orange-500/20 scale-105'
-                              : 'border-white/20 bg-white/5 hover:border-white/40 hover:bg-white/10 hover:shadow-md hover:shadow-white/10'
-                          }`}
-                        >
-                          <div className="relative z-10">
-                            <span className="block text-xs font-medium uppercase tracking-wider text-slate-400">Branch</span>
-                            <span className="mt-2 block text-lg font-semibold text-white leading-6">{branch.name}</span>
-                          </div>
-                          {isActive && (
-                            <div className="absolute inset-0 -z-10 opacity-50 group-hover:opacity-75 transition-opacity duration-300" style={{ background: 'radial-gradient(circle at 50% 0%, rgba(249,115,22,0.15), transparent 70%)' }} />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                <div className="rounded-[1.5rem] border border-orange-400/20 bg-orange-500/10 p-4 text-sm text-slate-200">
+                  <p className="font-semibold text-orange-300">Your branch will be chosen after your first message.</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">We will ask you to pick the branch that should receive your chat and then keep everything in one conversation thread.</p>
                 </div>
 
                 <div className="space-y-3">
@@ -284,8 +245,7 @@ export default function CustomerChatOnboardingPage() {
                     <div className="mt-4 space-y-3 max-h-[260px] overflow-y-auto">
                       {lookupResults.conversations.map((conversation) => {
                         const isActive = conversation.id === selectedConversationId;
-                        const branchName = branches.find((entry) => Number(entry.id) === Number(conversation.branch_id))?.name || `Branch ${conversation.branch_id}`;
-                        const branchMismatch = selectedBranchId && Number(conversation.branch_id || 0) !== Number(selectedBranchId);
+                        const branchName = conversation.branch_id ? `Branch ${conversation.branch_id}` : 'Branch pending';
                         const preview = conversation.lastMessage ? conversation.lastMessage : 'No message yet.';
                         return (
                           <button
@@ -302,11 +262,6 @@ export default function CustomerChatOnboardingPage() {
                                 </div>
                                 <p className="mt-1 text-xs text-slate-400">Branch: {branchName}</p>
                                 <p className="mt-2 text-sm text-slate-300 line-clamp-2">{preview}</p>
-                                {branchMismatch ? (
-                                  <p className="mt-2 rounded-2xl bg-amber-500/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-300">
-                                    Branch mismatch: selected branch is {branches.find((entry) => String(entry.id) === String(selectedBranchId))?.name || 'your chosen branch'}, but this chat belongs to {branchName}.
-                                  </p>
-                                ) : null}
                               </div>
                             </div>
                           </button>
@@ -326,7 +281,7 @@ export default function CustomerChatOnboardingPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleStartNewConversation(`guest-${Date.now()}`, customerName.trim(), Number(selectedBranchId), phone.trim())}
+                        onClick={() => handleStartNewConversation(`guest-${Date.now()}`, customerName.trim(), phone.trim())}
                         className="rounded-2xl border border-white/20 bg-slate-950/80 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-900"
                       >
                         Start a new conversation

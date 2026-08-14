@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSidebar } from '../contexts/SidebarContext';
+import { useNotification } from '../contexts/NotificationContext';
 import NotificationDropdown from './NotificationDropdown';
+import { getStoredAvatarUrl } from '../utils/avatarUpload';
 
 const PALETTE_COMMANDS = [
   { command: '/view orders', description: 'Open orders' },
@@ -16,8 +18,8 @@ function TopBar({ onSidebarToggle }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const { unreadCount } = useNotification();
   const [currentUser, setCurrentUser] = useState({ name: 'Staff', role: 'agent', avatar_url: null });
-  const [avatarVersion, setAvatarVersion] = useState(0);
   const [sessionStartedAt, setSessionStartedAt] = useState(() => {
     if (typeof window === 'undefined') return Date.now();
     const stored = window.localStorage.getItem('sessionStartedAt');
@@ -59,17 +61,22 @@ function TopBar({ onSidebarToggle }) {
 
   useEffect(() => {
     function syncAvatarFromStorage() {
-      const storedAvatar = typeof window !== 'undefined' ? window.localStorage.getItem('userAvatar') : null;
-      if (storedAvatar) {
-        setCurrentUser((prev) => ({ ...prev, avatar_url: storedAvatar }));
+      const storedAvatar = typeof window !== 'undefined' ? getStoredAvatarUrl() : null;
+      const resolvedAvatar = storedAvatar || window?.currentUser?.avatar_url || window?.currentUser?.avatarUrl || null;
+      if (resolvedAvatar) {
+        setCurrentUser((prev) => ({ ...prev, avatar_url: resolvedAvatar, avatarUrl: resolvedAvatar }));
         if (typeof window !== 'undefined') {
-          window.currentUser = { ...(window.currentUser || {}), avatar_url: storedAvatar };
+          window.currentUser = { ...(window.currentUser || {}), avatar_url: resolvedAvatar, avatarUrl: resolvedAvatar };
         }
       }
     }
 
     const handleAvatarUpdated = () => {
-      setAvatarVersion(Date.now());
+      const nextAvatarUrl = typeof window !== 'undefined' ? getStoredAvatarUrl() : null;
+      if (nextAvatarUrl && nextAvatarUrl !== lastAvatarUrlRef.current) {
+        lastAvatarUrlRef.current = nextAvatarUrl;
+        setAvatarVersion((prev) => prev + 1);
+      }
       syncAvatarFromStorage();
     };
 
@@ -290,9 +297,12 @@ function TopBar({ onSidebarToggle }) {
   const displayName = currentUser.name || 'Staff';
   const displayRole = currentUser.role ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1) : 'Agent';
   const activeBranchName = currentUser.branchName || currentUser.branch_name || currentUser.branch?.name || 'No branch';
-  const storedAvatarUrl = typeof window !== 'undefined' ? (window.localStorage.getItem('avatarUrl') || window.localStorage.getItem('userAvatar')) : null;
+  const storedAvatarUrl = typeof window !== 'undefined' ? getStoredAvatarUrl() : null;
   const avatarUrl = currentUser.avatar_url || currentUser.avatarUrl || storedAvatarUrl;
-  const avatarSrc = avatarUrl ? `${avatarUrl}${avatarUrl.includes('?') ? '&' : '?'}v=${avatarVersion || Date.now()}` : null;
+  const normalizedAvatarUrl = avatarUrl ? String(avatarUrl).trim() : '';
+  const avatarSrc = normalizedAvatarUrl
+    ? `${normalizedAvatarUrl}${normalizedAvatarUrl.includes('?') ? '&' : '?'}v=${avatarVersion}`
+    : null;
 
   const handleSignOut = async () => {
     try {
@@ -439,8 +449,16 @@ function TopBar({ onSidebarToggle }) {
                 className="relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900"
                 aria-label="Notifications"
               >
-                <span className={`absolute top-0.5 right-0 h-2 w-2 rounded-full bg-orange-400 ${notificationsOpen ? 'hidden' : 'inline-block'}`} />
-                <svg width="20" height="20" viewBox="0 0 20 20"><path d="M10 2C6.13 2 3.25 4.9 3.25 8.77V14.46H2.58C2.26 14.46 2 14.72 2 15.04C2 15.36 2.26 15.62 2.58 15.62H17.42C17.74 15.62 18 15.36 18 15.04C18 14.72 17.74 14.46 17.42 14.46H16.75V8.77C16.75 4.9 13.87 2 10 2Z"/></svg>
+                {unreadCount > 0 && !notificationsOpen ? (
+                  <span className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-orange-500 px-1.5 text-[11px] font-semibold text-white">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                ) : null}
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M18.25 12.34c0-3.02-1.97-5.58-4.75-6.23V5.5a1.5 1.5 0 0 0-3 0v.61c-2.78.65-4.75 3.21-4.75 6.23 0 2.96-.5 4.2-1.12 5.04-.33.45-.13 1.05.42 1.28.55.23 1.17.04 1.4-.49.46-.95 1.04-2.24 1.04-5.83h10.52c0 3.6.58 4.88 1.04 5.83.23.53.85.72 1.4.49.55-.23.75-.83.42-1.28-.62-.84-1.12-2.08-1.12-5.04Z" />
+                  <path d="M8.5 18.5a3.5 3.5 0 0 0 7 0" />
+                  <path d="M12 8.75v.01" />
+                </svg>
               </button>
 
               <NotificationDropdown isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />

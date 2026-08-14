@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -10,11 +10,14 @@ import {
   applyTheme,
   applyFontSize,
   AUTOPILOT_MODES,
-  getFontSizeLabel
+  getFontSizeLabel,
+  AI_TONE_OPTIONS,
+  canChangeAiTone
 } from '../services/settingsService';
 import { normalizeAutopilotMode } from '../services/autopilotMode';
 import { DEFAULT_ZOOM, ZOOM_LEVELS } from '../utils/zoom';
 import { hasRolePermission, normalizeRole } from '../utils/rolePermissions';
+import { applyAvatarToApp, resolveAvatarUploadFile } from '../utils/avatarUpload';
 
 function SettingsPage() {
   const location = useLocation();
@@ -23,6 +26,7 @@ function SettingsPage() {
   const [settings, setSettings] = useState(getSettings());
   const [passwordChanged, setPasswordChanged] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userRole, setUserRole] = useState('');
   const [adminPermissions, setAdminPermissions] = useState([]);
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -34,6 +38,7 @@ function SettingsPage() {
   const [showCreateConfirmation, setShowCreateConfirmation] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState('');
   const [avatarFile, setAvatarFile] = useState(null);
+  const latestAvatarFileRef = useRef(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showAdminUserPassword, setShowAdminUserPassword] = useState(false);
   const { zoom, setZoom, increaseZoom, decreaseZoom, resetZoom, zoomLevels } = useZoom();
@@ -79,6 +84,7 @@ function SettingsPage() {
         if (res.ok) {
           const data = await res.json();
           const role = normalizeRole(data?.role);
+          setUserRole(role);
           const isAdminUser = role === 'admin';
           setIsAdmin(isAdminUser);
           setAdminPermissions(isAdminUser ? ['config', 'policies', 'analytics', 'roles', 'integrations'] : []);
@@ -127,23 +133,19 @@ function SettingsPage() {
     // If there's a selected file, upload it first
     const doSave = async () => {
       try {
-        if (avatarFile) {
+        const uploadCandidate = resolveAvatarUploadFile(avatarFile, latestAvatarFileRef);
+        if (uploadCandidate) {
           const form = new FormData();
-          form.append('avatar', avatarFile);
+          form.append('avatar', uploadCandidate);
           const res = await fetch('/api/settings/avatar', { method: 'POST', body: form, credentials: 'same-origin' });
           if (res.ok) {
             const data = await res.json();
             const avatarUrl = data && data.url ? (data.url.startsWith('http') ? data.url : window.location.origin + data.url) : null;
             if (avatarUrl) {
-              const cacheBustedAvatarUrl = `${avatarUrl}${avatarUrl.includes('?') ? '&' : '?'}_=${Date.now()}`;
-              window.localStorage.setItem('userAvatar', cacheBustedAvatarUrl);
-              window.localStorage.setItem('avatarUrl', cacheBustedAvatarUrl);
-              if (typeof window !== 'undefined' && window.currentUser) {
-                window.currentUser = { ...window.currentUser, avatar_url: cacheBustedAvatarUrl, avatarUrl: cacheBustedAvatarUrl };
+              const persistedAvatarUrl = applyAvatarToApp(avatarUrl);
+              if (persistedAvatarUrl) {
+                setAvatarPreview(persistedAvatarUrl);
               }
-              setAvatarPreview(cacheBustedAvatarUrl);
-              window.dispatchEvent(new Event('avatar:updated'));
-              window.dispatchEvent(new Event('profile:updated'));
             }
           } else {
             console.warn('Avatar upload failed', res.statusText);
@@ -355,6 +357,7 @@ function SettingsPage() {
   const handleAvatarUpload = (e) => {
     const file = e.target.files?.[0];
     if (file) {
+      latestAvatarFileRef.current = file;
       setAvatarFile(file);
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -406,6 +409,7 @@ function SettingsPage() {
   );
 
   const hasPermission = (permission) => isAdmin && adminPermissions.includes(permission);
+  const canEditAiTone = canChangeAiTone(userRole);
 
   const sectionMeta = {
     account: { eyebrow: 'Workspace identity', title: 'Account settings', description: 'Keep your profile and workspace targets in sync.' },
@@ -716,6 +720,50 @@ function SettingsPage() {
                             <li key={idx}>{detail}</li>
                           ))}
                         </ul>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <label className="block text-sm font-medium text-slate-700">AI Tone</label>
+                        {!canEditAiTone && (
+                          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                            View only
+                          </span>
+                        )}
+                      </div>
+
+                      {canEditAiTone ? (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                          {Object.entries(AI_TONE_OPTIONS).map(([tone, info]) => (
+                            <button
+                              key={tone}
+                              type="button"
+                              onClick={() => setSettings({ ...settings, aiTone: tone })}
+                              className={`rounded-xl border p-3 text-left transition-all ${
+                                settings.aiTone === tone
+                                  ? 'border-indigo-600 bg-indigo-50 text-indigo-700 dark:border-indigo-400 dark:bg-indigo-500/10 dark:text-indigo-200'
+                                  : 'border-slate-200 bg-white text-slate-700 hover:border-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                              }`}
+                            >
+                              <div className="font-semibold">{info.label}</div>
+                              <div className="mt-1 text-xs opacity-75">{info.description}</div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+                          Only admins and managers can update this branch-wide AI tone setting.
+                        </div>
+                      )}
+
+                      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                          Preview
+                        </div>
+                        <div className="rounded-xl border border-indigo-100 bg-white p-4 text-sm leading-6 text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                          {AI_TONE_OPTIONS[settings.aiTone || 'warm']?.sample || AI_TONE_OPTIONS.warm.sample}
+                        </div>
                       </div>
                     </div>
 
