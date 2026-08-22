@@ -218,7 +218,6 @@ function TicketsPage() {
         localTicketActionsRef.current.created.delete(ticketId);
         return;
       }
-      success(`Created ticket #${ticket.id}`);
     });
 
     socket.on('ticketDeleted', ({ id }) => {

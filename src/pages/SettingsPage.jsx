@@ -1151,7 +1151,7 @@ function SettingsPage() {
                   )}
 
                   {/* Users Table */}
-                  <div className="overflow-x-auto rounded-lg bg-white shadow dark:bg-slate-900 dark:text-slate-100">
+                  <div className="h-[420px] w-full max-w-5xl overflow-x-hidden overflow-y-scroll rounded-lg bg-white shadow dark:bg-slate-900 dark:text-slate-100">
                     {usersLoading ? (
                       <div className="p-6 text-center text-slate-500 dark:text-slate-400">Loading users...</div>
                     ) : users.length === 0 ? (
@@ -1159,7 +1159,7 @@ function SettingsPage() {
                         {users.length === 0 ? 'No users found' : 'Click "Manage Users" to load users'}
                       </div>
                     ) : (
-                      <table className="min-w-[760px] w-full text-left text-sm">
+                      <table className="w-full table-fixed text-left text-sm">
                         <thead className="bg-gray-100 border-b border-gray-200 dark:bg-slate-800 dark:border-slate-700">
                           <tr>
                             <th className="px-6 py-3 font-semibold text-gray-700 dark:text-slate-200">ID</th>
@@ -1222,8 +1222,8 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
   return (
     <tr className="border-b border-gray-200 hover:bg-gray-50 dark:border-slate-700 dark:hover:bg-slate-800">
       <td className="px-3 py-3 text-gray-900 dark:text-slate-100 sm:px-6">{user.id}</td>
-      <td className="px-3 py-3 text-gray-900 dark:text-slate-100 sm:px-6">{user.name}</td>
-      <td className="px-3 py-3 text-gray-600 dark:text-slate-400 sm:px-6">{user.email}</td>
+      <td className="break-words px-3 py-3 text-gray-900 dark:text-slate-100 sm:px-6">{user.name}</td>
+      <td className="break-all px-3 py-3 text-gray-600 dark:text-slate-400 sm:px-6">{user.email}</td>
       <td className="px-3 py-3 sm:px-6">
         <select
           value={role}
@@ -1237,7 +1237,7 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
           ))}
         </select>
       </td>
-      <td className="px-3 py-3 text-gray-600 dark:text-slate-400 sm:px-6">{user.branchName || '—'}</td>
+      <td className="break-words px-3 py-3 text-gray-600 dark:text-slate-400 sm:px-6">{user.branchName || '—'}</td>
       <td className="px-3 py-3 sm:px-6">
         {user.active ? (
           <span className="flex items-center gap-2">
@@ -1257,7 +1257,7 @@ function UserRow({ user, roleOptions, onUpdate, onResetPassword, onForceLogout, 
         />
       </td>
       <td className="px-3 py-3 sm:px-6">
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-wrap gap-2">
           <button
             onClick={handleSave}
             className="bg-indigo-600 text-white px-3 py-1 rounded text-xs hover:bg-indigo-700 transition-colors"

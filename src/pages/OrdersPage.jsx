@@ -120,26 +120,34 @@ function OrdersPage() {
 
     const timer = window.setInterval(() => setSessionTick((value) => value + 1), 1000);
 
-    socket.on('order-created', (payload) => {
-      setOrders((prev) => [{
-        id: payload.id,
-        customerName: payload.customerName || 'Customer',
-        product: payload.product || '',
-        amount: Number(payload.amount || 0),
-        status: payload.status || 'pending',
-        date: payload.date || new Date().toISOString()
-      }, ...prev]);
-      info(`New order ${payload.id} received`);
-    });
+    const handleOrderCreated = (payload) => {
+      void loadOrders();
+      info(`New order ${payload?.orderId || payload?.id || ''} received`);
+    };
 
-    socket.on('order-updated', (payload) => {
-      setOrders((prev) => prev.map((order) => order.id === payload.orderId ? { ...order, status: payload.status || order.status } : order));
-    });
+    const handleOrderUpdated = () => {
+      void loadOrders();
+    };
+
+    const handleMenuUpdated = () => {
+      void loadMenuItems();
+    };
+
+    const handleTablesUpdated = () => {
+      void loadTables();
+    };
+
+    socket.on('order-created', handleOrderCreated);
+    socket.on('order-updated', handleOrderUpdated);
+    socket.on('menu-updated', handleMenuUpdated);
+    socket.on('tables-updated', handleTablesUpdated);
 
     return () => {
       window.clearInterval(timer);
-      socket.off('order-created');
-      socket.off('order-updated');
+      socket.off('order-created', handleOrderCreated);
+      socket.off('order-updated', handleOrderUpdated);
+      socket.off('menu-updated', handleMenuUpdated);
+      socket.off('tables-updated', handleTablesUpdated);
     };
   }, []);
 
@@ -1489,33 +1497,11 @@ function OrdersPage() {
                 ))}
               </div>
               <button type="button" onClick={() => setOrderDraft((prev) => ({ ...prev, items: [...prev.items, { menuItemId: '', quantity: 1 }] }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800">+ Add another product</button>
-              <div className="grid gap-4 lg:grid-cols-[1fr_1fr_0.8fr]">
+              <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
                 <label className="block text-sm text-slate-700 dark:text-slate-200">
                   Status
                   <select value={orderDraft.status} onChange={(e) => setOrderDraft((prev) => ({ ...prev, status: e.target.value }))} className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
                     {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
-                  </select>
-                </label>
-                <label className="block text-sm text-slate-700 dark:text-slate-200">
-                  Delivery Rider
-                  <select
-                    value={orderDraft.riderId}
-                    onChange={(e) => {
-                      const rider = riders.find((entry) => String(entry.id) === String(e.target.value));
-                      setOrderDraft((prev) => ({
-                        ...prev,
-                        riderId: e.target.value,
-                        riderName: rider ? rider.name : ''
-                      }));
-                    }}
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  >
-                    <option value="">-- No rider assigned --</option>
-                    {riders.map((rider) => (
-                      <option key={rider.id} value={rider.id} disabled={rider.availability === 'On Delivery' && !rider.allowMultipleActiveDeliveries}>
-                        {rider.name} · {rider.availability}
-                      </option>
-                    ))}
                   </select>
                 </label>
                 <div className="block text-sm text-slate-700 dark:text-slate-200">

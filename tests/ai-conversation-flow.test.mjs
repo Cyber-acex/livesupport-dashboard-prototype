@@ -44,3 +44,21 @@ test('does not classify issue-free greetings as a greeting intent when additiona
   assert.notEqual(intent, 'Greeting');
   assert.equal(intent, 'Order Tracking');
 });
+
+test('stale order confirmation state is not included when the customer just greets', () => {
+  const staleState = {
+    workflowState: 'Ready to Create Order',
+    pendingQuestions: ['Would you like me to place the order?'],
+    draftOrder: { items: [{ name: 'Cheese Burger', quantity: 1 }] }
+  };
+
+  const prompt = buildPromptContext({
+    intent: 'Greeting',
+    message: 'Hey',
+    conversationState: staleState,
+    conversationHistory: [{ sender: 'received', message: 'Hey' }, { sender: 'sent', message: 'Would you like me to place the order?' }]
+  });
+
+  assert.match(prompt, /Customer message: "Hey"/i);
+  assert.doesNotMatch(prompt, /Ready to Create Order|place the order|Cheese Burger|Active order/i);
+});

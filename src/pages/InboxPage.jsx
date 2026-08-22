@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Bot, MessageCircle, Search, ShieldCheck, Sparkles, Zap } from 'lucide-react';
+import { ArrowUpRight, Bot, CheckCheck, Circle, Command, Filter, Inbox, MessageCircle, MoreHorizontal, Paperclip, Phone, Search, Send, ShieldCheck, Smile, Sparkles, Video, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
@@ -15,6 +15,13 @@ const queueFilters = [
   { id: 'unread', label: 'Unread', icon: '✉' },
   { id: 'resolved', label: 'Resolved', icon: '✓' },
   { id: 'escalated', label: 'Escalated', icon: '🚨' }
+];
+
+const platformFilters = [
+  { id: 'all', label: 'All channels' },
+  { id: 'whatsapp', label: 'WhatsApp' },
+  { id: 'messenger', label: 'Messenger' },
+  { id: 'web', label: 'Webchat' }
 ];
 
 function formatDate(value) {
@@ -74,6 +81,7 @@ function InboxPage({ defaultPlatform = null }) {
   const [isSending, setIsSending] = useState(false);
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  const [activePlatform, setActivePlatform] = useState('all');
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
@@ -233,6 +241,17 @@ function InboxPage({ defaultPlatform = null }) {
 
     const socket = socketRef.current;
 
+    const refreshConversations = async () => {
+      try {
+        const response = await fetch('/api/conversations');
+        if (!response.ok) throw new Error('Failed to refresh conversations');
+        const data = await response.json();
+        setConversations(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.warn('Live inbox conversation refresh failed', err);
+      }
+    };
+
     const handleNewMessage = (message) => {
       if (!message || !message.conversation_id) return;
       const conversationId = String(message.conversation_id);
@@ -250,6 +269,8 @@ function InboxPage({ defaultPlatform = null }) {
           unread_count: isActiveConversation ? 0 : Math.max(0, (conv.unread_count || 0) + 1)
         };
       }));
+
+      refreshConversations();
 
       if (isCustomerMessage && !isActiveConversation) {
         inboxMessageAudio.currentTime = 0;
@@ -286,6 +307,7 @@ function InboxPage({ defaultPlatform = null }) {
 
     const handleConnect = () => {
       console.log('Inbox socket connected:', socket.id);
+      refreshConversations();
       if (selectedConversationIdRef.current) {
         socket.emit('conversation:join', { conversationId: selectedConversationIdRef.current });
         socket.emit('agent:activeConversation', { conversationId: selectedConversationIdRef.current });
@@ -591,7 +613,9 @@ function InboxPage({ defaultPlatform = null }) {
 
       const matchesQuery = !term || searchable.includes(term);
       const isEscalated = Boolean(conversation.escalated || escalatedConversationIds.includes(String(conversation.id)));
-      const matchesPlatform = !platformFilter || String(conversation.platform || '').toLowerCase() === platformFilter;
+      const conversationPlatform = String(conversation.platform || '').toLowerCase();
+      const matchesPlatform = (!platformFilter || conversationPlatform === platformFilter)
+        && (activePlatform === 'all' || conversationPlatform === activePlatform || (activePlatform === 'web' && conversationPlatform === 'webchat'));
       const matchesFilter = (() => {
         switch (activeFilter) {
           case 'priority':
@@ -609,7 +633,7 @@ function InboxPage({ defaultPlatform = null }) {
 
       return matchesQuery && matchesPlatform && matchesFilter;
     });
-  }, [activeFilter, conversations, escalatedConversationIds, platformFilter, query]);
+  }, [activeFilter, activePlatform, conversations, escalatedConversationIds, platformFilter, query]);
 
   const activeConversation = filteredConversations.find((conversation) => conversation.id === selectedConversation?.id) || filteredConversations[0] || null;
   const activeConversationStatus = activeConversation?.escalated || escalatedConversationIds.includes(String(activeConversation?.id))
@@ -1103,26 +1127,26 @@ function InboxPage({ defaultPlatform = null }) {
   });
 
   return (
-    <div className={`min-h-screen ${isMessenger ? 'bg-[radial-gradient(circle_at_top_left,_rgba(59,130,246,0.16),_transparent_28%),linear-gradient(135deg,_#f8fbff_0%,_#eef4ff_100%)]' : 'bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.14),_transparent_28%),linear-gradient(135deg,_#f7fdf9_0%,_#ecfdf5_100%)]'} text-slate-900 dark:bg-slate-950 dark:text-white`}>
+    <div className="min-h-screen bg-[#eef2f5] text-slate-900 dark:bg-slate-950 dark:text-white">
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
-          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-3 pb-10 sm:p-4 sm:pb-12 lg:p-6 lg:pb-16">
-            <div className={`mb-4 overflow-hidden rounded-[32px] border shadow-[0_24px_60px_rgba(15,23,42,0.08)] sm:p-1 ${isMessenger ? 'border-sky-200 bg-gradient-to-br from-sky-600 via-blue-600 to-indigo-600 text-white' : 'border-emerald-200 bg-gradient-to-br from-emerald-600 via-green-600 to-teal-600 text-white'}`}>
-              <div className="relative overflow-hidden rounded-[28px] px-3 py-4 sm:px-5 lg:px-6">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.18),_transparent_35%),radial-gradient(circle_at_bottom_right,_rgba(255,255,255,0.12),_transparent_25%)]" />
+          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 pb-6 sm:p-3 lg:p-4">
+            <div className="mb-3 overflow-hidden rounded-[22px] border border-slate-800 bg-[#111827] text-white shadow-[0_18px_42px_rgba(15,23,42,0.16)]">
+              <div className="relative overflow-hidden px-4 py-3 sm:px-5 lg:px-6">
+                <div className="absolute inset-0 bg-[linear-gradient(110deg,rgba(16,185,129,0.16),transparent_38%),radial-gradient(circle_at_90%_10%,rgba(56,189,248,0.16),transparent_30%)]" />
                 <div className="relative flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                   <div className="max-w-2xl">
-                    <div className={`inline-flex items-center gap-2 rounded-full border border-white/25 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.3em] ${isMessenger ? 'bg-sky-400/20 text-sky-50' : 'bg-emerald-400/20 text-emerald-50'}`}>
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Premium operations center
+                    <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-emerald-300">
+                      <Command className="h-3.5 w-3.5" />
+                      Command center / conversations
                     </div>
-                    <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+                    <h1 className="mt-1.5 text-xl font-semibold tracking-tight sm:text-2xl">
                       {platformHeroTitle}
                     </h1>
-                    <p className={`mt-2 max-w-xl text-sm leading-6 ${isMessenger ? 'text-sky-100/90' : 'text-emerald-100/90'}`}>
-                      {platformHeroDescription} Every conversation is surfaced with a polished workspace designed for fast, high-touch support.
+                    <p className="mt-1 max-w-xl text-xs leading-5 text-slate-300">
+                      {platformHeroDescription}
                     </p>
                   </div>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1132,22 +1156,23 @@ function InboxPage({ defaultPlatform = null }) {
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
                         placeholder={`Search ${platformLabel} conversations...`}
-                        className={`w-full rounded-2xl border border-white/40 bg-white/95 py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none transition focus:border-white ${isMessenger ? 'focus:ring-2 focus:ring-sky-200' : 'focus:ring-2 focus:ring-emerald-200'}`}
+                        className="w-full rounded-xl border border-slate-600 bg-slate-900/80 py-2.5 pl-10 pr-4 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
                       />
                     </label>
                     <button
                       type="button"
                       onClick={() => window.location.reload()}
-                      className={`inline-flex items-center justify-center rounded-2xl px-4 py-2.5 text-sm font-semibold text-white transition shadow-sm ${isMessenger ? 'bg-white/15 hover:bg-white/25' : 'bg-white/15 hover:bg-white/25'}`}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-600 bg-slate-900/60 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-slate-500 hover:bg-slate-800"
                     >
+                      <Zap className="h-4 w-4 text-amber-300" />
                       Refresh
                     </button>
                   </div>
                 </div>
 
-                <div className="relative mt-4 grid gap-3 rounded-[24px] border border-white/20 bg-white/10 p-3 backdrop-blur-sm sm:grid-cols-3">
+                <div className="relative mt-3 grid gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 sm:grid-cols-3">
                   {queueSummary.map((card) => (
-                    <div key={card.label} className="rounded-[18px] border border-white/15 bg-slate-950/10 p-3">
+                    <div key={card.label} className="bg-slate-950/20 p-2.5">
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/80">
                           {card.label}
@@ -1164,32 +1189,47 @@ function InboxPage({ defaultPlatform = null }) {
               </div>
             </div>
 
-            <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_16px_44px_rgba(15,23,42,0.07)] dark:border-slate-800 dark:bg-slate-950">
-              <div className="grid h-full min-h-0 flex-1 gap-0 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)_320px]">
-                <aside className="flex min-h-0 flex-1 flex-col border-b border-slate-200 bg-slate-50/80 p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:border-b-0 lg:border-r">
-                  <div className="rounded-[28px] border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.06)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
+            <div className="flex flex-1 min-h-0 flex-col overflow-hidden rounded-[26px] border border-slate-300 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.09)] dark:border-slate-800 dark:bg-slate-950">
+              <div className="grid h-full min-h-0 flex-1 gap-0 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]">
+                <aside className="flex min-h-0 flex-1 flex-col border-b border-slate-200 bg-[#f7f9fa] p-3 sm:p-4 dark:border-slate-800 dark:bg-slate-900/80 lg:border-b-0 lg:border-r">
+                  <div className="border-b border-slate-200 pb-4 dark:border-slate-800">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-semibold text-slate-900 dark:text-white">Smart queue</p>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Route tickets, refunds, and escalations.</p>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Every channel, one stream.</p>
                       </div>
                       <div className="rounded-full bg-brand-50 px-3 py-1 text-sm font-semibold text-brand-600 dark:bg-brand-500/10 dark:text-brand-400">
                         {filteredConversations.length}
                       </div>
                     </div>
-                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                    <div className="mt-4 flex gap-1 overflow-x-auto pb-1">
                       {queueFilters.map((filter) => (
                         <button
                           key={filter.id}
                           type="button"
                           onClick={() => setActiveFilter(filter.id)}
-                          className={`rounded-full px-3 py-2 text-sm font-medium transition ${
+                          className={`rounded-lg px-2.5 py-2 text-xs font-medium transition ${
                             activeFilter === filter.id
                               ? 'bg-brand-600 text-white shadow-sm'
                               : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
                           }`}
                         >
                           <span className="mr-1">{filter.icon}</span>
+                          {filter.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {platformFilters.map((filter) => (
+                        <button
+                          key={filter.id}
+                          type="button"
+                          onClick={() => setActivePlatform(filter.id)}
+                          className={`rounded-md border px-2 py-1.5 text-[11px] font-semibold transition ${activePlatform === filter.id
+                            ? 'border-slate-800 bg-slate-800 text-white dark:border-slate-200 dark:bg-slate-200 dark:text-slate-900'
+                            : 'border-slate-200 bg-white text-slate-500 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-400'
+                          }`}
+                        >
                           {filter.label}
                         </button>
                       ))}
@@ -1292,7 +1332,7 @@ function InboxPage({ defaultPlatform = null }) {
                       </div>
 
                       <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
-                        <div ref={messagesViewportRef} className="h-[520px] flex-none overflow-y-scroll overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                        <div ref={messagesViewportRef} className="h-[360px] flex-none overflow-y-scroll overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
                           <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
                             {messagesLoading ? (
                               <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">

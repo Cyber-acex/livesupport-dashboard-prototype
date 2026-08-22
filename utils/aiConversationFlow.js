@@ -214,31 +214,34 @@ export function buildPromptContext({
   conversationState = null
 } = {}) {
   const parts = [];
+  const shouldAttachConversationState = !['Greeting', 'General Conversation', 'FAQ', 'Unknown'].includes(String(intent || 'Unknown'));
 
-  const recentAssistantMessage = Array.isArray(conversationHistory)
-    ? [...conversationHistory].reverse().find((item) => {
-        const sender = String(item?.sender || '').toLowerCase();
-        return sender === 'sent' || sender === 'ai' || sender === 'agent' || sender === 'system';
-      })
-    : null;
+  if (shouldAttachConversationState) {
+    const recentAssistantMessage = Array.isArray(conversationHistory)
+      ? [...conversationHistory].reverse().find((item) => {
+          const sender = String(item?.sender || '').toLowerCase();
+          return sender === 'sent' || sender === 'ai' || sender === 'agent' || sender === 'system';
+        })
+      : null;
 
-  if (recentAssistantMessage) {
-    parts.push(`Previous assistant message: "${recentAssistantMessage?.message || ''}"`);
+    if (recentAssistantMessage) {
+      parts.push(`Previous assistant message: "${recentAssistantMessage?.message || ''}"`);
+    }
+
+    if (conversationState) {
+      const workflowState = conversationState.workflowState || 'Greeting';
+      const pendingQuestions = Array.isArray(conversationState.pendingQuestions) && conversationState.pendingQuestions.length > 0
+        ? conversationState.pendingQuestions.join('; ')
+        : 'None';
+      const orderedItems = Array.isArray(conversationState.draftOrder?.items) && conversationState.draftOrder.items.length > 0
+        ? conversationState.draftOrder.items.map((item) => `${item.name} x${item.quantity || 1}`).join(', ')
+        : 'None';
+
+      parts.push(`Conversation state:\n- Workflow: ${workflowState}\n- Expected input: ${pendingQuestions}\n- Active order: ${orderedItems}`);
+    }
   }
 
-  if (conversationState) {
-    const workflowState = conversationState.workflowState || 'Greeting';
-    const pendingQuestions = Array.isArray(conversationState.pendingQuestions) && conversationState.pendingQuestions.length > 0
-      ? conversationState.pendingQuestions.join('; ')
-      : 'None';
-    const orderedItems = Array.isArray(conversationState.draftOrder?.items) && conversationState.draftOrder.items.length > 0
-      ? conversationState.draftOrder.items.map((item) => `${item.name} x${item.quantity || 1}`).join(', ')
-      : 'None';
-
-    parts.push(`Conversation state:\n- Workflow: ${workflowState}\n- Expected input: ${pendingQuestions}\n- Active order: ${orderedItems}`);
-  }
-
-  if (Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+  if (Array.isArray(conversationHistory) && conversationHistory.length > 0 && shouldAttachConversationState) {
     parts.push('Conversation history:\n' + conversationHistory.map((item) => {
       const role = item?.sender === 'received' ? 'Customer' : 'Agent';
       return `${role}: ${item?.message || ''}`;

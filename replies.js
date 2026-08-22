@@ -1262,8 +1262,32 @@ function shouldAskOrderConfirmation(message) {
     return hasOrderPhrase && hasFoodKeyword;
 }
 
-function isOrderConfirmationResponse(message) {
-    const lowerMessage = message.toLowerCase().trim();
+function hasOrderConfirmationPromptInHistory(conversationHistory = []) {
+    const historyText = Array.isArray(conversationHistory)
+        ? conversationHistory.map((item) => item?.message || '').join(' ')
+        : '';
+    if (!historyText) return false;
+
+    const lowerHistory = historyText.toLowerCase();
+    return /(are you sure you want to place this order|would you like me to place the order|place this order|confirm.*order)/i.test(lowerHistory);
+}
+
+function isOrderConfirmationResponse(message, conversationState = null, conversationHistory = []) {
+    const lowerMessage = String(message || '').toLowerCase().trim();
+    if (!lowerMessage) return false;
+
+    const state = conversationState || {};
+    const workflow = String(state.workflowState || '').toLowerCase();
+    const pendingQuestions = Array.isArray(state.pendingQuestions) ? state.pendingQuestions.join(' ').toLowerCase() : '';
+    const hasOrderFlowContext = workflow.includes('ready to create order')
+        || workflow.includes('awaiting_order_confirmation')
+        || pendingQuestions.includes('place the order')
+        || pendingQuestions.includes('confirm');
+
+    if (!hasOrderFlowContext && !hasOrderConfirmationPromptInHistory(conversationHistory)) {
+        return false;
+    }
+
     const yesPhrases = ['yes', 'yeah', 'yep', 'sure', 'confirm', 'okay', 'ok', 'go ahead', 'please', 'yes please', 'sure thing'];
     const noPhrases = ['no', 'nope', 'nah', 'cancel', 'stop', 'dont', "don't", 'never mind', 'not now'];
     
@@ -1549,12 +1573,24 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
 
         const intent = detectConversationIntent(message, conversationState);
 
+        let conversationHistory = [];
+        if (conversationId) {
+            const recentMessages = await getRecentConversationMessages(conversationId, 8);
+            if (recentMessages.length > 0) {
+                conversationHistory = recentMessages.map(msg => ({
+                    sender: msg.sender,
+                    message: msg.message
+                }));
+            }
+        }
+
         if (intent === 'Greeting') {
             return createGreetingReply();
         }
 
-        // Check if this is a response to an order confirmation
-        if (conversationId && isOrderConfirmationResponse(message)) {
+        // Check if this is a response to an order confirmation, but only when the
+        // conversation is actually in an order-confirmation flow.
+        if (conversationId && isOrderConfirmationResponse(message, conversationState, conversationHistory)) {
             if (isPositiveConfirmation(message)) {
                 console.log("Customer confirmed order - creating order");
                 const order = await createOrderFromConversation(conversationId, phone, branchId);
@@ -1794,18 +1830,6 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
         const persistedWorkflowContext = conversationState && typeof conversationState === 'object'
             ? `\n\nPersisted conversation workflow state:\n- Current workflow state: ${conversationState.workflowState || 'Greeting'}\n- Pending questions: ${(conversationState.pendingQuestions || []).join('; ') || 'None'}\n- Draft order items: ${(conversationState.draftOrder?.items || []).map(item => `${item.name} x${item.quantity}`).join(', ') || 'None'}\n- Draft order notes: ${conversationState.draftOrder?.notes || 'None'}\n- Branch ID: ${conversationState.branchId || branchId || 'Unknown'}`
             : '';
-
-        // Include recent conversation history so Mistral remembers ongoing orders
-        let conversationHistory = [];
-        if (conversationId) {
-            const recentMessages = await getRecentConversationMessages(conversationId, 8);
-            if (recentMessages.length > 0) {
-                conversationHistory = recentMessages.map(msg => ({
-                    sender: msg.sender,
-                    message: msg.message
-                }));
-            }
-        }
 
         // Check if we should trigger handoff based on sentiment and conversation history
         const handoffCheck = shouldTriggerHandoff(message, conversationHistory);

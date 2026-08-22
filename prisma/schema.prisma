@@ -379,26 +379,33 @@ model Receipt {
 }
 
 model Voucher {
-  id               Int       @id @default(autoincrement())
-  code             String    @unique @db.VarChar(255)
-  type             String    @db.VarChar(50)
-  value            Decimal   @db.Decimal(10,2)
-  minimum_order    Decimal?  @db.Decimal(10,2)
-  maximum_discount Decimal?  @db.Decimal(10,2)
-  usage_limit      Int?
-  used_count       Int       @default(0)
-  expires_at       DateTime? @db.Timestamp(0)
-  is_active        Boolean   @default(true)
-  created_by       Int?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
-  updated_at       DateTime  @updatedAt @db.Timestamp(0)
-  orders           Order[]
-  redemptions      VoucherRedemption[]
+  id                    Int       @id @default(autoincrement())
+  code                  String    @unique @db.VarChar(255)
+  type                 String    @db.VarChar(50)
+  value                Decimal   @db.Decimal(10,2)
+  minimum_order        Decimal?  @db.Decimal(10,2)
+  minimum_quantity     Int?      @default(0)
+  maximum_discount     Decimal?  @db.Decimal(10,2)
+  starts_at            DateTime? @db.Timestamp(0)
+  expires_at           DateTime? @db.Timestamp(0)
+  usage_limit          Int?
+  used_count           Int       @default(0)
+  per_customer_limit   Int?      @default(0)
+  is_active            Boolean   @default(true)
+  new_customers_only   Boolean   @default(false)
+  applicable_items     String?   @db.Text
+  applicable_categories String?  @db.Text
+  created_by           Int?
+  created_at           DateTime  @default(now()) @db.Timestamp(0)
+  updated_at           DateTime  @updatedAt @db.Timestamp(0)
+  orders               Order[]
+  redemptions          VoucherRedemption[]
 
   @@map("vouchers")
   @@index([code])
   @@index([is_active])
   @@index([expires_at])
+  @@index([starts_at])
 }
 
 model VoucherRedemption {
@@ -406,6 +413,8 @@ model VoucherRedemption {
   voucher_id       Int
   voucher_code     String   @db.VarChar(255)
   order_id         String?  @db.VarChar(255)
+  customer_id      Int?
+  customer_phone   String?  @db.VarChar(255)
   discount_type    String   @db.VarChar(50)
   discount_amount  Decimal  @db.Decimal(10,2)
   subtotal         Decimal  @db.Decimal(10,2)
@@ -416,6 +425,8 @@ model VoucherRedemption {
   @@map("voucher_redemptions")
   @@index([voucher_id])
   @@index([order_id])
+  @@index([customer_id])
+  @@index([customer_phone])
 }
 
 model Ticket {

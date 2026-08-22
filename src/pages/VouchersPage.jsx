@@ -22,6 +22,7 @@ function formatDate(value) {
 function VouchersPage() {
   const [vouchers, setVouchers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [creatingVoucher, setCreatingVoucher] = useState(false);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [form, setForm] = useState({ type: 'percentage', value: '', minimumOrder: '', maximumDiscount: '', usageLimit: '', expiresAt: '', isActive: true });
@@ -56,6 +57,7 @@ function VouchersPage() {
 
   const createVoucher = async (event) => {
     event.preventDefault();
+    setCreatingVoucher(true);
     try {
       const res = await fetch('/api/vouchers', {
         method: 'POST',
@@ -79,6 +81,8 @@ function VouchersPage() {
       await loadVouchers();
     } catch (e) {
       error(e.message || 'Unable to create voucher');
+    } finally {
+      setCreatingVoucher(false);
     }
   };
 
@@ -178,7 +182,10 @@ function VouchersPage() {
                 <input type="checkbox" checked={form.isActive} onChange={(event) => setForm({ ...form, isActive: event.target.checked })} />
                 Active
               </label>
-              <button type="submit" className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">Create Voucher</button>
+              <button type="submit" disabled={creatingVoucher} className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-70">
+                {creatingVoucher ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-label="Creating voucher" /> : null}
+                Create Voucher
+              </button>
             </form>
           </div>
 

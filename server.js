@@ -23,6 +23,7 @@ import createAuthRouter from "./routes/auth.js";
 import { canAutoSendReplies, normalizeAutopilotMode, canUseAiReply } from './src/services/autopilotMode.js';
 import { detectHighRiskIntent, createHighRiskEscalationContext, evaluateIntentPipeline } from './utils/highRiskIntentDetector.js';
 import { listVouchers, createVoucher, updateVoucher, deleteVoucher, validateVoucher, redeemVoucher, getVoucherStats, prepareVoucherOrderPayload } from './utils/voucherStorage.js';
+import { normalizeVoucherCode, validateAndApplyVoucherTool, finalizeVoucherOrder, redeemVoucherForOrder } from './utils/voucherValidation.js';
 import { mergeConversationMessagesForDisplay } from './utils/conversationHistory.js';
 import { extractCsatRating } from './src/utils/csat.js';
 import { shouldReuseCustomerConversation } from './utils/customerWebChat.js';
@@ -3329,6 +3330,7 @@ app.put('/api/tables/:number', express.json(), async (req, res) => {
                     console.warn('PUT /api/tables/:number db error, returning fallback response:', err.message || err);
                     return res.json({ number, status, customerName: customerName || undefined, reservedUntil: reservedUntilValue ? reservedUntilValue.toISOString() : undefined, isBooking: !!isBooking });
                 }
+                io.emit('tables-updated', { number, status });
                 res.json({ number, status, customerName: customerName || undefined, reservedUntil: reservedUntilValue ? reservedUntilValue.toISOString() : undefined, isBooking: !!isBooking });
             }
         );
@@ -3540,6 +3542,7 @@ app.post('/api/menu/item', express.json(), (req, res) => {
                     if (uErr) return res.status(500).json({ error: 'db_error' });
                     upsertMenuStockRow(category, key, newAvailable, (stockErr) => {
                         if (stockErr) return res.status(500).json({ error: 'db_error' });
+                        io.emit('menu-updated', { category, key });
                         return res.json({ success: true });
                     });
                 });
@@ -3548,6 +3551,7 @@ app.post('/api/menu/item', express.json(), (req, res) => {
                     if (iErr) return res.status(500).json({ error: 'db_error' });
                     upsertMenuStockRow(category, key, avail, (stockErr) => {
                         if (stockErr) return res.status(500).json({ error: 'db_error' });
+                        io.emit('menu-updated', { category, key });
                         return res.json({ success: true });
                     });
                 });
@@ -3600,6 +3604,7 @@ app.post('/api/menu/bulk', express.json(), (req, res) => {
                     if (stockErrors.some(Boolean)) {
                         return res.status(500).json({ error: 'db_error' });
                     }
+                    io.emit('menu-updated', { bulk: true });
                     return res.json({ success: true });
                 }).catch(() => res.status(500).json({ error: 'db_error' }));
             });
@@ -3622,6 +3627,7 @@ app.post('/api/menu/bulk', express.json(), (req, res) => {
                     if (stockErrors.some(Boolean)) {
                         return res.status(500).json({ error: 'db_error' });
                     }
+                    io.emit('menu-updated', { bulk: true });
                     return res.json({ success: true });
                 }).catch(() => res.status(500).json({ error: 'db_error' }));
             });
@@ -3643,6 +3649,7 @@ app.delete('/api/menu/item/:category/:key', (req, res) => {
                 console.error('/api/menu/item delete db error', err);
                 return res.status(500).json({ error: 'db_error' });
             }
+            io.emit('menu-updated', { category, key, deleted: true });
             res.json({ success: true });
         });
     } catch (e) {
@@ -3689,6 +3696,7 @@ app.post('/api/menu/item/reduce-stock', express.json(), (req, res) => {
                     if (stockErr) {
                         console.error('/api/menu/item/reduce-stock stock error', stockErr);
                     }
+                    io.emit('menu-updated', { itemId: item.id, category: item.category, key: item.key_name });
                     res.json({ success: true, stock: updatedStock, item: { id: item.id, name: item.name, category: item.category, stock: updatedStock } });
                 });
             });
@@ -6455,7 +6463,7 @@ app.post('/api/tickets', upload.array('files'), (req, res, next) => {
     // multer will populate req.body (text fields) and req.files
     if (!req.files || req.files.length === 0) return next();
     try{
-        const { ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags } = req.body || {};
+        const { ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, client_ticket_id } = req.body || {};
         const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
         const tagsText = tags ? (Array.isArray(tags) ? JSON.stringify(tags) : tags) : null;
         const slaDueDate = req.body.sla_due ? new Date(req.body.sla_due) : computeSlaDue(assignee, ticket_type);
@@ -6473,7 +6481,7 @@ app.post('/api/tickets', upload.array('files'), (req, res, next) => {
                     return res.status(500).json({ error: 'Failed to save ticket' });
                 }
                 const ticketId = extractInsertId(result);
-                const ticket = { id: ticketId, ticket_type: ticket_type || null, subject, customer_name, customer_phone, assignee, priority, status: status || 'Open', content, tags: tagsText, attachments, sla_due: slaDueDate.toISOString(), created_at: new Date().toISOString(), branch_id: branchId > 0 ? branchId : null };
+                const ticket = { id: ticketId, client_ticket_id, ticket_type: ticket_type || null, subject, customer_name, customer_phone, assignee, priority, status: status || 'Open', content, tags: tagsText, attachments, sla_due: slaDueDate.toISOString(), created_at: new Date().toISOString(), branch_id: branchId > 0 ? branchId : null };
                 io.emit('ticketCreated', ticket);
                 res.json({ id: ticketId, success: true });
             }
@@ -6487,7 +6495,7 @@ app.post('/api/tickets', upload.array('files'), (req, res, next) => {
 // JSON handler for tickets (no files)
 app.post("/api/tickets", (req, res) => {
     // Accept richer ticket fields from the dashboard modal (JSON submission)
-    const { ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags } = req.body || {};
+    const { ticket_type, subject, customer_name, customer_phone, assignee, priority, status, content, tags, client_ticket_id } = req.body || {};
     const branchId = Number(req.branchId || req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
     const tagsText = Array.isArray(tags) ? JSON.stringify(tags) : (tags || null);
     const slaDueDate = req.body.sla_due ? new Date(req.body.sla_due) : computeSlaDue(assignee, ticket_type);
@@ -6506,6 +6514,7 @@ app.post("/api/tickets", (req, res) => {
             const ticketId = extractInsertId(result);
             const ticket = {
                 id: ticketId,
+                client_ticket_id,
                 ticket_type: ticket_type || null,
                 subject: subject || null,
                 customer_name: customer_name || null,
@@ -6959,17 +6968,67 @@ app.post('/api/refunds/:refundId/decision', isAuthenticated, async (req, res) =>
                 console.error('Refund decision update error:', err);
                 return res.status(500).json({ error: 'Unable to update refund' });
             }
-            if (mappedStatus === 'approved') {
-                db.query('SELECT order_id FROM refunds WHERE id = ?', [refundId], (selectErr, rows) => {
-                    if (!selectErr && rows && rows[0]) {
-                        const orderId = rows[0].order_id || rows[0].orderId;
-                        if (orderId) {
-                            db.query('UPDATE orders SET status = ? WHERE order_id = ? OR id = ?', ['refunded', String(orderId), Number(orderId)], () => {});
-                        }
-                    }
-                });
+            if (mappedStatus !== 'approved') {
+                return res.json({ success: true, message: `Refund marked ${mappedStatus}` });
             }
-            res.json({ success: true, message: `Refund marked ${mappedStatus}` });
+
+            const refundSelectSql = isPg
+                ? 'SELECT order_id AS "orderId" FROM refunds WHERE id = $1'
+                : 'SELECT order_id AS orderId FROM refunds WHERE id = ?';
+            db.query(refundSelectSql, [refundId], (selectErr, rows) => {
+                if (selectErr || !rows?.[0]?.orderId) {
+                    console.error('Refund order lookup error:', selectErr);
+                    return res.status(500).json({ error: 'Unable to update refunded order' });
+                }
+
+                const orderId = String(rows[0].orderId);
+                const numericOrderId = Number(orderId);
+                const hasNumericOrderId = Number.isInteger(numericOrderId);
+                const orderUpdateSql = isPg
+                    ? hasNumericOrderId
+                        ? 'UPDATE orders SET status = $1 WHERE order_id = $2 OR id = $3'
+                        : 'UPDATE orders SET status = $1 WHERE order_id = $2'
+                    : hasNumericOrderId
+                        ? 'UPDATE orders SET status = ? WHERE order_id = ? OR id = ?'
+                        : 'UPDATE orders SET status = ? WHERE order_id = ?';
+                const orderUpdateParams = hasNumericOrderId
+                    ? ['refunded', orderId, numericOrderId]
+                    : ['refunded', orderId];
+
+                db.query(orderUpdateSql, orderUpdateParams, (orderErr, result) => {
+                    if (orderErr || !result?.affectedRows) {
+                        console.error('Refunded order update error:', orderErr || `Order not found: ${orderId}`);
+                        return res.status(500).json({ error: 'Unable to update refunded order' });
+                    }
+
+                    const orderSelectSql = isPg
+                        ? hasNumericOrderId
+                            ? 'SELECT * FROM orders WHERE order_id = $1 OR id = $2 LIMIT 1'
+                            : 'SELECT * FROM orders WHERE order_id = $1 LIMIT 1'
+                        : hasNumericOrderId
+                            ? 'SELECT * FROM orders WHERE order_id = ? OR id = ? LIMIT 1'
+                            : 'SELECT * FROM orders WHERE order_id = ? LIMIT 1';
+                    const orderSelectParams = hasNumericOrderId ? [orderId, numericOrderId] : [orderId];
+                    db.query(orderSelectSql, orderSelectParams, (orderSelectErr, orderRows) => {
+                        if (orderSelectErr) {
+                            console.error('Updated refunded order lookup error:', orderSelectErr);
+                        }
+                        const updatedOrder = orderRows?.[0];
+                        if (updatedOrder) {
+                            io.emit('order-updated', {
+                                id: updatedOrder.id,
+                                orderId: updatedOrder.order_id,
+                                customerName: updatedOrder.customer_name,
+                                product: updatedOrder.product,
+                                amount: Number(updatedOrder.total_amount || updatedOrder.amount || 0),
+                                status: 'refunded',
+                                date: updatedOrder.order_date || updatedOrder.created_at || new Date().toISOString()
+                            });
+                        }
+                        return res.json({ success: true, message: `Refund marked ${mappedStatus}` });
+                    });
+                });
+            });
         });
     } catch (error) {
         console.error('POST /api/refunds/:refundId/decision error:', error);
@@ -7161,17 +7220,88 @@ app.delete('/api/vouchers/:id', isAuthenticated, async (req, res) => {
 
 app.post('/api/vouchers/validate', express.json(), async (req, res) => {
     try {
-        const { code, subtotal } = req.body || {};
-        if (!code) return res.status(400).json({ error: 'Voucher code is required.' });
-        const subtotalValue = Number(subtotal || 0);
-        const validation = validateVoucher(code, subtotalValue);
-        if (!validation.valid) return res.status(400).json(validation);
-        const redeemed = redeemVoucher(code, subtotalValue);
-        if (!redeemed.valid) return res.status(400).json(redeemed);
-        return res.json({ success: true, voucher: redeemed.voucher, pricing: redeemed.pricing, message: 'Voucher applied successfully.' });
+        const { code, subtotal, items, customer, order } = req.body || {};
+        const voucherCode = normalizeVoucherCode(code || '');
+        if (!voucherCode) return res.status(400).json({ error: 'Voucher code is required.' });
+
+        const currentOrder = order || {
+            subtotal: Number(subtotal || 0),
+            deliveryFee: Number(req.body?.deliveryFee || req.body?.delivery_fee || 0),
+            items: Array.isArray(items) ? items : []
+        };
+
+        const voucher = await prisma.voucher.findFirst({ where: { code: voucherCode } });
+        const validation = validateAndApplyVoucherTool({
+            voucherCode: voucherCode,
+            order: currentOrder,
+            customer: customer || {}
+        });
+
+        if (!validation.valid) {
+            return res.status(400).json({
+                valid: false,
+                voucherCode: voucherCode,
+                reason: validation.reason,
+                message: validation.message,
+                currentSubtotal: validation.currentSubtotal,
+                requiredMinimum: validation.requiredMinimum
+            });
+        }
+
+        return res.json({
+            valid: true,
+            voucherCode: validation.voucherCode,
+            voucherType: validation.voucherType,
+            discountValue: validation.discountValue,
+            discountAmount: validation.discountAmount,
+            subtotal: validation.subtotal,
+            deliveryFee: validation.deliveryFee,
+            totalBeforeDiscount: validation.totalBeforeDiscount,
+            totalAfterDiscount: validation.totalAfterDiscount,
+            message: validation.message
+        });
     } catch (error) {
         console.error('POST /api/vouchers/validate error', error);
         return res.status(500).json({ error: 'Unable to validate voucher' });
+    }
+});
+
+app.post('/api/vouchers/redeem', express.json(), async (req, res) => {
+    try {
+        const { code, order, customer } = req.body || {};
+        const voucherCode = normalizeVoucherCode(code || '');
+        if (!voucherCode) return res.status(400).json({ error: 'Voucher code is required.' });
+
+        const voucher = await prisma.voucher.findFirst({ where: { code: voucherCode } });
+        if (!voucher) {
+            return res.status(400).json({ valid: false, reason: 'VOUCHER_NOT_FOUND', message: 'I couldn’t find that voucher code. Please check the code and try again.' });
+        }
+
+        const validation = await finalizeVoucherOrder({ voucher, order, customer });
+        if (!validation.valid) {
+            return res.status(400).json({ valid: false, reason: validation.reason, message: validation.message });
+        }
+
+        const redeemed = await redeemVoucherForOrder({ voucher, order, customer });
+        if (!redeemed.valid) {
+            return res.status(400).json({ valid: false, reason: redeemed.reason, message: redeemed.message });
+        }
+
+        return res.json({
+            valid: true,
+            voucherCode: voucherCode,
+            voucherType: validation.voucherType,
+            discountAmount: validation.discountAmount,
+            subtotal: validation.subtotal,
+            deliveryFee: validation.deliveryFee,
+            totalBeforeDiscount: validation.totalBeforeDiscount,
+            totalAfterDiscount: validation.totalAfterDiscount,
+            message: validation.message,
+            redemption: redeemed.redemption
+        });
+    } catch (error) {
+        console.error('POST /api/vouchers/redeem error', error);
+        return res.status(500).json({ error: 'Unable to redeem voucher' });
     }
 });
 
