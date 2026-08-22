@@ -32,6 +32,7 @@ function TopBar({ onSidebarToggle }) {
     return now;
   });
   const [sessionTick, setSessionTick] = useState(0);
+  const [avatarVersion, setAvatarVersion] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
@@ -46,6 +47,7 @@ function TopBar({ onSidebarToggle }) {
   const userRef = useRef();
   const searchRef = useRef();
   const searchInputRef = useRef();
+  const lastAvatarUrlRef = useRef(null);
 
   // Initialize dark mode from localStorage and apply on mount
   useEffect(() => {

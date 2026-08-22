@@ -17,7 +17,12 @@ export class SignalingService {
   connect({ user, url } = {}) {
     if (this.socket) return this.socket;
     const targetUrl = url || this.socketUrl || window.location.origin;
-    this.socket = io(targetUrl, { transports: ['websocket', 'polling'], reconnection: true, reconnectionDelay: 600 });
+    this.socket = io(targetUrl, {
+      transports: ['polling', 'websocket'],
+      upgrade: true,
+      reconnection: true,
+      reconnectionDelay: 600
+    });
 
     this.socket.on('connect', () => {
       this.isConnected = true;

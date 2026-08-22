@@ -13,6 +13,7 @@
     "db:push": "npx prisma db push",
     "migrate": "prisma migrate dev --name init",
     "seed:users": "node scripts/seed-users.js",
+    "seed:menu-items": "node scripts/seed-menu-items.mjs",
     "migrate:users-from-mysql": "node scripts/migrate-users-from-mysql.js",
     "migrate:all-from-mysql": "node scripts/migrate-all-from-mysql.js"
   },

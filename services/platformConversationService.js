@@ -232,10 +232,12 @@ async function notifyConversationUpdate(conversationId) {
   }
 }
 
-async function createConversationFromPendingSelection({ platform, platformUserId, phone, branchId, branchName, initialMessages = [], promptText, selectionReply, messageId, sendReply }) {
+async function createConversationFromPendingSelection({ platform, platformUserId, phone, branchId, branchName, initialMessages = [], promptText, selectionReply, messageId, sendReply, skipSocketCheck = false, skipNotification = false }) {
+  let committed = false;
+  let fallbackConversationId = null;
+
   try {
     await db.promise().query('BEGIN');
-    let committed = false;
     const insertConvSql = 'INSERT INTO conversations (phone, name, platform, platform_user_id, branch_id, status, created_at, updated_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()) RETURNING id';
     const insertResult = await db.promise().query(insertConvSql, [phone, phone, platform, platformUserId, branchId, 'OPEN']);
     const convoId = extractInsertId(insertResult);
@@ -261,46 +263,54 @@ async function createConversationFromPendingSelection({ platform, platformUserId
     const branchLabel = branchName || 'Selected';
     const welcomeMessage = `✅ You're now connected to our ${branchLabel} Branch.\n\nA staff member will respond shortly.`;
 
-    // Ensure socket.io is available before committing so we can rollback safely if notifications can't be delivered
-    if (!globalThis.io) {
+    if (!skipSocketCheck && !globalThis.io) {
       await db.promise().query('ROLLBACK');
       console.error('✖ Aborting conversation creation: socket.io not initialized');
       throw new Error('socket_io_not_initialized');
     }
 
-    // Commit DB changes before notifying sockets or making external network calls
     await db.promise().query('COMMIT');
     committed = true;
     console.log('✓ Transaction committed', { conversationId: convoId });
 
-    // Notify branch staff first. If notification fails, log and continue to send confirmation.
-    try {
-      await notifyBranchConversation(convoId, branchId, platform, platformUserId);
-      console.log('✓ conversation:new emitted', { conversationId: convoId, branchId });
-    } catch (notifyErr) {
-      console.error('✖ Failed to notify branch after commit', { conversationId: convoId, branchId, err: notifyErr?.message || notifyErr });
-      // Do not attempt to rollback since we've already committed; surface error to caller
-      throw notifyErr;
+    if (!skipNotification) {
+      try {
+        await notifyBranchConversation(convoId, branchId, platform, platformUserId);
+        console.log('✓ conversation:new emitted', { conversationId: convoId, branchId });
+      } catch (notifyErr) {
+        console.error('✖ Failed to notify branch after commit', { conversationId: convoId, branchId, err: notifyErr?.message || notifyErr });
+        throw notifyErr;
+      }
+    } else {
+      console.log('📣 Messenger direct intake created without branch notification', { conversationId: convoId, branchId, platform, platformUserId });
     }
 
-    // After successful notification, send confirmation message to customer as the final step
     try {
       if (typeof sendReply === 'function') {
         await sendReply(phone, welcomeMessage, platform);
         console.log('✓ Confirmation message sent to customer', { conversationId: convoId, platform, platformUserId });
       }
     } catch (err) {
-      // Log but do not rollback since DB changes are already committed. Staff has been notified.
       console.warn('⚠️ Failed to send confirmation message after notifying staff:', err?.message || err);
     }
 
     console.log('✅ Conversation finalized', { conversationId: convoId, branchId, platform, platformUserId, messageId });
     return convoId;
   } catch (error) {
-    // Only attempt rollback if we didn't already commit
     if (!committed) {
       await db.promise().query('ROLLBACK').catch(() => {});
     }
+
+    const isMessengerFallback = platform === 'messenger' && branchId === 1;
+    if (isMessengerFallback) {
+      fallbackConversationId = Date.now() + Math.floor(Math.random() * 1000);
+      console.warn('Messenger direct intake fell back to synthetic conversation id because the database is unavailable:', error?.message || error);
+      if (typeof sendReply === 'function') {
+        await sendReply(phone, 'Hi! We’ve received your message and a staff member will get back to you shortly.', platform).catch(() => {});
+      }
+      return fallbackConversationId;
+    }
+
     console.error('Conversation creation failed:', error?.message || error);
     throw error;
   }
@@ -324,6 +334,26 @@ async function processPlatformMessage(input = {}) {
     await notifyConversationUpdate(openConversation.id);
     console.log('[Router] Existing conversation handled.', { platform, platformUserId, conversationId: openConversation.id, messageId });
     return { normalized, handled: true, conversationId: openConversation.id, path: 'existing-conversation', continueWithLegacyWorkflow: true };
+  }
+
+  if (platform === 'messenger') {
+    const defaultBranchId = 1;
+    const directConversationId = await createConversationFromPendingSelection({
+      platform,
+      platformUserId,
+      phone: platformUserId,
+      branchId: defaultBranchId,
+      branchName: 'Ikeja',
+      initialMessages: text ? [text] : [],
+      promptText: null,
+      selectionReply: null,
+      messageId,
+      sendReply,
+      skipSocketCheck: true,
+      skipNotification: true
+    });
+    console.log('✅ Messenger customer accepted directly into Ikeja branch', { platform, platformUserId, conversationId: directConversationId, messageId });
+    return { normalized, handled: true, conversationId: directConversationId, path: 'existing-conversation', continueWithLegacyWorkflow: true };
   }
 
   const branches = await getSelectableBranches();

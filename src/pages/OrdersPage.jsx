@@ -602,16 +602,6 @@ function OrdersPage() {
     const tableNumber = draft.tableNumber || null;
     let occupiedTableNumber = null;
     try {
-      if (!draft.riderId) {
-        warning('Assign a delivery rider before creating the order.');
-        return;
-      }
-
-      if (!draft.riderId) {
-        warning('Assign a delivery rider before creating the order.');
-        return;
-      }
-
       if (tableNumber) {
         const tnum = Number(tableNumber);
         const table = tables.find((t) => Number(t.number) === tnum);
@@ -816,32 +806,33 @@ function OrdersPage() {
         });
         success(`Table ${tableDialog.table.number} reserved.`);
       } else if (tableDialog.mode === 'book') {
-        if (!tableForm.guestCount) {
-          throw new Error('Please enter a guest count.');
+        const reservationTime = tableForm.reservationDateTime ? new Date(tableForm.reservationDateTime).toISOString() : null;
+        if (!tableForm.guestCount || !tableForm.reservationDateTime || !reservationTime || Number.isNaN(new Date(reservationTime).getTime())) {
+          throw new Error('Please enter a valid reservation time and guest count.');
         }
         updateTableLocally(tableDialog.table.number, {
-          status: 'occupied',
+          status: 'reserved',
           customerName: tableForm.customerName.trim() || 'Guest',
           phoneNumber: tableForm.phoneNumber || '',
           guestCount: Number(tableForm.guestCount) || 1,
           notes: tableForm.notes.trim(),
           assignedStaff: tableForm.assignedStaff.trim(),
-          reservedUntil: null,
+          reservedUntil: reservationTime,
           isBooking: true,
-          sessionStartedAt: new Date().toISOString()
+          sessionStartedAt: null
         });
         await updateTableState(tableDialog.table.number, {
-          status: 'occupied',
+          status: 'reserved',
           customerName: tableForm.customerName.trim() || 'Guest',
           phoneNumber: tableForm.phoneNumber || '',
           guestCount: Number(tableForm.guestCount) || 1,
           notes: tableForm.notes.trim(),
           assignedStaff: tableForm.assignedStaff.trim(),
-          reservedUntil: null,
+          reservedUntil: reservationTime,
           isBooking: true,
-          sessionStartedAt: new Date().toISOString()
+          sessionStartedAt: null
         });
-        success(`Table ${tableDialog.table.number} booked.`);
+        success(`Table ${tableDialog.table.number} booked for ${new Date(reservationTime).toLocaleString()}.`);
       } else if (tableDialog.mode === 'status') {
         updateTableLocally(tableDialog.table.number, { status: tableForm.status, reservedUntil: null, isBooking: false, customerName: tableForm.customerName || null });
         await updateTableState(tableDialog.table.number, {
@@ -1517,10 +1508,9 @@ function OrdersPage() {
                         riderName: rider ? rider.name : ''
                       }));
                     }}
-                    required
                     className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                   >
-                    <option value="" disabled>-- Select a delivery rider --</option>
+                    <option value="">-- No rider assigned --</option>
                     {riders.map((rider) => (
                       <option key={rider.id} value={rider.id} disabled={rider.availability === 'On Delivery' && !rider.allowMultipleActiveDeliveries}>
                         {rider.name} · {rider.availability}

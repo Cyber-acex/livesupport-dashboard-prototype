@@ -8,17 +8,13 @@ import KnowledgePage from './pages/KnowledgePage';
 import PolicyPage from './pages/PolicyPage';
 import SettingsPage from './pages/SettingsPage';
 import InboxPage from './pages/InboxPage';
-import WhatsAppInboxPage from './pages/WhatsAppInboxPage';
-import MessengerInboxPage from './pages/MessengerInboxPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import VouchersPage from './pages/VouchersPage';
 import RefundsPage from './pages/RefundsPage';
 import LoginPage from './pages/Login';
 import CustomerWebChatPage from './pages/CustomerWebChatPage';
-import CustomerChatOnboardingPage from './pages/CustomerChatOnboardingPage';import StaffWebChatPage from './pages/StaffWebChatPage';import FeedbackPage from './pages/FeedbackPage';
+import CustomerChatOnboardingPage from './pages/CustomerChatOnboardingPage';import FeedbackPage from './pages/FeedbackPage';
 import NotificationBanner from './components/NotificationBanner';
-import VoiceCommunicationPanel from './components/VoiceCommunicationPanel';
-import VoiceCommunicationLauncher from './components/VoiceCommunicationLauncher';
 import IncomingCallModal from './components/IncomingCallModal';
 import LiveCallHeader from './components/LiveCallHeader';
 import { useVoiceCommunication } from './contexts/VoiceCommunicationContext';
@@ -56,8 +52,6 @@ function App() {
     <>
       {!isLoginRoute && !isFeedbackRoute && <NotificationBanner />}
       {!isLoginRoute && !isFeedbackRoute && <>
-        <VoiceCommunicationLauncher />
-        <VoiceCommunicationPanel />
         <IncomingCallModal
           open={Boolean(incomingCall)}
           caller={incomingCall?.caller || incomingCall?.fromUser || null}
@@ -76,10 +70,10 @@ function App() {
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/knowledge/policies" element={<PolicyPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/inbox" element={<WhatsAppInboxPage />} />
-        <Route path="/inbox/messenger" element={<MessengerInboxPage />} />
-        <Route path="/inbox/chat" element={<StaffWebChatPage />} />
-        <Route path="/inbox/chat/:conversationId" element={<StaffWebChatPage />} />
+        <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/inbox/messenger" element={<Navigate to="/inbox" replace />} />
+        <Route path="/inbox/chat" element={<Navigate to="/inbox" replace />} />
+        <Route path="/inbox/chat/:conversationId" element={<Navigate to="/inbox" replace />} />
         <Route path="/customer-chat" element={<CustomerWebChatPage />} />
         <Route path="/customer-chat/onboarding" element={<CustomerChatOnboardingPage />} />
         <Route path="/rate/:token" element={<FeedbackPage />} />

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config as dbConfig, prisma } from './db/database.js';
 import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
-import { detectConversationIntent, shouldInjectBusinessContext, buildPromptContext, createGreetingReply } from './utils/aiConversationFlow.js';
+import { detectConversationIntent, shouldInjectBusinessContext, buildPromptContext, createGreetingReply, isAddressReplyForPendingQuestion } from './utils/aiConversationFlow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -477,8 +477,11 @@ function isReservationInquiry(message) {
     return reservationKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
-function isModificationRequest(message) {
+function isModificationRequest(message, conversationState = null) {
     if (!message) return false;
+    if (isAddressReplyForPendingQuestion(message, conversationState)) {
+        return false;
+    }
     const lowerMessage = message.toLowerCase();
     const modificationKeywords = [
         'remove',
@@ -492,7 +495,12 @@ function isModificationRequest(message) {
         'add more',
         'extra chicken',
         'add chicken',
-        'no onions'
+        'no onions',
+        'actually make that',
+        'make that',
+        'change it to',
+        'change my order',
+        'update my order'
     ];
     return modificationKeywords.some(keyword => lowerMessage.includes(keyword));
 }
@@ -1539,7 +1547,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
     try {
         console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", branchId, "state:", conversationState?.workflowState || 'none');
 
-        const intent = detectConversationIntent(message);
+        const intent = detectConversationIntent(message, conversationState);
 
         if (intent === 'Greeting') {
             return createGreetingReply();
@@ -1602,7 +1610,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             return "I'm sorry something was missing from your order. I can arrange a quick replacement for the missing item or offer a voucher/credit if you prefer. Please tell me what item was missing so I can resolve it right away.";
         }
 
-        if (isModificationRequest(message)) {
+        if (isModificationRequest(message, conversationState)) {
             return "I can help update your order if it's still within the allowed modification window. Please provide your order ID and the exact change you'd like, such as removing onions or adding extra chicken.";
         }
 
@@ -1836,7 +1844,8 @@ Never invent compensation, refund amounts, or replacement guarantees. Only offer
             intent,
             message,
             conversationHistory,
-            businessContext
+            businessContext,
+            conversationState
         });
         userPrompt += `${kbContext}${menuContext}${persistedWorkflowContext}`;
 

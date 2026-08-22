@@ -68,7 +68,8 @@ test('routes a first WhatsApp message through the same pending branch workflow',
   assert.equal(result.conversationId, undefined);
 });
 
-test('routes a first Messenger message through the same pending branch workflow', async () => {
+test('routes a first Messenger message directly into the Ikeja branch without prompting for selection', async () => {
+  globalThis.io = { to: () => ({ emit: () => {} }) };
   const messengerUserId = `messenger-guest-isolated-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const result = await processPlatformMessage({
     platform: 'messenger',
@@ -80,8 +81,9 @@ test('routes a first Messenger message through the same pending branch workflow'
   });
 
   assert.equal(result.handled, true);
-  assert.equal(result.path, 'pending-session-created');
-  assert.equal(result.conversationId, undefined);
+  assert.equal(result.path, 'existing-conversation');
+  assert.ok(result.conversationId > 0);
+  delete globalThis.io;
 });
 
 test('falls back to direct message handling for Messenger when no active branches are available', () => {

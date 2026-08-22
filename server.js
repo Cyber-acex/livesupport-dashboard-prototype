@@ -35,6 +35,7 @@ import { joinDeliveryRooms, leaveDeliveryRooms, publishDeliveryUpdates } from '.
 import { validateEnv } from './utils/validateEnv.js';
 import { buildDeliveryFromOrder, shouldCreateDeliveryForOrder } from './utils/deliveryOrderSync.js';
 import { extractInsertId } from './utils/dbInsert.js';
+import { normalizeOrderRiderId } from './utils/orderRider.js';
 import { routeIncomingPlatformMessage } from './services/platformConversationService.js';
 import { ensureNotificationsTable, getNotificationsForUser, markNotificationRead, markAllNotificationsRead, dismissNotification, createNotification, createBranchNotification } from './services/notificationService.js';
 const app = express();
@@ -7473,14 +7474,7 @@ app.post('/api/orders', async (req, res) => {
         return res.status(400).json({ error: 'Missing required field: customerName' });
     }
 
-    const riderIdValue = req.body.riderId;
-    const riderIdNumber = riderIdValue !== undefined && riderIdValue !== null && String(riderIdValue).trim() !== ''
-        ? Number(riderIdValue)
-        : null;
-
-    if (riderIdNumber === null) {
-        return res.status(400).json({ error: 'Missing required field: riderId. Assign a rider before creating the order.' });
-    }
+    const riderIdNumber = normalizeOrderRiderId(req.body.riderId);
 
     const orderPayload = {
         customerName,

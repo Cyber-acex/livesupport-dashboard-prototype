@@ -22,12 +22,7 @@ const menuItems = [
   {
     to: '/inbox',
     label: 'Inbox',
-    icon: <path d="M4 6h16v12H4zM4 6l8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />,
-    children: [
-      { to: '/inbox', label: 'Whatsapp' },
-      { to: '/inbox/messenger', label: 'Messenger' },
-      { to: '/inbox/chat', label: 'Web chat' }
-    ]
+    icon: <path d="M4 6h16v12H4zM4 6l8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
   },
   { to: '/vouchers', label: 'Vouchers', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
   { to: '/refunds', label: 'Refunds', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -72,15 +67,8 @@ function Sidebar() {
     if (to === '/orders') {
       return location.pathname === '/orders' || location.pathname.startsWith('/orders/');
     }
-    // Special handling for inbox routes to avoid overlap
     if (to === '/inbox') {
-      return location.pathname === '/inbox' || (location.pathname.startsWith('/inbox/') && !location.pathname.startsWith('/inbox/chat') && !location.pathname.startsWith('/inbox/messenger'));
-    }
-    if (to === '/inbox/chat') {
-      return location.pathname === '/inbox/chat' || location.pathname.startsWith('/inbox/chat/');
-    }
-    if (to === '/inbox/messenger') {
-      return location.pathname === '/inbox/messenger' || location.pathname.startsWith('/inbox/messenger/');
+      return location.pathname === '/inbox' || location.pathname.startsWith('/inbox/');
     }
     return location.pathname === to || location.pathname.startsWith(`${to}/`);
   };

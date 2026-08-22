@@ -21,12 +21,31 @@ function formatDate(value) {
   return formatInboxTimestamp(value);
 }
 
+function getPlatformDetails(platform) {
+  const normalized = String(platform || '').trim().toLowerCase();
+  if (normalized === 'messenger' || normalized === 'facebook') {
+    return { label: 'Messenger', className: 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300' };
+  }
+  if (normalized === 'web' || normalized === 'webchat' || normalized === 'chat') {
+    return { label: 'Webchat', className: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' };
+  }
+  if (normalized === 'whatsapp') {
+    return { label: 'WhatsApp', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' };
+  }
+  return { label: platform || 'Chat', className: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' };
+}
+
 function InboxPage({ defaultPlatform = null }) {
   const platformFilter = String(defaultPlatform || '').trim().toLowerCase() || null;
   const isMessenger = platformFilter === 'messenger';
-  const platformLabel = isMessenger ? 'Messenger' : 'WhatsApp';
-  const platformHeroTitle = isMessenger ? 'Messenger inbox workspace' : 'WhatsApp inbox workspace';
-  const platformHeroDescription = isMessenger ? 'Manage Facebook Messenger customer conversations.' : 'Stay ahead of every WhatsApp customer conversation.';
+  const isUnifiedInbox = !platformFilter;
+  const platformLabel = isUnifiedInbox ? 'all' : isMessenger ? 'Messenger' : 'WhatsApp';
+  const platformHeroTitle = isUnifiedInbox ? 'Unified inbox workspace' : isMessenger ? 'Messenger inbox workspace' : 'WhatsApp inbox workspace';
+  const platformHeroDescription = isUnifiedInbox
+    ? 'Manage every WhatsApp, Messenger, and Webchat conversation in one place.'
+    : isMessenger
+      ? 'Manage Facebook Messenger customer conversations.'
+      : 'Stay ahead of every WhatsApp customer conversation.';
   const palette = isMessenger
     ? {
         shell: 'from-sky-600 via-blue-600 to-indigo-600',
@@ -983,6 +1002,7 @@ function InboxPage({ defaultPlatform = null }) {
   const conversationRows = filteredConversations.map((conversation) => {
     const isActive = activeConversation?.id === conversation.id;
     const initials = (conversation.name || conversation.phone || 'C').charAt(0).toUpperCase();
+    const platformDetails = getPlatformDetails(conversation.platform);
 
     return (
       <div
@@ -1015,8 +1035,8 @@ function InboxPage({ defaultPlatform = null }) {
                 ) : null}
               </div>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                  {conversation.platform || 'Chat'}
+                <span className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${platformDetails.className}`}>
+                  {platformDetails.label}
                 </span>
                 <span>{formatDate(conversation.last_message_at || conversation.updated_at || conversation.created_at)}</span>
               </div>
@@ -1208,6 +1228,9 @@ function InboxPage({ defaultPlatform = null }) {
                               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                                 {activeConversation.name || activeConversation.phone || 'Conversation'}
                               </h2>
+                              <span className={`rounded-md px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${getPlatformDetails(activeConversation.platform).className}`}>
+                                {getPlatformDetails(activeConversation.platform).label}
+                              </span>
                               <StatusBadge status={activeConversationStatus.label} type={activeConversationStatus.type} />
                             </div>
                             <p className="mt-1 flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
@@ -1269,7 +1292,7 @@ function InboxPage({ defaultPlatform = null }) {
                       </div>
 
                       <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
-                        <div ref={messagesViewportRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                        <div ref={messagesViewportRef} className="h-[520px] flex-none overflow-y-scroll overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
                           <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
                             {messagesLoading ? (
                               <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">

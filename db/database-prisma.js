@@ -46,6 +46,14 @@ function convertSqlPlaceholders(sql) {
   return converted;
 }
 
+const isRestrictedPrismaDataPlatform = typeof process.env.DATABASE_URL === 'string'
+  && /db\.prisma\.io/i.test(process.env.DATABASE_URL);
+
+function isPlanLimitError(error) {
+  const message = error?.message || '';
+  return /planLimitReached|account has restrictions|Failed to identify your database/i.test(message);
+}
+
 const db = {
   query(sql, params, callback) {
     if (typeof params === 'function') {
@@ -101,6 +109,11 @@ const db = {
 };
 
 async function syncPostgresSerialSequences() {
+  if (isRestrictedPrismaDataPlatform) {
+    console.warn('Skipping Postgres serial sequence sync: DATABASE_URL points to a restricted Prisma Data Platform account. The app can still run in limited mode.');
+    return;
+  }
+
   const tables = [
     'conversations',
     'messages',
@@ -124,6 +137,10 @@ async function syncPostgresSerialSequences() {
       const quotedTable = '"' + table.replace(/"/g, '""') + '"';
       await pool.query(`SELECT setval($1, COALESCE(MAX(id), 1), COALESCE(MAX(id), 0) > 0) FROM ${quotedTable}`, [seqName]);
     } catch (sequenceError) {
+      if (isPlanLimitError(sequenceError)) {
+        console.warn('Database metadata is restricted by the current Prisma account plan; continuing without serial sequence sync.');
+        return;
+      }
       console.warn(`Warning: could not sync serial sequence for table ${table}:`, sequenceError.message);
     }
   }
@@ -139,6 +156,11 @@ async function connectDatabase(callback) {
     console.log('✅ Prisma connection is ready');
     if (callback) callback();
   } catch (error) {
+    if (isPlanLimitError(error)) {
+      console.warn('Prisma account is restricted by the current plan, but the app can continue in limited mode.');
+      if (callback) callback();
+      return;
+    }
     console.error('❌ Prisma connection error:', error.message);
     if (callback) callback(error);
   }
