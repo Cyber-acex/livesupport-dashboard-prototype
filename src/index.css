@@ -187,21 +187,21 @@ body {
 /* 1. Firefox styles */
 :root {
   color-scheme: light;
-  --scrollbar-track: rgba(15, 23, 42, 0.12);
-  --scrollbar-thumb: linear-gradient(180deg, rgba(251, 146, 60, 0.96) 0%, rgba(249, 115, 22, 0.9) 55%, rgba(234, 88, 12, 0.9) 100%);
-  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(253, 186, 116, 0.98) 0%, rgba(251, 146, 60, 0.95) 55%, rgba(249, 115, 22, 0.9) 100%);
-  --scrollbar-thumb-active: linear-gradient(180deg, rgba(249, 115, 22, 0.95) 0%, rgba(234, 88, 12, 0.92) 100%);
-  --scrollbar-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 4px 12px rgba(15, 23, 42, 0.16);
+  --scrollbar-track: rgba(148, 163, 184, 0.08);
+  --scrollbar-thumb: linear-gradient(180deg, rgba(148, 163, 184, 0.88) 0%, rgba(100, 116, 139, 0.82) 100%);
+  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(99, 102, 241, 0.9) 0%, rgba(59, 130, 246, 0.82) 100%);
+  --scrollbar-thumb-active: linear-gradient(180deg, rgba(79, 70, 229, 0.96) 0%, rgba(14, 165, 233, 0.9) 100%);
+  --scrollbar-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22), 0 4px 12px rgba(15, 23, 42, 0.08);
 }
 
 body.dark,
 .dark {
   color-scheme: dark;
-  --scrollbar-track: rgba(148, 163, 184, 0.16);
-  --scrollbar-thumb: linear-gradient(180deg, rgba(251, 146, 60, 0.95) 0%, rgba(249, 115, 22, 0.9) 55%, rgba(234, 88, 12, 0.9) 100%);
-  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(253, 186, 116, 0.98) 0%, rgba(251, 146, 60, 0.95) 55%, rgba(249, 115, 22, 0.9) 100%);
-  --scrollbar-thumb-active: linear-gradient(180deg, rgba(249, 115, 22, 0.95) 0%, rgba(234, 88, 12, 0.92) 100%);
-  --scrollbar-shadow: 0 0 0 1px rgba(248, 250, 252, 0.16), 0 6px 16px rgba(2, 6, 23, 0.35);
+  --scrollbar-track: rgba(148, 163, 184, 0.08);
+  --scrollbar-thumb: linear-gradient(180deg, rgba(148, 163, 184, 0.72) 0%, rgba(100, 116, 139, 0.62) 100%);
+  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(129, 140, 248, 0.95) 0%, rgba(59, 130, 246, 0.8) 100%);
+  --scrollbar-thumb-active: linear-gradient(180deg, rgba(99, 102, 241, 0.98) 0%, rgba(56, 189, 248, 0.88) 100%);
+  --scrollbar-shadow: 0 0 0 1px rgba(15, 23, 42, 0.2), 0 5px 14px rgba(15, 23, 42, 0.2);
 }
 
 /* 2. WebKit scrollbar */
@@ -218,17 +218,17 @@ html::-webkit-scrollbar,
 body::-webkit-scrollbar,
 #root::-webkit-scrollbar,
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 html::-webkit-scrollbar-track,
 body::-webkit-scrollbar-track,
 #root::-webkit-scrollbar-track,
 *::-webkit-scrollbar-track {
-  background: var(--scrollbar-track);
+  background: transparent;
   border-radius: 999px;
-  margin: 3px 0;
+  margin: 0;
 }
 
 /* 4. Thumb */
@@ -238,7 +238,7 @@ body::-webkit-scrollbar-thumb,
 *::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: var(--scrollbar-shadow);
   background-clip: padding-box;
   transition: background 180ms ease, transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
@@ -250,8 +250,8 @@ body::-webkit-scrollbar-thumb:hover,
 #root::-webkit-scrollbar-thumb:hover,
 *::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
-  transform: scaleX(1.12);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 4px 14px rgba(249, 115, 22, 0.24);
+  transform: scaleX(1.18);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 12px rgba(99, 102, 241, 0.18);
 }
 
 /* 6. Active */
@@ -260,6 +260,7 @@ body::-webkit-scrollbar-thumb:active,
 #root::-webkit-scrollbar-thumb:active,
 *::-webkit-scrollbar-thumb:active {
   background: var(--scrollbar-thumb-active);
+  transform: scaleX(1.14);
 }
 
 .leaflet-container {
@@ -314,8 +315,8 @@ body::-webkit-scrollbar-thumb:active,
 
 *::-webkit-scrollbar-thumb:active {
   background: var(--scrollbar-thumb-active);
-  transform: scaleX(1.08);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.2);
+  transform: scaleX(1.14);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
 /* 7. Corner */
@@ -332,27 +333,27 @@ body::-webkit-scrollbar-corner,
   body::-webkit-scrollbar,
   #root::-webkit-scrollbar,
   *::-webkit-scrollbar {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
   }
 }
 
 .custom-scrollbar,
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
   scrollbar-gutter: stable;
 }
 
 .custom-scrollbar::-webkit-scrollbar,
 .scrollbar-thin::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track,
 .scrollbar-thin::-webkit-scrollbar-track {
-  background: var(--scrollbar-track);
+  background: transparent;
   border-radius: 999px;
 }
 
@@ -360,7 +361,7 @@ body::-webkit-scrollbar-corner,
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: var(--scrollbar-shadow);
   background-clip: padding-box;
   transition: background 180ms ease, transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
@@ -368,7 +369,7 @@ body::-webkit-scrollbar-corner,
 
 .dark .custom-scrollbar,
 .dark .scrollbar-thin {
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .dark .custom-scrollbar::-webkit-scrollbar-thumb,

@@ -99,3 +99,29 @@ test('explicit workflow transitions keep allergy, pickup, payment, and order-cre
   assert.equal(orderCreated.draftOrder.orderId, 'ORD-123');
   assert.ok(ORDER_WORKFLOW_STATES.includes('Waiting for Allergy Confirmation'));
 });
+
+test('new cart updates clear stale order IDs so the next order gets a fresh ID', () => {
+  const previousOrder = createDefaultConversationSession({
+    conversationId: 202,
+    sessionId: 'session-202',
+    draftOrder: {
+      items: [{ name: 'BBQ Chicken', quantity: 1 }],
+      orderId: 'ORD-OLD-100',
+      total: 12.5,
+      status: 'confirmed'
+    }
+  });
+
+  const nextDraft = mergeConversationState(previousOrder, {
+    workflowState: 'Building Order',
+    draftOrder: {
+      items: [{ name: 'Grilled Chicken Steak', quantity: 2 }],
+      total: 26.0,
+      paymentMethod: 'card'
+    }
+  });
+
+  assert.equal(nextDraft.draftOrder.orderId, null);
+  assert.equal(nextDraft.workflowState, 'Building Order');
+  assert.equal(nextDraft.draftOrder.items[0].name, 'Grilled Chicken Steak');
+});

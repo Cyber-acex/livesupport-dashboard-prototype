@@ -6,6 +6,85 @@ function normalizeBranchSelectionReply(value) {
     .replace(/[^0-9]/g, '');
 }
 
+function normalizeBranchId(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return null;
+  return numericValue;
+}
+
+function getBranchNameById(branchId, branches = []) {
+  const normalizedBranchId = normalizeBranchId(branchId);
+  if (normalizedBranchId == null) return null;
+
+  const branchFromList = Array.isArray(branches)
+    ? branches.find((branch) => normalizeBranchId(branch?.id ?? branch?.branch_id) === normalizedBranchId)
+    : null;
+
+  if (branchFromList && typeof branchFromList.name === 'string' && branchFromList.name.trim()) {
+    return branchFromList.name.trim();
+  }
+
+  const fallbackMap = {
+    1: 'Ikeja',
+    2: 'Lekki',
+    3: 'Victoria Island'
+  };
+  return fallbackMap[normalizedBranchId] || null;
+}
+
+function getActiveBranchContext({ branchId = null, conversationState = null, message = '', branches = [] } = {}) {
+  const stateBranchId = normalizeBranchId(conversationState?.branchId ?? conversationState?.selectedBranchId ?? null);
+  const selectedBranchId = normalizeBranchId(branchId ?? stateBranchId ?? null);
+  const explicitChangeRequest = isExplicitBranchChangeRequest(message);
+
+  if (selectedBranchId != null) {
+    return {
+      branchId: selectedBranchId,
+      branchName: getBranchNameById(selectedBranchId, branches) || 'Selected branch',
+      hasSelectedBranch: true,
+      isExplicitChangeRequest: explicitChangeRequest
+    };
+  }
+
+  return {
+    branchId: null,
+    branchName: null,
+    hasSelectedBranch: false,
+    isExplicitChangeRequest: explicitChangeRequest
+  };
+}
+
+function shouldPromptForBranchSelection({ branchId = null, conversationState = null, message = '', branches = [] } = {}) {
+  const activeBranch = getActiveBranchContext({ branchId, conversationState, message, branches });
+  if (activeBranch.hasSelectedBranch) {
+    return false;
+  }
+
+  return true;
+}
+
+function isExplicitBranchChangeRequest(message = '') {
+  const text = String(message || '').toLowerCase();
+  if (!text) return false;
+
+  const branchChangePatterns = [
+    /change branch/i,
+    /switch branch/i,
+    /switch to .*branch/i,
+    /different branch/i,
+    /want to change branches/i,
+    /change to .*ikeja|change to .*lekki|change to .*victoria/i,
+    /i want to switch to/i,
+    /please use .*branch/i,
+    /use .*branch instead/i,
+    /branch change/i,
+    /change my branch/i
+  ];
+
+  return branchChangePatterns.some((pattern) => pattern.test(text));
+}
+
 function normalizeSelectableBranches(branches = []) {
   if (!Array.isArray(branches)) return [];
 
@@ -81,4 +160,13 @@ function resolveBranchSelection(reply, branches = []) {
   return branch;
 }
 
-export { normalizeBranchSelectionReply, buildBranchSelectionPrompt, resolveBranchSelection };
+export {
+  normalizeBranchSelectionReply,
+  buildBranchSelectionPrompt,
+  resolveBranchSelection,
+  getBranchNameById,
+  getActiveBranchContext,
+  shouldPromptForBranchSelection,
+  isExplicitBranchChangeRequest,
+  normalizeBranchId
+};

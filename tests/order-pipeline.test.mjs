@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { shouldAskOrderConfirmation } from '../replies.js';
 import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from '../utils/orderPipeline.js';
 
 test('resolveMenuItemMatches flags unavailable items and suggests alternatives', () => {
@@ -36,6 +37,7 @@ test('buildOrderConfirmationMessage includes the backend confirmation details', 
   const message = buildOrderConfirmationMessage({
     orderId: 'ORD-123',
     customerName: 'Ada',
+    customerId: '234709850849',
     lineItems: [{ name: 'Margherita', quantity: 2, unitPrice: 8.99, lineTotal: 17.98 }],
     pricing: { subtotal: 17.98, tax: 1.44, deliveryFee: 3.5, discountAmount: 0, finalTotal: 22.92 },
     estimatedPreparationTime: '25 mins',
@@ -44,7 +46,23 @@ test('buildOrderConfirmationMessage includes the backend confirmation details', 
   });
 
   assert.match(message, /Order ID: ORD-123/);
-  assert.match(message, /Customer: Ada/);
+  assert.match(message, /Customer: 234709850849/);
+  assert.match(message, /Ordered items:/);
+  assert.match(message, /· Margherita x2 @ \$8.99 = \$17.98/);
   assert.match(message, /Grand total: \$22.92/);
   assert.match(message, /Status: Confirmed/);
+});
+
+test('strict order confirmation only fires after the order is complete and ready', () => {
+  assert.equal(shouldAskOrderConfirmation('3 BBQ Chicken please', {
+    workflowState: 'Building Order',
+    pendingQuestions: ['What delivery address should I use?'],
+    draftOrder: { items: [{ name: 'BBQ Chicken', quantity: 3 }] }
+  }), false);
+
+  assert.equal(shouldAskOrderConfirmation('No, that’s all', {
+    workflowState: 'Ready to Create Order',
+    pendingQuestions: [],
+    draftOrder: { items: [{ name: 'BBQ Chicken', quantity: 3 }] }
+  }), true);
 });

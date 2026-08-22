@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { Activity, BarChart3, BookOpen, ChevronDown, ChevronsLeft, ChevronsRight, CircleDollarSign, ClipboardList, Home, Inbox, LayoutGrid, MoreHorizontal, Settings, Ticket, WalletCards, X } from 'lucide-react';
 import { useSidebar } from '../contexts/SidebarContext';
 import { getSettings } from '../services/settingsService';
+import { getStoredAvatarUrl } from '../utils/avatarUpload';
 
 const menuItems = [
-  { to: '/dashboard', label: 'Dashboard', icon: <path d="M4 13.5 12 5l8 8.5V20a1 1 0 0 1-1 1h-4v-5H9v5H5a1 1 0 0 1-1-1v-6.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
-  { to: '/tickets', label: 'Tickets', icon: <path d="M5 7h14M5 12h14M5 17h9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
-  { to: '/analytics', label: 'Analytics', icon: <path d="M5 19V10m7 9V5m7 14v-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
-  { to: '/knowledge', label: 'Knowledge Base', icon: <path d="M7 4.5h8a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2Zm0 3h8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
+  { to: '/dashboard', label: 'Dashboard', icon: Home },
+  { to: '/tickets', label: 'Tickets', icon: Ticket },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
   {
     to: '/orders',
     label: 'Orders',
-    icon: <path d="M6 5h12l-1 7H7L6 5Zm1 7 1 7h8l1-7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />,
+    icon: ClipboardList,
     children: [
       { to: '/orders', label: 'Overview' },
       { to: '/orders/menu', label: 'Menu' },
@@ -22,7 +24,7 @@ const menuItems = [
   {
     to: '/inbox',
     label: 'Inbox',
-    icon: <path d="M4 6h16v12H4zM4 6l8 6 8-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    icon: Inbox
   },
   { to: '/vouchers', label: 'Vouchers', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
   { to: '/refunds', label: 'Refunds', icon: <path d="M4 7h16v10H4zM7 10h10M7 14h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /> },
@@ -30,9 +32,11 @@ const menuItems = [
 ];
 
 function Sidebar() {
-  const { sidebarToggle, closeSidebar } = useSidebar();
+  const { sidebarToggle, toggleSidebar, closeSidebar } = useSidebar();
   const location = useLocation();
   const [isHovered, setIsHovered] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState({ name: 'Staff', email: 'support@averon.ai', avatar_url: null });
   
   const [layout, setLayout] = useState(() => {
     const currentSettings = getSettings();
@@ -61,6 +65,28 @@ function Sidebar() {
     };
   }, []);
 
+  useEffect(() => {
+    const loadCurrentUser = async () => {
+      const storedName = window.localStorage.getItem('displayName');
+      const storedEmail = window.localStorage.getItem('email');
+      try {
+        const response = await fetch('/api/user', { credentials: 'same-origin' });
+        const data = response.ok ? await response.json() : {};
+        setCurrentUser((previous) => ({ ...previous, ...data, name: data.name || storedName || previous.name, email: data.email || storedEmail || previous.email, avatar_url: data.avatar_url || data.avatarUrl || getStoredAvatarUrl() }));
+      } catch {
+        setCurrentUser((previous) => ({ ...previous, name: storedName || previous.name, email: storedEmail || previous.email, avatar_url: getStoredAvatarUrl() }));
+      }
+    };
+
+    loadCurrentUser();
+    window.addEventListener('profile:updated', loadCurrentUser);
+    window.addEventListener('avatar:updated', loadCurrentUser);
+    return () => {
+      window.removeEventListener('profile:updated', loadCurrentUser);
+      window.removeEventListener('avatar:updated', loadCurrentUser);
+    };
+  }, []);
+
   // Delivery metrics removed for presentation
 
   const isActivePath = (to) => {
@@ -85,7 +111,8 @@ function Sidebar() {
 
   const widthClass = widthClassMap[layout.width] || widthClassMap.standard;
   const positionClass = layout.position === 'right' ? 'right-0 lg:right-0 lg:left-auto' : 'left-0 lg:left-0';
-  const liveBadgeText = location.pathname.startsWith('/inbox') ? 'Inbox live' : 'Ops online';
+  const displayName = currentUser.name || 'Staff';
+  const initials = displayName.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase();
 
   return (
     <>
@@ -94,10 +121,10 @@ function Sidebar() {
         onMouseLeave={() => setIsHovered(false)}
         className={`${sidebarToggle ? 'translate-x-0' : '-translate-x-full'} ${isCollapsed ? 'lg:w-[96px]' : widthClass.desktop} fixed ${positionClass} top-0 z-[60] flex h-dvh w-[85vw] ${widthClass.mobile} flex-col overflow-y-hidden border-r border-slate-200/80 bg-white/80 px-3 shadow-[0_24px_80px_rgba(15,23,42,0.12)] backdrop-blur-2xl transition-[width,transform,box-shadow] duration-300 ease-out sm:px-4 dark:border-slate-800 dark:bg-slate-950/80 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 lg:flex-none lg:shadow-[0_0_0_1px_rgba(148,163,184,0.08),0_24px_70px_rgba(15,23,42,0.12)]`}
       >
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(14,165,233,0.14),_transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(99,102,241,0.08),_transparent_30%),radial-gradient(circle_at_bottom_right,_rgba(14,165,233,0.06),_transparent_28%)]" />
 
         <div className="relative z-10 flex flex-1 flex-col overflow-hidden">
-          <div className={`flex items-center pb-5 pt-6 sm:pb-6 sm:pt-8 ${showExpandedContent ? 'justify-start' : 'justify-center'}`}>
+          <div className={`flex items-center gap-3 pb-5 pt-6 sm:pb-7 sm:pt-7 ${showExpandedContent ? '' : 'justify-center'}`}>
             <NavLink to="/dashboard" onClick={closeSidebar} className="flex w-full items-center gap-3 rounded-2xl border border-slate-200/70 bg-white/70 p-2.5 shadow-[0_10px_30px_rgba(15,23,42,0.05)] transition hover:border-brand-200 hover:shadow-[0_16px_35px_rgba(89,99,255,0.12)] dark:border-slate-800 dark:bg-slate-900/70">
               {showExpandedContent ? (
                 <div className="flex items-center gap-3 min-w-0">
@@ -117,19 +144,17 @@ function Sidebar() {
                 </div>
               )}
             </NavLink>
+            <button type="button" onClick={() => { setIsHovered(false); toggleSidebar(); }} aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700 lg:flex">
+              {isCollapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+            </button>
+            <button type="button" onClick={closeSidebar} aria-label="Close navigation" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white hover:text-slate-700 lg:hidden"><X size={17} /></button>
           </div>
 
-          {showExpandedContent ? (
-            <div className="relative z-10 mb-5 flex items-center justify-between rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-2 dark:border-slate-800 dark:bg-slate-900/70">
-              <div className="flex items-center gap-2">
-                <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(16,185,129,0.12)]" />
-                <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Workspace</span>
-              </div>
-              <span className="rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300">
-                {liveBadgeText}
-              </span>
-            </div>
-          ) : null}
+          <button type="button" title="Workspace: Ops Online" className={`mb-6 flex w-full items-center gap-3 rounded-xl border border-slate-200/80 bg-white/75 px-3 py-2.5 text-left transition hover:border-blue-200 hover:bg-white ${showExpandedContent ? '' : 'justify-center px-2'}`}>
+            <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><LayoutGrid size={15} /><span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-400" /></span>
+            {showExpandedContent ? <span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase tracking-[0.18em] text-slate-400">Workspace</span><span className="mt-0.5 block truncate text-xs font-semibold text-slate-700">Ops Online</span></span> : null}
+            {showExpandedContent ? <ChevronDown size={14} className="text-slate-400" /> : null}
+          </button>
 
           <div className="relative z-10 flex flex-1 flex-col overflow-y-auto pb-4 pr-1 no-scrollbar custom-scrollbar">
             <nav className="flex-1">
@@ -160,18 +185,17 @@ function Sidebar() {
                         <NavLink
                           to={item.to}
                           onClick={closeSidebar}
+                          title={isCollapsed ? item.label : undefined}
                           className={() =>
                             `group relative flex items-center gap-3 rounded-2xl px-3 py-2.5 font-medium transition-all duration-200 ${
                               active
-                                ? 'bg-gradient-to-r from-brand-50 via-indigo-50 to-cyan-50 text-brand-600 shadow-[0_12px_25px_rgba(79,70,229,0.12)] ring-1 ring-brand-100 dark:from-brand-500/15 dark:via-brand-500/10 dark:to-cyan-500/10 dark:text-brand-300 dark:ring-brand-400/20'
-                                : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-white'
+                                ? 'bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50 text-indigo-700 shadow-[0_8px_20px_rgba(79,70,229,0.08)] ring-1 ring-indigo-100 dark:from-brand-500/15 dark:via-brand-500/10 dark:to-cyan-500/10 dark:text-brand-300 dark:ring-brand-400/20'
+                                : 'text-slate-600 hover:bg-white hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/80 dark:hover:text-white'
                             }`
                           }
                         >
                           <span className={`relative flex h-9 w-9 items-center justify-center rounded-xl transition-all duration-200 ${active ? 'bg-white text-brand-600 shadow-sm ring-1 ring-brand-100 dark:bg-slate-900 dark:text-brand-300 dark:ring-brand-500/20' : 'bg-slate-100 text-slate-500 group-hover:bg-slate-200 group-hover:text-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:group-hover:bg-slate-700 dark:group-hover:text-slate-200'}`}>
-                            <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              {item.icon}
-                            </svg>
+                            {item.icon?.render ? <item.icon size={17} strokeWidth={1.8} /> : <svg viewBox="0 0 24 24" className="h-[17px] w-[17px]" fill="none">{item.icon}</svg>}
                           </span>
                           <span className={`${showExpandedContent ? '' : 'lg:hidden'} truncate`}>{item.label}</span>
                           {active && showExpandedContent ? <span className="ml-auto h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_4px_rgba(16,185,129,0.15)]" /> : null}
@@ -207,23 +231,20 @@ function Sidebar() {
               </div>
             </nav>
 
-            <div className="mt-auto pt-5">
-              <div className="rounded-2xl border border-brand-100 bg-gradient-to-br from-white via-brand-50 to-indigo-50 p-3.5 shadow-[0_16px_35px_rgba(79,70,229,0.08)] dark:border-brand-500/20 dark:from-slate-900 dark:via-brand-500/10 dark:to-sky-500/10">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-500 dark:text-brand-300">Live queue</div>
-                    <div className="mt-2 text-[28px] font-semibold leading-none text-slate-900 dark:text-white">24</div>
-                  </div>
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/80 text-brand-600 shadow-sm dark:bg-slate-900/80 dark:text-brand-300">
-                    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 12h2l2.5-5 3 10 2-5h4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                </div>
-                <div className="mt-3 flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
-                  <span>Response SLA</span>
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-300">2.4 min</span>
-                </div>
+            <div className="mt-5">
+              {showExpandedContent ? <div className="mb-4 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/90 via-white to-blue-50/80 p-3.5 shadow-[0_12px_30px_rgba(79,70,229,0.06)]">
+                <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-500"><Activity size={13} className="animate-pulse" /> Live Queue</span><button type="button" aria-label="Live queue options" className="text-slate-400 transition hover:text-indigo-600"><MoreHorizontal size={16} /></button></div>
+                <div className="mt-3 flex items-end justify-between"><span className="text-3xl font-bold tracking-tight text-slate-900">24</span><span className="mb-1 rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700">LIVE</span></div>
+                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500"><span>Response SLA</span><span className="font-semibold text-slate-700">2.4 min</span></div>
+              </div> : <div className="mb-4 flex justify-center text-indigo-500"><Activity size={18} className="animate-pulse" /></div>}
+
+              <div className="relative">
+                {profileOpen && showExpandedContent ? <div className="absolute bottom-14 left-0 right-0 rounded-xl border border-slate-200 bg-white p-2 shadow-[0_16px_35px_rgba(15,23,42,0.12)]"><NavLink to="/settings" onClick={() => { setProfileOpen(false); closeSidebar(); }} className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"><Settings size={14} /> Account settings</NavLink></div> : null}
+                <button type="button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen} title={displayName} className={`flex w-full items-center gap-3 rounded-xl border border-transparent p-2 text-left transition hover:border-slate-200 hover:bg-white ${showExpandedContent ? '' : 'justify-center'}`}>
+                  <span className="relative shrink-0">{currentUser.avatar_url ? <img src={currentUser.avatar_url} alt="" className="h-9 w-9 rounded-full object-cover ring-2 ring-white" /> : <span className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">{initials}</span>}<span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-[#fbfcff] bg-emerald-400" /></span>
+                  {showExpandedContent ? <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-slate-800">{displayName}</span><span className="block truncate text-[10px] text-slate-400">{currentUser.email}</span></span> : null}
+                  {showExpandedContent ? <ChevronDown size={14} className={`text-slate-400 transition-transform ${profileOpen ? 'rotate-180' : ''}`} /> : null}
+                </button>
               </div>
             </div>
           </div>

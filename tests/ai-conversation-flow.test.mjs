@@ -7,6 +7,7 @@ import {
   buildPromptContext,
   createGreetingReply
 } from '../utils/aiConversationFlow.js';
+import { resolveAiRequestConfig } from '../replies.js';
 
 test('detects greetings as a greeting intent without business context', () => {
   const intent = detectConversationIntent('Hi there');
@@ -61,4 +62,12 @@ test('stale order confirmation state is not included when the customer just gree
 
   assert.match(prompt, /Customer message: "Hey"/i);
   assert.doesNotMatch(prompt, /Ready to Create Order|place the order|Cheese Burger|Active order/i);
+});
+
+test('uses the faster AI config for Messenger responses', () => {
+  const config = resolveAiRequestConfig();
+
+  assert.equal(config.model, 'mistral-small-latest');
+  assert.ok(config.timeoutMs <= 4500, 'AI timeout must be under 4.5s');
+  assert.ok(config.maxTokens <= 180, 'Response length should stay compact');
 });

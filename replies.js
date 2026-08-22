@@ -11,6 +11,48 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const isPg = dbConfig && dbConfig.usePostgres;
 const MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions";
+const FAST_AI_MODEL = process.env.MISTRAL_FAST_MODEL || 'mistral-small-latest';
+const MENU_CACHE_TTL_MS = 60 * 1000;
+
+export function resolveAiRequestConfig({ modelOverride = null, maxTokens = 140, timeoutMs = null } = {}) {
+    const resolvedModel = String(modelOverride || process.env.MISTRAL_MODEL || FAST_AI_MODEL).trim() || FAST_AI_MODEL;
+    const resolvedTimeout = Number.isFinite(Number(timeoutMs)) ? Number(timeoutMs) : Number(process.env.AI_TIMEOUT_MS || 4200);
+    const boundedTimeout = Math.min(Math.max(resolvedTimeout, 1800), 4500);
+    const boundedTokens = Math.min(Math.max(Number(maxTokens) || 140, 80), 180);
+
+    return {
+        model: resolvedModel,
+        timeoutMs: boundedTimeout,
+        maxTokens: boundedTokens,
+        temperature: 0.2
+    };
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 4200) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, {
+            ...options,
+            signal: controller.signal
+        });
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function logLatencySummary(latencyState = {}) {
+    const summary = {
+        'Webhook': latencyState.webhookMs ?? 0,
+        'Database': latencyState.databaseMs ?? 0,
+        'External APIs': latencyState.externalMs ?? 0,
+        'AI': latencyState.aiMs ?? 0,
+        'Messenger send': latencyState.messengerSendMs ?? 0,
+        'Total': latencyState.totalMs ?? 0
+    };
+    console.log('[AI LATENCY]', summary);
+}
 
 // Friendly fallback and conversational guidance used when the model/API fails
 const FALLBACK_REPLY = "Sorry, I'm having trouble processing that right now. Please try again in a moment or type 'help' for assistance.";
@@ -337,12 +379,29 @@ function buildPolicyGuidance(message = '') {
     return `Policy guardrails for this reply:\n- ${rules.join('\n- ')}`;
 }
 
+let menuCache = {
+    items: null,
+    cachedAt: 0
+};
+
 async function getMenuItemsFromDb() {
+    const now = Date.now();
+    if (menuCache.items && now - menuCache.cachedAt < MENU_CACHE_TTL_MS) {
+        return menuCache.items;
+    }
+
     try {
         if (!prisma || !prisma.menu) {
             return [];
         }
         const items = await prisma.menu.findMany({
+            select: {
+                category: true,
+                name: true,
+                key_name: true,
+                price: true,
+                available: true
+            },
             orderBy: [
                 { category: 'asc' },
                 { name: 'asc' }
@@ -357,7 +416,7 @@ async function getMenuItemsFromDb() {
 
         // Also attempt to read from a possibly separately-created quoted table "Menu" (capital M)
         try {
-            const raw = await prisma.$queryRawUnsafe('SELECT * FROM "Menu" ORDER BY category ASC, name ASC');
+            const raw = await prisma.$queryRawUnsafe('SELECT category, name, key_name, price, available FROM "Menu" ORDER BY category ASC, name ASC');
             if (Array.isArray(raw) && raw.length > 0) {
                 const mappedRaw = raw.map(item => ({
                     category: item.category || 'Menu',
@@ -372,13 +431,14 @@ async function getMenuItemsFromDb() {
                     const key = `${(it.category||'').toLowerCase()}::${(it.name||'').toLowerCase()}`;
                     if (!seen.has(key)) seen.set(key, it);
                 }
-                return Array.from(seen.values());
+                menuCache = { items: Array.from(seen.values()), cachedAt: Date.now() };
+                return menuCache.items;
             }
         } catch (err) {
-            // ignore errors querying quoted table, return mapped results
             console.warn('getMenuItemsFromDb quoted "Menu" read failed:', err?.message || err);
         }
 
+        menuCache = { items: mapped, cachedAt: Date.now() };
         return mapped;
     } catch (error) {
         console.log('getMenuItemsFromDb error:', error?.message || error);
@@ -1044,25 +1104,27 @@ Menu reference:
 ${menuContext}`;
         }
 
-        const response = await fetch(MISTRAL_API_URL, {
+        const aiConfig = resolveAiRequestConfig({ maxTokens: 80, timeoutMs: 3000 });
+        const response = await fetchWithTimeout(MISTRAL_API_URL, {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "mistral-large-latest",
+                model: aiConfig.model,
                 messages: [
                     { role: "system", content: systemPrompt },
                     { role: "user", content: userPrompt }
                 ],
-                max_tokens: 200,
-                temperature: 0.0
+                max_tokens: aiConfig.maxTokens,
+                temperature: aiConfig.temperature
             })
-        });
+        }, aiConfig.timeoutMs);
 
         if (!response.ok) {
-            console.log("parseOrderJsonFromAI error:", response.status, await response.text());
+            const rawError = await response.text().catch(() => '');
+            console.log("parseOrderJsonFromAI error:", response.status, rawError);
             return { items: [] };
         }
 
@@ -1233,33 +1295,23 @@ function shouldTriggerHandoff(message, conversationHistory = []) {
     return { shouldHandoff: false, reason: null };
 }
 
-function shouldAskOrderConfirmation(message) {
-    const lowerMessage = message.toLowerCase();
-    const orderPhrases = [
-        'place this order',
-        'place order',
-        'i want to order',
-        "i'd like to order",
-        'i would like to order',
-        'i would like',
-        'i want',
-        'can i get',
-        'i need',
-        'order now',
-        'please order',
-        'send me',
-        "i'll have",
-        "i'll have",
-        'i am ordering',
-        'i am placing',
-        'i am buying',
-        'checkout',
-        'deliver',
-        'deliver to'
+export function shouldAskOrderConfirmation(message = '', conversationState = null) {
+    const lowerMessage = String(message || '').toLowerCase().replace(/[’']/g, "'");
+    if (!lowerMessage) return false;
+
+    const state = conversationState || {};
+    const workflow = String(state.workflowState || '').toLowerCase();
+    const pending = Array.isArray(state.pendingQuestions) ? state.pendingQuestions.join(' ').toLowerCase() : '';
+    const workflowReady = workflow.includes('ready to create order') || pending.includes('place the order') || pending.includes('confirm');
+    if (!workflowReady) return false;
+
+    const finalizationPhrases = [
+        /(?:no|nah|nope)[^\n]*?(?:that's all|thats all|that's it|thats it|nothing else|nothing else thanks|all good)/i,
+        /(?:that's all|thats all|that's it|thats it|nothing else|all set|done)/i,
+        /(?:no,?\s*)?(?:that's all|that is all|nothing else)/i
     ];
-    const hasOrderPhrase = orderPhrases.some(phrase => lowerMessage.includes(phrase));
-    const hasFoodKeyword = /\b(pizza|burger|chicken|meal|drink|food|combo|sandwich|taco|order|package|fries)\b/.test(lowerMessage);
-    return hasOrderPhrase && hasFoodKeyword;
+
+    return finalizationPhrases.some((phrase) => phrase.test(lowerMessage));
 }
 
 function hasOrderConfirmationPromptInHistory(conversationHistory = []) {
@@ -1284,20 +1336,16 @@ function isOrderConfirmationResponse(message, conversationState = null, conversa
         || pendingQuestions.includes('place the order')
         || pendingQuestions.includes('confirm');
 
-    if (!hasOrderFlowContext && !hasOrderConfirmationPromptInHistory(conversationHistory)) {
+    if (!hasOrderFlowContext) {
         return false;
     }
 
-    const yesPhrases = ['yes', 'yeah', 'yep', 'sure', 'confirm', 'okay', 'ok', 'go ahead', 'please', 'yes please', 'sure thing'];
-    const noPhrases = ['no', 'nope', 'nah', 'cancel', 'stop', 'dont', "don't", 'never mind', 'not now'];
-    
-    return yesPhrases.some(phrase => lowerMessage.includes(phrase)) || noPhrases.some(phrase => lowerMessage.includes(phrase));
+    return /^(?:yes|yeah|yep|sure|confirm|okay|ok|go ahead|please|yes please|sure thing|no|nope|nah|cancel|stop|dont|don't|never mind|not now)$/.test(lowerMessage);
 }
 
 function isPositiveConfirmation(message) {
     const lowerMessage = message.toLowerCase().trim();
-    const yesPhrases = ['yes', 'yeah', 'yep', 'sure', 'confirm', 'okay', 'ok', 'go ahead', 'please', 'yes please', 'sure thing'];
-    return yesPhrases.some(phrase => lowerMessage.includes(phrase));
+    return /^(?:yes|yeah|yep|sure|confirm|okay|ok|go ahead|please|yes please|sure thing)$/.test(lowerMessage);
 }
 
 function detectTicketCategory(message) {
@@ -1456,33 +1504,27 @@ async function createTicket(content, phone = null, conversationId = null, assign
     }
 }
 
-async function createOrderFromConversation(conversationId, phone, branchId = null) {
+async function createOrderFromConversation(conversationId, phone, branchId = null, conversationState = null) {
     if (!conversationId) {
         console.log("createOrderFromConversation: No conversationId");
         return null;
     }
 
-    const recentMessages = await getRecentConversationMessages(conversationId, 10);
-    let orderPayload = null;
+    const workflowState = String(conversationState?.workflowState || '').toLowerCase();
+    const pendingQuestions = Array.isArray(conversationState?.pendingQuestions)
+        ? conversationState.pendingQuestions.join(' ').toLowerCase()
+        : '';
+    const orderPayload = Array.isArray(conversationState?.draftOrder?.items)
+        ? conversationState.draftOrder.items
+            .filter((item) => item && String(item.name || '').trim() && Number(item.quantity || 0) > 0)
+            .map((item) => ({ name: String(item.name).trim(), quantity: Number(item.quantity) }))
+        : [];
+    const hasActiveConfirmationStep = workflowState === 'ready to create order'
+        || workflowState === 'awaiting_order_confirmation'
+        || pendingQuestions.includes('confirm')
+        || pendingQuestions.includes('place the order');
 
-    for (let i = recentMessages.length - 1; i >= 0; i--) {
-        const msg = recentMessages[i];
-        if (msg.sender === 'received' || msg.sender === 'customer') {
-            const aiExtracted = await parseOrderJsonFromAI(msg.message);
-            if (aiExtracted.items && aiExtracted.items.length > 0) {
-                orderPayload = aiExtracted.items;
-                break;
-            }
-
-            const extracted = extractOrderItemsFromMessage(msg.message);
-            if (extracted && extracted.items) {
-                orderPayload = [{ name: extracted.items, quantity: 1 }];
-                break;
-            }
-        }
-    }
-
-    if (!orderPayload) {
+    if (!hasActiveConfirmationStep || orderPayload.length === 0) {
         console.log("createOrderFromConversation: Could not find order details in conversation");
         return {
             success: false,
@@ -1511,10 +1553,8 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
             freeDeliveryThreshold: 25,
             discountAmount: 0
         });
-        const orderId = `ORD-${Date.now()}`;
         const order = await prisma.order.create({
             data: {
-                order_id: orderId,
                 customer_name: customerName,
                 phone: phone || null,
                 product: resolved.map((item) => `${item.name} x${item.quantity}`).join(', '),
@@ -1530,6 +1570,10 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
             }
         });
 
+        if (!order || !order.order_id || !String(order.order_id).trim()) {
+            return { success: false, orderId: null, message: 'I’m sorry, the order could not be verified after creation.' };
+        }
+
         const result = {
             success: true,
             id: order.id,
@@ -1539,11 +1583,12 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
             status: order.status,
             message: buildOrderConfirmationMessage({
                 orderId: order.order_id,
+                customerId: phone || conversationId || customerName,
                 customerName,
                 lineItems: resolved.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice, lineTotal: item.lineTotal })),
                 pricing,
-                estimatedPreparationTime: '25 mins',
-                estimatedDeliveryTime: '40 mins',
+                estimatedPreparationTime: '25',
+                estimatedDeliveryTime: '40',
                 status: 'Confirmed'
             })
         };
@@ -1567,9 +1612,48 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
     }
 }
 
-async function getMistralReply(message, phone = null, conversationId = null, branchId = null, conversationState = null) {
+async function resolveConversationBranchId({ conversationId = null, branchId = null, conversationState = null } = {}) {
+    const stateBranchId = Number(conversationState?.branchId || conversationState?.selectedBranchId || 0) || null;
+    if (branchId || stateBranchId) {
+        return Number(branchId || stateBranchId || 0) || null;
+    }
+
+    if (!conversationId) {
+        return null;
+    }
+
     try {
-        console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", branchId, "state:", conversationState?.workflowState || 'none');
+        const rows = await new Promise((resolve) => {
+            const sql = isPg
+                ? 'SELECT branch_id FROM conversations WHERE id = $1 LIMIT 1'
+                : 'SELECT branch_id FROM conversations WHERE id = ? LIMIT 1';
+            db.query(sql, isPg ? [conversationId] : [conversationId], (err, result) => {
+                if (err || !result || !result.length) return resolve(null);
+                resolve(result[0]);
+            });
+        });
+        return rows && rows.branch_id ? Number(rows.branch_id) : null;
+    } catch (error) {
+        console.warn('Unable to resolve conversation branch context:', error?.message || error);
+        return null;
+    }
+}
+
+async function getMistralReply(message, phone = null, conversationId = null, branchId = null, conversationState = null) {
+    const latency = {
+        webhookMs: 0,
+        databaseMs: 0,
+        externalMs: 0,
+        aiMs: 0,
+        messengerSendMs: 0,
+        totalMs: 0
+    };
+    const totalStart = Date.now();
+
+    try {
+        const effectiveBranchId = await resolveConversationBranchId({ conversationId, branchId, conversationState });
+        const activeBranchContext = getActiveBranchContext({ branchId: effectiveBranchId, conversationState, message });
+        console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", effectiveBranchId, "state:", conversationState?.workflowState || 'none');
 
         const intent = detectConversationIntent(message, conversationState);
 
@@ -1593,7 +1677,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
         if (conversationId && isOrderConfirmationResponse(message, conversationState, conversationHistory)) {
             if (isPositiveConfirmation(message)) {
                 console.log("Customer confirmed order - creating order");
-                const order = await createOrderFromConversation(conversationId, phone, branchId);
+                const order = await createOrderFromConversation(conversationId, phone, branchId, conversationState);
                 if (order && order.success) {
                     return order.message;
                 }
@@ -1625,7 +1709,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
         }
 
-        const supportReply = await buildSupportReply(message, { branchId });
+        const supportReply = await buildSupportReply(message, { branchId: effectiveBranchId });
         if (supportReply) {
             return supportReply;
         }
@@ -1828,7 +1912,11 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
         }
 
         const persistedWorkflowContext = conversationState && typeof conversationState === 'object'
-            ? `\n\nPersisted conversation workflow state:\n- Current workflow state: ${conversationState.workflowState || 'Greeting'}\n- Pending questions: ${(conversationState.pendingQuestions || []).join('; ') || 'None'}\n- Draft order items: ${(conversationState.draftOrder?.items || []).map(item => `${item.name} x${item.quantity}`).join(', ') || 'None'}\n- Draft order notes: ${conversationState.draftOrder?.notes || 'None'}\n- Branch ID: ${conversationState.branchId || branchId || 'Unknown'}`
+            ? `\n\nPersisted conversation workflow state:\n- Current workflow state: ${conversationState.workflowState || 'Greeting'}\n- Pending questions: ${(conversationState.pendingQuestions || []).join('; ') || 'None'}\n- Draft order items: ${(conversationState.draftOrder?.items || []).map(item => `${item.name} x${item.quantity}`).join(', ') || 'None'}\n- Draft order notes: ${conversationState.draftOrder?.notes || 'None'}\n- Branch ID: ${conversationState.branchId || effectiveBranchId || 'Unknown'}`
+            : '';
+
+        const branchLockContext = activeBranchContext.hasSelectedBranch
+            ? `\n\nActive branch context: ${activeBranchContext.branchName} (branch ID ${activeBranchContext.branchId}). The customer has already selected this branch for this conversation. Do not ask them to choose a branch again and continue using this branch for all order, ticket, and support actions.`
             : '';
 
         // Check if we should trigger handoff based on sentiment and conversation history
@@ -1871,7 +1959,7 @@ Never invent compensation, refund amounts, or replacement guarantees. Only offer
             businessContext,
             conversationState
         });
-        userPrompt += `${kbContext}${menuContext}${persistedWorkflowContext}`;
+        userPrompt += `${kbContext}${menuContext}${persistedWorkflowContext}${branchLockContext}`;
 
         if (menuInquiry) {
             userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;
@@ -1884,52 +1972,50 @@ Never invent compensation, refund amounts, or replacement guarantees. Only offer
             }).join('\n');
             userPrompt += historyText;
         }
-        if (shouldAskOrderConfirmation(message)) {
-            const orderExtraction = await parseOrderJsonFromAI(message, menuContext);
-            if (orderExtraction.items && orderExtraction.items.length > 0) {
-                const itemsText = formatOrderItemsForConfirmation(orderExtraction.items);
-                userPrompt += `
+        if (shouldAskOrderConfirmation(message, conversationState)) {
+            userPrompt += `
 
-The customer appears to be placing an order for: ${itemsText}. Ask them exactly: ARE YOU SURE YOU WANT TO PLACE THIS ORDER?
+The customer has finished ordering and the order is ready for final confirmation. Ask the customer: "Anything else you'd like to add?" before generating a final confirmation.
 
-IMPORTANT: Confirm the order details exactly as specified above. Do not add or change items. Do not confirm or save the order until the customer explicitly replies with a positive confirmation.`;
-            } else {
-                const { items, total } = extractOrderItemsFromMessage(message);
-                if (items && total > 0) {
-                    userPrompt += `
-
-The customer appears to be placing an order for: ${items}. Ask them exactly: ARE YOU SURE YOU WANT TO PLACE THIS ORDER?
-
-IMPORTANT: Confirm the order details exactly as specified above. Do not add or change items. Do not confirm or save the order until the customer explicitly replies with a positive confirmation.`;
-                } else {
-                    userPrompt += `
-
-The customer appears to be placing an order but I couldn't identify the specific items. Ask them to clarify what they want to order from our menu above, or to provide the exact menu item names from the Orders page.`;
-                }
-            }
+IMPORTANT: Do not confirm or create the order until the customer clearly indicates they are done ordering and all required details have been collected. Only generate a final confirmation after the customer says they are finished and every required field is known.`;
         }
 
         console.log("Sending to Mistral with prompt context (KB: " + (kbContext ? "yes" : "no") + ", Orders: " + (menuContext ? "yes" : "no") + ")");
         
-        const response = await fetch(MISTRAL_API_URL, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                model: "mistral-large-latest",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    { role: "user", content: userPrompt }
-                ],
-                max_tokens: 150,
-                temperature: 0.35
-            })
-        });
+        const aiConfig = resolveAiRequestConfig({ maxTokens: 140, timeoutMs: 4200 });
+        const aiStart = Date.now();
+        let response;
+        try {
+            response = await fetchWithTimeout(MISTRAL_API_URL, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: aiConfig.model,
+                    messages: [
+                        { role: "system", content: systemPrompt },
+                        { role: "user", content: userPrompt }
+                    ],
+                    max_tokens: aiConfig.maxTokens,
+                    temperature: aiConfig.temperature
+                })
+            }, aiConfig.timeoutMs);
+        } catch (error) {
+            latency.aiMs = Date.now() - aiStart;
+            latency.totalMs = Date.now() - totalStart;
+            logLatencySummary(latency);
+            return "Thanks for your message — I’m checking that for you now and will reply as soon as I have the answer.";
+        }
+
+        latency.aiMs = Date.now() - aiStart;
 
         if (!response.ok) {
-            console.log("Mistral API error:", response.status, await response.text());
+            const rawError = await response.text().catch(() => '');
+            console.log("Mistral API error:", response.status, rawError);
+            latency.totalMs = Date.now() - totalStart;
+            logLatencySummary(latency);
             return FALLBACK_REPLY;
         }
 
@@ -1937,6 +2023,8 @@ The customer appears to be placing an order but I couldn't identify the specific
         const reply = data.choices?.[0]?.message?.content?.trim();
 
         if (!reply) {
+            latency.totalMs = Date.now() - totalStart;
+            logLatencySummary(latency);
             return FALLBACK_REPLY;
         }
 
@@ -1956,9 +2044,13 @@ The customer appears to be placing an order but I couldn't identify the specific
             return `I want to keep helping you. Tell me more about what you need, and I’ll keep assisting you here.`;
         }
 
+        latency.totalMs = Date.now() - totalStart;
+        logLatencySummary(latency);
         return reply;
     } catch (error) {
         console.log("Mistral reply error:", error.message);
+        latency.totalMs = Date.now() - totalStart;
+        logLatencySummary(latency);
         return FALLBACK_REPLY;
     }
 }

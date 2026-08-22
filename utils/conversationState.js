@@ -94,6 +94,9 @@ export function normalizeConversationState(state = {}) {
 
 export function normalizeDraftOrder(draftOrder = null) {
   const base = createDefaultConversationSession({ draftOrder }).draftOrder;
+  const hasExplicitOrderId = draftOrder && typeof draftOrder === 'object' && Object.prototype.hasOwnProperty.call(draftOrder, 'orderId');
+  const hasExplicitTotal = draftOrder && typeof draftOrder === 'object' && Object.prototype.hasOwnProperty.call(draftOrder, 'total');
+
   return {
     ...base,
     ...(draftOrder && typeof draftOrder === 'object' ? draftOrder : {}),
@@ -108,8 +111,8 @@ export function normalizeDraftOrder(draftOrder = null) {
     paymentMethod: draftOrder?.paymentMethod || base.paymentMethod,
     pickup: draftOrder?.pickup || base.pickup,
     delivery: draftOrder?.delivery || base.delivery,
-    orderId: draftOrder?.orderId || base.orderId,
-    total: draftOrder?.total || base.total,
+    orderId: hasExplicitOrderId ? (draftOrder.orderId ?? null) : null,
+    total: hasExplicitTotal ? (draftOrder.total ?? null) : null,
     createdAt: draftOrder?.createdAt || base.createdAt,
     updatedAt: draftOrder?.updatedAt || base.updatedAt
   };
@@ -118,6 +121,9 @@ export function normalizeDraftOrder(draftOrder = null) {
 function mergeDraftOrder(currentDraft = null, patchDraft = null) {
   const normalizedCurrent = normalizeDraftOrder(currentDraft);
   const normalizedPatch = normalizeDraftOrder(patchDraft);
+  const hasExplicitPatchOrderId = patchDraft && typeof patchDraft === 'object' && Object.prototype.hasOwnProperty.call(patchDraft, 'orderId');
+  const hasExplicitPatchTotal = patchDraft && typeof patchDraft === 'object' && Object.prototype.hasOwnProperty.call(patchDraft, 'total');
+
   return normalizeDraftOrder({
     ...normalizedCurrent,
     ...normalizedPatch,
@@ -132,8 +138,8 @@ function mergeDraftOrder(currentDraft = null, patchDraft = null) {
     paymentMethod: normalizedPatch.paymentMethod || normalizedCurrent.paymentMethod,
     pickup: normalizedPatch.pickup || normalizedCurrent.pickup,
     delivery: normalizedPatch.delivery || normalizedCurrent.delivery,
-    orderId: normalizedPatch.orderId || normalizedCurrent.orderId,
-    total: normalizedPatch.total || normalizedCurrent.total,
+    orderId: hasExplicitPatchOrderId ? (patchDraft.orderId ?? null) : null,
+    total: hasExplicitPatchTotal ? (patchDraft.total ?? null) : normalizedCurrent.total,
     updatedAt: normalizedPatch.updatedAt || new Date().toISOString()
   });
 }

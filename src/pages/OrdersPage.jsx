@@ -268,7 +268,7 @@ function OrdersPage() {
     </div>,
     order.customerName,
     formatMoney(order.amount),
-    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span>,
+    <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'refunded' ? 'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span>,
     formatOrderDate(order.date),
     <div className="flex flex-wrap gap-2">
       <button type="button" onClick={() => openViewOrder(order)} className="rounded-2xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700">View</button>
@@ -1004,7 +1004,7 @@ function OrdersPage() {
                             <p className="font-semibold text-slate-900 dark:text-slate-100">{order.product || 'Order item'}</p>
                             <p className="text-sm text-slate-500 dark:text-slate-400">{order.customerName || 'Customer'}</p>
                           </div>
-                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span>
+                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'refunded' ? 'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span>
                         </div>
                         <div className="mt-3 grid gap-2 text-sm text-slate-600 dark:text-slate-400">
                           <div className="flex items-center justify-between"><span>Order ID</span><span className="font-medium text-slate-900 dark:text-slate-100">#{order.id}</span></div>
@@ -1055,7 +1055,7 @@ function OrdersPage() {
                             <td className="px-4 py-3 dark:text-slate-100">{order.customerName}</td>
                             <td className="px-4 py-3 dark:text-slate-100">{order.product}</td>
                             <td className="px-4 py-3 dark:text-slate-100">{formatMoney(order.amount)}</td>
-                            <td className="px-4 py-3"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span></td>
+                            <td className="px-4 py-3"><span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${order.status === 'completed' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200' : order.status === 'cancelled' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-200' : order.status === 'refunded' ? 'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-200' : order.status === 'processing' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200'}`}>{order.status}</span></td>
                             <td className="px-4 py-3 dark:text-slate-100">{formatOrderDate(order.date)}</td>
                             <td className="px-4 py-3">
                               <div className="flex flex-wrap gap-2">

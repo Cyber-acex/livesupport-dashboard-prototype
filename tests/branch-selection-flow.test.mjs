@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeBranchSelectionReply, buildBranchSelectionPrompt, resolveBranchSelection } from '../utils/branchSelection.js';
+import { normalizeBranchSelectionReply, buildBranchSelectionPrompt, resolveBranchSelection, getActiveBranchContext, shouldPromptForBranchSelection, isExplicitBranchChangeRequest } from '../utils/branchSelection.js';
 
 test('normalizes punctuation around numeric replies', () => {
   assert.equal(normalizeBranchSelectionReply('  2!  '), '2');
@@ -40,4 +40,16 @@ test('resolves a valid selection to a real active branch', () => {
   assert.deepEqual(resolveBranchSelection('2', branches), { id: 20, name: 'Lekki', is_active: true, is_archived: false });
   assert.equal(resolveBranchSelection('3', branches), null);
   assert.equal(resolveBranchSelection('closed', branches), null);
+});
+
+test('locks the branch once selected and only allows re-selection on explicit change requests', () => {
+  const active = getActiveBranchContext({ branchId: 1, conversationState: { branchId: 1 }, message: 'I want to place an order' });
+
+  assert.equal(active.branchId, 1);
+  assert.equal(active.branchName, 'Ikeja');
+  assert.equal(active.hasSelectedBranch, true);
+  assert.equal(shouldPromptForBranchSelection({ branchId: 1, message: 'I want to place an order' }), false);
+  assert.equal(shouldPromptForBranchSelection({ branchId: null, message: 'I want to place an order' }), true);
+  assert.equal(isExplicitBranchChangeRequest('I want to switch to Lekki'), true);
+  assert.equal(isExplicitBranchChangeRequest('I want to place an order'), false);
 });

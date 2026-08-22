@@ -32,6 +32,17 @@ test('customer confirmation after final order step stays in order confirmation f
   assert.equal(detectConversationIntent('yes, place it', state), 'Order Confirmation');
 });
 
+test('branch handoff follow-up does not enter order confirmation flow', () => {
+  const state = {
+    workflowState: 'Greeting',
+    branchId: 2,
+    pendingQuestions: [],
+    draftOrder: { items: [] }
+  };
+
+  assert.equal(detectConversationIntent('ok', state), 'General Conversation');
+});
+
 test('modification language is only treated as order modification when the customer is actively editing an order', () => {
   const state = {
     workflowState: 'Building Order',

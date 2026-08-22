@@ -84,14 +84,16 @@ function formatMoney(value) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
-function buildOrderConfirmationMessage({ orderId, customerName, lineItems = [], pricing = {}, estimatedPreparationTime, estimatedDeliveryTime, status = 'Confirmed' }) {
+function buildOrderConfirmationMessage({ orderId, customerId, customerName, lineItems = [], pricing = {}, estimatedPreparationTime, estimatedDeliveryTime, status = 'Confirmed' }) {
   const lines = [];
+  const resolvedCustomerId = customerId || customerName || 'Customer';
+
   lines.push(`Order ID: ${orderId}`);
-  lines.push(`Customer: ${customerName || 'Customer'}`);
+  lines.push(`Customer: ${resolvedCustomerId}`);
   lines.push('Ordered items:');
 
   for (const item of lineItems) {
-    lines.push(`- ${item.name} x${item.quantity} @ ${formatMoney(item.unitPrice)} = ${formatMoney(item.lineTotal)}`);
+    lines.push(`· ${item.name} x${item.quantity} @ ${formatMoney(item.unitPrice)} = ${formatMoney(item.lineTotal)}`);
   }
 
   lines.push(`Subtotal: ${formatMoney(pricing.subtotal || 0)}`);
@@ -99,8 +101,8 @@ function buildOrderConfirmationMessage({ orderId, customerName, lineItems = [], 
   lines.push(`Delivery fee: ${formatMoney(pricing.deliveryFee || 0)}`);
   lines.push(`Discounts: ${formatMoney(pricing.discountAmount || 0)}`);
   lines.push(`Grand total: ${formatMoney(pricing.finalTotal || 0)}`);
-  lines.push(`Estimated preparation time: ${estimatedPreparationTime || 'TBD'}`);
-  lines.push(`Estimated delivery time: ${estimatedDeliveryTime || 'TBD'}`);
+  lines.push(`Estimated preparation time: ${estimatedPreparationTime || 'TBD'} mins`);
+  lines.push(`Estimated delivery time: ${estimatedDeliveryTime || 'TBD'} mins`);
   lines.push(`Status: ${status}`);
 
   return lines.join('\n');

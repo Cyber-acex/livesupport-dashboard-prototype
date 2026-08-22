@@ -1,7 +1,7 @@
 import { db, prisma } from '../db/database.js';
 import { extractInsertId } from '../utils/dbInsert.js';
 import { createBranchNotification } from './notificationService.js';
-import { buildBranchSelectionPrompt, resolveBranchSelection } from '../utils/branchSelection.js';
+import { buildBranchSelectionPrompt, resolveBranchSelection, getActiveBranchContext, isExplicitBranchChangeRequest } from '../utils/branchSelection.js';
 
 function normalizeIncomingPlatformMessage(input = {}) {
   const platform = String(input.platform || 'whatsapp').toLowerCase();
@@ -107,6 +107,19 @@ async function getOpenConversation(platform, platformUserId) {
     return Array.isArray(rows) && rows.length ? rows[0] : null;
   } catch (error) {
     console.warn('Unable to locate open conversation:', error?.message || error);
+    return null;
+  }
+}
+
+async function getMostRecentBranchConversation(platform, platformUserId) {
+  try {
+    const rows = await db.promise().query(
+      'SELECT id, phone, name, platform, platform_user_id, branch_id, status FROM conversations WHERE platform = ? AND ((platform_user_id IS NOT NULL AND platform_user_id = ?) OR (platform_user_id IS NULL AND phone = ?)) AND branch_id IS NOT NULL AND branch_id > 0 ORDER BY updated_at DESC, id DESC LIMIT 1',
+      [platform, platformUserId, platformUserId]
+    );
+    return Array.isArray(rows) && rows.length ? rows[0] : null;
+  } catch (error) {
+    console.warn('Unable to locate prior branch-bound conversation:', error?.message || error);
     return null;
   }
 }
@@ -327,6 +340,10 @@ async function processPlatformMessage(input = {}) {
   console.log('📥 Webhook normalized', { platform, platformUserId, messageId, text });
 
   const openConversation = await getOpenConversation(platform, platformUserId);
+  const activeBranchConversation = !openConversation ? await getMostRecentBranchConversation(platform, platformUserId) : null;
+  const activeBranchId = Number(openConversation?.branch_id || activeBranchConversation?.branch_id || 0) || null;
+  const branchAlreadyLocked = activeBranchId != null && !isExplicitBranchChangeRequest(text);
+
   if (openConversation) {
     console.log('🧭 Open conversation found', { platform, platformUserId, conversationId: openConversation.id, messageId });
     await appendCustomerMessage(openConversation.id, text || '[non-text message]', 'received');
@@ -334,6 +351,17 @@ async function processPlatformMessage(input = {}) {
     await notifyConversationUpdate(openConversation.id);
     console.log('[Router] Existing conversation handled.', { platform, platformUserId, conversationId: openConversation.id, messageId });
     return { normalized, handled: true, conversationId: openConversation.id, path: 'existing-conversation', continueWithLegacyWorkflow: true };
+  }
+
+  if (branchAlreadyLocked && activeBranchConversation) {
+    console.log('🔒 Branch already selected for this customer; reusing the locked branch without prompting again.', {
+      platform,
+      platformUserId,
+      branchId: activeBranchId,
+      conversationId: activeBranchConversation.id,
+      messageId
+    });
+    return { normalized, handled: true, conversationId: activeBranchConversation.id, path: 'existing-conversation-branch-locked', continueWithLegacyWorkflow: true };
   }
 
   if (platform === 'messenger') {

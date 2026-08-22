@@ -16,7 +16,7 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { db, connectDatabase, config as dbConfig, prisma } from "./db/database.js";
-import { getMistralReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, MENU_ITEMS, createTicket, detectTicketCategory } from "./replies.js";
+import { getMistralReply, resolveAiRequestConfig, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, MENU_ITEMS, createTicket, detectTicketCategory } from "./replies.js";
 import { sendEmail } from "./utils/email.js";
 import { fetchGmailEmails } from "./utils/gmail-imap.js";
 import createAuthRouter from "./routes/auth.js";
@@ -2134,12 +2134,12 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
         return null;
     }
 
-    const orderConfirmed = await checkAndSaveOrderConfirmation(resolvedPhone, normalizedConversationId, customerMessage);
+    const orderConfirmed = await checkAndSaveOrderConfirmation(resolvedPhone, normalizedConversationId, customerMessage, branchId, resolvedSession);
     const aiAutoAllowed = isAIAutoSendEnabled(normalizedConversationId);
     const forceAI = isTicketCreationRequest(customerMessage) || isRequestingStaff(customerMessage);
     let replyText = null;
 
-    if (orderConfirmed && orderConfirmed.orderId) {
+    if (orderConfirmed?.success === true && orderConfirmed.orderId) {
         replyText = orderConfirmed.message || `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`;
     } else if (aiAutoAllowed && (forceAI || shouldAIRespond(normalizedConversationId))) {
         replyText = await getMistralReply(
@@ -5341,9 +5341,8 @@ function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
 // Instagram Messaging Integration removed
 
 function isOrderConfirmation(text) {
-    const confirmKeywords = ['yes', 'yep', 'yup', 'confirm', 'ok', 'okay', 'sure', 'go', 'order it', 'proceed', 'do it'];
-    const lowerText = text.toLowerCase().trim();
-    return confirmKeywords.some(keyword => lowerText.includes(keyword));
+    const lowerText = String(text || '').toLowerCase().trim();
+    return /^(?:yes|yeah|yep|yup|sure|confirm|okay|ok|go ahead|order it|proceed|do it|yes please|sure thing)$/.test(lowerText);
 }
 
 function findMostRecentCustomerOrderMessage(messages) {
@@ -5557,13 +5556,161 @@ function getConversationCustomerName(conversationId) {
     });
 }
 
-async function checkAndSaveOrderConfirmation(phone, conversationId, customerMessage, branchId = null) {
+async function getFreshOrderRecordById(databaseId = null, orderId = null) {
+    const normalizedId = databaseId !== null && databaseId !== undefined ? Number(databaseId) : null;
+    const normalizedOrderId = orderId != null ? String(orderId) : null;
+
+    if (normalizedId == null && !normalizedOrderId) {
+        return null;
+    }
+
+    const selectSql = isPg
+        ? `SELECT id, order_id, customer_name, phone, product, amount, total_amount, subtotal, final_total, discount_amount, status, order_date, conversation_id, branch_id
+           FROM orders WHERE ${normalizedId != null ? 'id = $1' : 'CAST(order_id AS TEXT) = $1'} LIMIT 1`
+        : `SELECT id, order_id, customer_name, phone, product, amount, total_amount, subtotal, final_total, discount_amount, status, order_date, conversation_id, branch_id
+           FROM orders WHERE ${normalizedId != null ? 'id = ?' : 'order_id = ?'} LIMIT 1`;
+
+    const bindValue = normalizedId != null ? normalizedId : normalizedOrderId;
+
+    return new Promise((resolve) => {
+        db.query(selectSql, [bindValue], (err, rows) => {
+            if (err) {
+                console.warn('Failed to fetch persisted order record after insert:', err?.message || err);
+                resolve(null);
+                return;
+            }
+            const row = Array.isArray(rows) ? rows[0] : null;
+            if (!row) {
+                resolve(null);
+                return;
+            }
+            resolve({
+                ...row,
+                id: Number(row.id ?? normalizedId ?? 0) || null,
+                orderId: row.order_id ? String(row.order_id) : null,
+                totalAmount: row.total_amount ?? row.amount ?? null,
+                finalTotal: row.final_total ?? row.total_amount ?? row.amount ?? null
+            });
+        });
+    });
+}
+
+async function createFreshOrderRecord({
+    orderId,
+    customerName,
+    phone,
+    product,
+    amount,
+    totalAmount,
+    subtotal,
+    finalTotal,
+    discountAmount,
+    status,
+    conversationId,
+    branchId,
+    lineItems = []
+}) {
+    const generatedOrderId = String(orderId || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+    const resolvedStatus = String(status || 'confirmed').toLowerCase();
+    const resolvedPhone = phone || null;
+    const resolvedConversationId = Number(conversationId || 0) || null;
+    const resolvedBranchId = Number(branchId || 0) || null;
+    const insertSql = isPg
+        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11, $12) RETURNING id, order_id, customer_name, phone, product, amount, total_amount, subtotal, final_total, discount_amount, status, conversation_id, branch_id'
+        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)';
+
+    return new Promise((resolve, reject) => {
+        db.query(insertSql, [generatedOrderId, customerName || 'Customer', resolvedPhone, product || lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), Number(amount ?? subtotal ?? 0), Number(totalAmount ?? finalTotal ?? amount ?? subtotal ?? 0), resolvedStatus, resolvedConversationId, Number(subtotal ?? 0), Number(finalTotal ?? totalAmount ?? amount ?? subtotal ?? 0), Number(discountAmount ?? 0), resolvedBranchId], async (err, result) => {
+            if (err) {
+                console.error('Order insert failed:', err);
+                return reject(new Error('Database order insert failed'));
+            }
+
+            const insertedId = extractInsertId(result);
+            if (!insertedId && !isPg) {
+                return reject(new Error('Order insert returned no database id'));
+            }
+
+            let persistedOrder = null;
+            if (isPg && result && Array.isArray(result.rows) && result.rows[0]) {
+                persistedOrder = { ...result.rows[0], orderId: result.rows[0].order_id ? String(result.rows[0].order_id) : null };
+            } else {
+                persistedOrder = await getFreshOrderRecordById(insertedId, generatedOrderId);
+            }
+
+            if (!persistedOrder || !persistedOrder.orderId || !String(persistedOrder.orderId).trim()) {
+                console.error('Fresh order record validation failed after insert', {
+                    generatedOrderId,
+                    insertedId,
+                    persistedOrder: persistedOrder ? { ...persistedOrder, orderId: persistedOrder.orderId || null } : null
+                });
+                return reject(new Error('Persisted order record did not return a valid order ID'));
+            }
+
+            resolve({
+                id: Number(persistedOrder.id ?? insertedId ?? 0) || null,
+                orderId: String(persistedOrder.orderId),
+                customerName: persistedOrder.customer_name || customerName || 'Customer',
+                phone: persistedOrder.phone || resolvedPhone,
+                product: persistedOrder.product || product || lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '),
+                subtotal: Number(persistedOrder.subtotal ?? subtotal ?? 0),
+                finalTotal: Number(persistedOrder.final_total ?? persistedOrder.total_amount ?? finalTotal ?? totalAmount ?? amount ?? subtotal ?? 0),
+                discountAmount: Number(persistedOrder.discount_amount ?? discountAmount ?? 0),
+                status: persistedOrder.status || resolvedStatus,
+                conversationId: persistedOrder.conversation_id ?? resolvedConversationId,
+                branchId: persistedOrder.branch_id ?? resolvedBranchId
+            });
+        });
+    });
+}
+
+async function checkAndSaveOrderConfirmation(phone, conversationId, customerMessage, branchId = null, conversationState = null) {
     if (!isOrderConfirmation(customerMessage)) {
         return false;
     }
 
-    const conversationSession = await loadConversationSession(conversationId, Number(branchId || 0) || null, null, null, phone);
-    if (conversationSession?.draftOrder?.orderId) {
+    const conversationSession = conversationState || await loadConversationSession(conversationId, Number(branchId || 0) || null, null, null, phone);
+    const workflowState = String(conversationSession?.workflowState || '').toLowerCase();
+    const pendingQuestions = Array.isArray(conversationSession?.pendingQuestions)
+        ? conversationSession.pendingQuestions.join(' ').toLowerCase()
+        : '';
+    const hasActiveConfirmationStep = workflowState === 'ready to create order'
+        || workflowState === 'awaiting_order_confirmation'
+        || pendingQuestions.includes('confirm')
+        || pendingQuestions.includes('place the order');
+    const draftItems = Array.isArray(conversationSession?.draftOrder?.items)
+        ? conversationSession.draftOrder.items.filter((item) => item && String(item.name || '').trim() && Number(item.quantity || 0) > 0)
+        : [];
+
+    // A branch-bound conversation is not an order-confirmation flow. Require the
+    // persisted workflow state and a non-empty draft before touching the orders table.
+    if (!hasActiveConfirmationStep || draftItems.length === 0) {
+        console.log('Order confirmation ignored because no complete order is awaiting confirmation', {
+            conversationId,
+            workflowState: conversationSession?.workflowState || null,
+            branchId: branchId || null,
+            draftItemCount: draftItems.length
+        });
+        return false;
+    }
+
+    const isConfirmedOrderState = String(conversationSession?.workflowState || '').toLowerCase() === 'order created';
+    if (conversationSession?.draftOrder?.orderId && !isConfirmedOrderState) {
+        console.warn('Clearing stale order ID from prior session draft before creating a fresh order', {
+            conversationId,
+            workflowState: conversationSession.workflowState,
+            sessionId: conversationSession.sessionId,
+            staleOrderId: conversationSession.draftOrder.orderId
+        });
+        conversationSession.draftOrder = {
+            ...conversationSession.draftOrder,
+            orderId: null,
+            updatedAt: new Date().toISOString()
+        };
+        await saveConversationSession(conversationSession);
+    }
+
+    if (conversationSession?.draftOrder?.orderId && isConfirmedOrderState) {
         console.log('Order confirmation already handled for active session', {
             conversationId,
             sessionId: conversationSession.sessionId,
@@ -5597,20 +5744,22 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
 
                 const parsedItems = [];
                 try {
+                    const aiConfig = resolveAiRequestConfig({ maxTokens: 80, timeoutMs: 3000 });
                     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
                         method: 'POST',
+                        signal: AbortSignal.timeout(aiConfig.timeoutMs),
                         headers: {
                             'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
                             'Content-Type': 'application/json'
                         },
                         body: JSON.stringify({
-                            model: 'mistral-large-latest',
+                            model: aiConfig.model,
                             messages: [
                                 { role: 'system', content: 'Extract the ordered items and quantities from the customer message and return JSON only. Do not include prices or totals.' },
                                 { role: 'user', content: customerText || aiText }
                             ],
-                            temperature: 0.0,
-                            max_tokens: 200
+                            temperature: aiConfig.temperature,
+                            max_tokens: aiConfig.maxTokens
                         })
                     });
                     if (response.ok) {
@@ -5625,9 +5774,16 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                     console.warn('Order extraction fallback failed:', parseErr?.message || parseErr);
                 }
 
-                const fallbackItems = parsedItems.length > 0
-                    ? parsedItems
-                    : [{ name: customerText || aiText || 'Order', quantity: 1 }];
+                if (parsedItems.length === 0) {
+                    resolve({
+                        success: false,
+                        message: 'I’m ready to place your order, but I could not validate the requested items. Please review the order summary and try again.',
+                        orderId: null
+                    });
+                    return;
+                }
+
+                const fallbackItems = parsedItems;
 
                 const menuRows = await new Promise((resolveMenu) => {
                     db.query('SELECT id, category, key_name, name, price, available FROM Menu ORDER BY name ASC', (menuErr, rows) => {
@@ -5658,51 +5814,53 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                         resolve(Number(rows?.[0]?.branch_id || 0) || null);
                     });
                 });
-                const orderId = `ORD-${Date.now()}`;
                 const lineItems = resolved.map((item) => ({
                     name: item.name,
                     quantity: item.quantity,
                     unitPrice: item.unitPrice,
                     lineTotal: item.lineTotal
                 }));
-                const confirmationMessage = buildOrderConfirmationMessage({
-                    orderId,
-                    customerName,
-                    lineItems,
-                    pricing,
-                    estimatedPreparationTime: '25 mins',
-                    estimatedDeliveryTime: '40 mins',
-                    status: 'Confirmed'
-                });
-
-                const insertSql = isPg
-                    ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11, $12) RETURNING id'
-                    : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)';
                 const resolvedBranchId = Number(branchId || conversationBranchId || 0) || null;
-                db.query(insertSql, [orderId, customerName, phone || null, lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), pricing.subtotal, pricing.finalTotal, 'confirmed', conversationId, pricing.subtotal, pricing.finalTotal, pricing.discountAmount, resolvedBranchId], async (dbErr) => {
-                    if (dbErr) {
-                        console.log('Order save error:', dbErr);
-                        resolve({ success: false, message: 'I’m sorry, the order could not be created right now. Please try again.', orderId: null });
-                        return;
-                    }
 
-                    try {
-                        const nextSession = mergeConversationState(conversationSession, {
-                            workflowState: 'Order Created',
-                            draftOrder: {
-                                ...(conversationSession?.draftOrder || {}),
-                                items: resolved.map((item) => ({ name: item.name, quantity: item.quantity })),
-                                orderId,
-                                total: pricing.finalTotal,
-                                status: 'confirmed',
-                                updatedAt: new Date().toISOString()
-                            },
-                            history: [...(Array.isArray(conversationSession?.history) ? conversationSession.history : []), { role: 'system', message: `Order ${orderId} created` }]
-                        });
-                        await saveConversationSession(nextSession);
-                    } catch (persistErr) {
-                        console.warn('Unable to persist order session snapshot after confirmation:', persistErr?.message || persistErr);
-                    }
+                try {
+                    const createdOrder = await createFreshOrderRecord({
+                        customerName,
+                        phone: phone || null,
+                        product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '),
+                        amount: pricing.subtotal,
+                        totalAmount: pricing.finalTotal,
+                        subtotal: pricing.subtotal,
+                        finalTotal: pricing.finalTotal,
+                        discountAmount: pricing.discountAmount,
+                        status: 'confirmed',
+                        conversationId,
+                        branchId: resolvedBranchId,
+                        lineItems
+                    });
+
+                    const confirmationMessage = buildOrderConfirmationMessage({
+                        orderId: createdOrder.orderId,
+                        customerName,
+                        lineItems,
+                        pricing,
+                        estimatedPreparationTime: '25 mins',
+                        estimatedDeliveryTime: '40 mins',
+                        status: 'Confirmed'
+                    });
+
+                    const nextSession = mergeConversationState(conversationSession, {
+                        workflowState: 'Order Created',
+                        draftOrder: {
+                            ...(conversationSession?.draftOrder || {}),
+                            items: resolved.map((item) => ({ name: item.name, quantity: item.quantity })),
+                            orderId: createdOrder.orderId,
+                            total: pricing.finalTotal,
+                            status: 'confirmed',
+                            updatedAt: new Date().toISOString()
+                        },
+                        history: [...(Array.isArray(conversationSession?.history) ? conversationSession.history : []), { role: 'system', message: `Order ${createdOrder.orderId} created` }]
+                    });
+                    await saveConversationSession(nextSession);
 
                     try {
                         reduceMenuStock(resolved, (stockErr) => {
@@ -5715,13 +5873,17 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                     }
 
                     try {
-                        if (typeof io !== 'undefined') io.emit('order-created', { id: orderId, customerName, product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), amount: pricing.finalTotal, status: 'confirmed', date: new Date().toLocaleDateString() });
+                        if (typeof io !== 'undefined') io.emit('order-created', { id: createdOrder.id, orderId: createdOrder.orderId, customerName, product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), amount: pricing.finalTotal, status: 'confirmed', date: new Date().toLocaleDateString() });
                     } catch (emitErr) {
                         console.error('Failed to emit order-created for AI-created order', emitErr);
                     }
 
-                    resolve({ success: true, orderId, product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), amount: pricing.finalTotal, status: 'confirmed', message: confirmationMessage });
-                });
+                    resolve({ success: true, orderId: createdOrder.orderId, product: lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), amount: pricing.finalTotal, status: 'confirmed', message: confirmationMessage });
+                } catch (dbErr) {
+                    console.log('Order save error:', dbErr?.message || dbErr);
+                    resolve({ success: false, message: 'I’m sorry, the order could not be created right now. Please try again.', orderId: null });
+                    return;
+                }
             }
         );
     });
@@ -6098,7 +6260,7 @@ app.post("/webhook", async (req, res) => {
         } else {
             const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-            if (orderConfirmed && orderConfirmed.orderId) {
+            if (orderConfirmed?.success === true && orderConfirmed.orderId) {
                 await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
             } else {
                 const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
@@ -6239,7 +6401,7 @@ app.post('/webhook/messenger', async (req, res) => {
         } else {
             const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text);
             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-            if (orderConfirmed && orderConfirmed.orderId) {
+            if (orderConfirmed?.success === true && orderConfirmed.orderId) {
                 await sendAutoReply(conversationIdValue, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`, platform);
             } else {
                 const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
@@ -6332,7 +6494,7 @@ app.post("/api/test-message", (req, res) => {
                             // Check if this is an order confirmation
                             const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text, requestBranchId);
                             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                            if (orderConfirmed && orderConfirmed.orderId) {
+                            if (orderConfirmed?.success === true && orderConfirmed.orderId) {
                                 await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                             } else {
                                 // Check if AI should respond
@@ -6375,7 +6537,7 @@ app.post("/api/test-message", (req, res) => {
                     } else {
                         const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text, requestBranchId);
                         const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-                        if (orderConfirmed && orderConfirmed.orderId) {
+                            if (orderConfirmed?.success === true && orderConfirmed.orderId) {
                             await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
                         } else {
                             const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
@@ -7533,67 +7695,79 @@ async function createValidatedOrderFromPayload(payload = {}, options = {}) {
         lineTotal: item.totalPrice
     })), { taxRate, deliveryFee, freeDeliveryThreshold, discountAmount });
 
-    const orderId = `ORD-${Date.now()}`;
     const customerName = String(payload.customerName || options.customerName || 'Customer').trim() || 'Customer';
     const phone = payload.phone || options.phone || null;
     const branchId = Number(payload.branchId || options.branchId || 0) || null;
     const orderProduct = validation.productDisplay || String(payload.product || '').trim();
     const status = payload.status || options.status || 'confirmed';
-    const insertSql = isPg
-        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11) RETURNING id'
-        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)';
 
-    return new Promise((resolve) => {
-        db.query(insertSql, [orderId, customerName, phone, orderProduct, pricing.subtotal, pricing.finalTotal, status, pricing.subtotal, pricing.finalTotal, pricing.discountAmount, branchId], async (err, result) => {
-            if (err) {
-                console.error('Error creating order:', err);
-                return resolve({ success: false, error: 'Database error' });
-            }
+    try {
+        const createdOrder = await createFreshOrderRecord({
+            customerName,
+            phone,
+            product: orderProduct,
+            amount: pricing.subtotal,
+            totalAmount: pricing.finalTotal,
+            subtotal: pricing.subtotal,
+            finalTotal: pricing.finalTotal,
+            discountAmount: pricing.discountAmount,
+            status,
+            branchId,
+            lineItems: validation.validatedItems.map((item) => ({
+                name: item.name,
+                quantity: item.quantity,
+                unitPrice: item.price,
+                lineTotal: item.totalPrice
+            }))
+        });
 
-            const orderRecord = {
-                success: true,
-                orderId,
-                id: extractInsertId(result),
+        const orderRecord = {
+            success: true,
+            orderId: createdOrder.orderId,
+            id: createdOrder.id,
+            customerName,
+            phone,
+            product: orderProduct,
+            amount: pricing.finalTotal,
+            subtotal: pricing.subtotal,
+            tax: pricing.tax,
+            deliveryFee: pricing.deliveryFee,
+            discountAmount: pricing.discountAmount,
+            finalTotal: pricing.finalTotal,
+            status,
+            lineItems: validation.validatedItems.map((item) => ({
+                name: item.name,
+                quantity: item.quantity,
+                unitPrice: item.price,
+                lineTotal: item.totalPrice
+            })),
+            confirmationMessage: buildOrderConfirmationMessage({
+                orderId: createdOrder.orderId,
                 customerName,
-                phone,
-                product: orderProduct,
-                amount: pricing.finalTotal,
-                subtotal: pricing.subtotal,
-                tax: pricing.tax,
-                deliveryFee: pricing.deliveryFee,
-                discountAmount: pricing.discountAmount,
-                finalTotal: pricing.finalTotal,
-                status,
                 lineItems: validation.validatedItems.map((item) => ({
                     name: item.name,
                     quantity: item.quantity,
                     unitPrice: item.price,
                     lineTotal: item.totalPrice
                 })),
-                confirmationMessage: buildOrderConfirmationMessage({
-                    orderId,
-                    customerName,
-                    lineItems: validation.validatedItems.map((item) => ({
-                        name: item.name,
-                        quantity: item.quantity,
-                        unitPrice: item.price,
-                        lineTotal: item.totalPrice
-                    })),
-                    pricing,
-                    estimatedPreparationTime: payload.estimatedPreparationTime || options.estimatedPreparationTime || '25 mins',
-                    estimatedDeliveryTime: payload.estimatedDeliveryTime || options.estimatedDeliveryTime || '40 mins',
-                    status: status === 'confirmed' ? 'Confirmed' : status
-                })
-            };
+                pricing,
+                estimatedPreparationTime: payload.estimatedPreparationTime || options.estimatedPreparationTime || '25 mins',
+                estimatedDeliveryTime: payload.estimatedDeliveryTime || options.estimatedDeliveryTime || '40 mins',
+                status: status === 'confirmed' ? 'Confirmed' : status
+            })
+        };
 
-            reduceMenuStock(validation.validatedItems, (stockErr) => {
-                if (stockErr) {
-                    console.error('Error reducing stock for order:', stockErr);
-                }
-                resolve(orderRecord);
-            });
+        reduceMenuStock(validation.validatedItems, (stockErr) => {
+            if (stockErr) {
+                console.error('Error reducing stock for order:', stockErr);
+            }
         });
-    });
+
+        return orderRecord;
+    } catch (err) {
+        console.error('Error creating order:', err);
+        return { success: false, error: 'Database error' };
+    }
 }
 
 // Create new order

@@ -1236,7 +1236,7 @@ function InboxPage({ defaultPlatform = null }) {
                     </div>
                   </div>
 
-                  <div className="mt-4 flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
+                  <div className="mt-4 h-[520px] flex-none overflow-y-scroll pr-1 custom-scrollbar">
                     <div className="space-y-3">
                       {loading ? (
                         <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60 dark:text-slate-400">
@@ -1332,8 +1332,8 @@ function InboxPage({ defaultPlatform = null }) {
                       </div>
 
                       <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
-                        <div ref={messagesViewportRef} className="h-[360px] flex-none overflow-y-scroll overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 pb-24 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
-                          <div className="mx-auto flex w-full max-w-2xl flex-col gap-5">
+                        <div ref={messagesViewportRef} className="relative h-[360px] flex-none overflow-y-scroll overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
+                          <div className="mx-auto flex w-full max-w-xl flex-col gap-5">
                             {messagesLoading ? (
                               <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
                                 Loading message thread...
@@ -1372,19 +1372,19 @@ function InboxPage({ defaultPlatform = null }) {
                             )}
                             <div ref={messagesEndRef} />
                           </div>
-                        </div>
 
-                        <button
-                          type="button"
-                          onClick={() => scrollToBottom('smooth')}
-                          aria-label="Scroll to bottom"
-                          className={`pointer-events-none absolute bottom-5 left-1/2 z-20 inline-flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-white/30 bg-gradient-to-br from-brand-500 via-sky-500 to-cyan-400 text-white shadow-[0_16px_40px_rgba(14,165,233,0.35),0_8px_18px_rgba(15,23,42,0.2)] backdrop-blur-sm transition-all duration-200 ${showScrollToBottom ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'}`}
-                        >
-                          <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M12 5v14" />
-                            <path d="m6 13 6 6 6-6" />
-                          </svg>
-                        </button>
+                          <button
+                            type="button"
+                            onClick={() => scrollToBottom('smooth')}
+                            aria-label="Scroll to bottom"
+                            className={`pointer-events-none absolute bottom-5 left-1/2 z-20 inline-flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-white/30 bg-gradient-to-br from-brand-500 via-sky-500 to-cyan-400 text-white shadow-[0_16px_40px_rgba(14,165,233,0.35),0_8px_18px_rgba(15,23,42,0.2)] backdrop-blur-sm transition-all duration-200 ${showScrollToBottom ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'}`}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 5v14" />
+                              <path d="m6 13 6 6 6-6" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
 
                       <div className="border-t border-slate-200/80 bg-white/70 p-4 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/70">
