@@ -684,7 +684,7 @@ async function getOrderHistory(phone) {
 
         const ordered = results.slice(0, 5);
         const orderSummary = ordered.map(order =>
-            `- ${order.product} ($${order.total_amount ?? order.amount ?? 0}) on ${order.order_date ? new Date(order.order_date).toLocaleDateString() : 'unknown date'}`
+            `- Order ${order.order_id}: ${order.product} ($${order.total_amount ?? order.amount ?? 0}) on ${order.order_date ? new Date(order.order_date).toLocaleDateString() : 'unknown date'}`
         ).join('\n');
 
         const totalSpent = ordered.reduce((sum, order) => sum + parseFloat((order.total_amount ?? order.amount ?? 0).toString()), 0);

@@ -1319,7 +1319,7 @@ function OrdersPage() {
                   </label>
                   <label className="block text-sm text-slate-700 dark:text-slate-200">
                     Phone number
-                    <input value={tableForm.phoneNumber} onChange={(e) => setTableForm((prev) => ({ ...prev, phoneNumber: e.target.value }))} className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
+                    <input value={tableForm.phoneNumber} onChange={(e) => setTableForm((prev) => ({ ...prev, phoneNumber: e.target.value }))} required className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" />
                   </label>
                 </div>
               )}

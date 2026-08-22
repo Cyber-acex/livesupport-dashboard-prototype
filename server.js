@@ -7491,6 +7491,7 @@ app.get('/api/orders', (req, res) => {
             // Format results for frontend
             const formattedResults = results.map(order => ({
                 id: order.order_id,
+                orderId: order.order_id,
                 customerName: order.customer_name,
                 product: order.product,
                 amount: parseFloat(order.total_amount) || 0,
