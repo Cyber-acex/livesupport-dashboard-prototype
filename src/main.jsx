@@ -6,8 +6,8 @@ import './index.css';
 import { getSettings, applyTheme, applyFontSize } from './services/settingsService';
 import { SidebarProvider } from './contexts/SidebarContext';
 import { NotificationProvider } from './contexts/NotificationContext';
-import { VoiceCommunicationProvider } from './contexts/VoiceCommunicationContext';
 import { ZoomProvider } from './contexts/ZoomContext';
+import { VoiceCommunicationProvider } from './contexts/VoiceCommunicationContext';
 
 // Apply theme and font size early to avoid flash during React mount
 try {

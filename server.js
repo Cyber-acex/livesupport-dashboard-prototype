@@ -2,6 +2,7 @@
 import fetch from "node-fetch";
 import http from "http";
 import { Server } from "socket.io";
+import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import "dotenv/config";
 import express from "express";
 import bodyParser from "body-parser";
@@ -39,6 +40,7 @@ import { extractInsertId } from './utils/dbInsert.js';
 import { normalizeOrderRiderId } from './utils/orderRider.js';
 import { routeIncomingPlatformMessage } from './services/platformConversationService.js';
 import { ensureNotificationsTable, getNotificationsForUser, markNotificationRead, markAllNotificationsRead, dismissNotification, createNotification, createBranchNotification } from './services/notificationService.js';
+import { parseReservationDateTime } from './src/utils/tableReservation.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -58,6 +60,10 @@ const agentActivity = new Map(); // conversation_id -> { lastMessage: timestamp,
 const escalationTimers = new Map();
 // Track presence and typing
 const onlineAgents = new Map(); // socketId -> { userId, name, role, socketId, lastActive, activeConversation }
+const voiceOperationBuckets = new Map();
+const VOICE_ROOM_LIMIT = 10;
+const VOICE_OPERATION_LIMIT = 30;
+const VOICE_OPERATION_WINDOW_MS = 10 * 1000;
 const typingIndicators = new Map(); // conversationId -> Set of agent names
 // Track user sessions to support force-logout
 const userSessions = new Map(); // userId -> Set of sessionIDs
@@ -65,15 +71,34 @@ const userSessions = new Map(); // userId -> Set of sessionIDs
 const pendingCsatByPhone = new Map();
 const FEEDBACK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const FEEDBACK_LINK_BASE_URL = process.env.FEEDBACK_LINK_BASE_URL || process.env.APP_URL || '';
+const LIVEKIT_ROOM_LIMIT = 10;
 
-// Voice infrastructure
-const voiceUsers = new Map(); // socketId -> { userId, name, role, socketId, avatarUrl, status, voiceSessionId, muted, speaking, currentChannelId }
-const voiceSessions = new Map(); // sessionId -> { id, type, createdBy, status, room, channelId, participants: Map<socketId, {...}>, startedAt, endedAt }
-const voiceChannels = new Map(); // channelId -> { id, name, description, createdAt, members: Set<socketId>, activeSessionId }
+function getLiveKitConfiguration() {
+    const rawUrl = String(process.env.LIVEKIT_URL || '').trim();
+    const url = rawUrl ? rawUrl.replace(/^ws(s?):\/\//i, (_, secure) => secure ? 'https://' : 'http://').replace(/\/$/, '') : '';
+    return {
+        url,
+        clientUrl: rawUrl,
+        apiKey: String(process.env.LIVEKIT_API_KEY || '').trim(),
+        apiSecret: String(process.env.LIVEKIT_API_SECRET || '').trim()
+    };
+}
 
-const callSessions = new Map(); // secureToken -> { secureToken, conversationId, customerName, staffId, staffName, status, createdAt, expiresAt, startedAt, answeredAt, endedAt, duration, staffSocketId, customerSocketId, timeoutId }
-const CALL_EXPIRY_MINUTES = Number(process.env.CALL_SESSION_EXPIRY_MINUTES || 15);
-const CALL_UNANSWERED_TIMEOUT_MS = 60 * 1000;
+function getLiveKitStatus() {
+    const config = getLiveKitConfiguration();
+    return {
+        configured: Boolean(config.url && config.apiKey && config.apiSecret),
+        urlConfigured: Boolean(config.url),
+        credentialsConfigured: Boolean(config.apiKey && config.apiSecret)
+    };
+}
+
+const livekitStartupStatus = getLiveKitStatus();
+console.log('LiveKit configuration', {
+    configured: livekitStartupStatus.configured,
+    urlConfigured: livekitStartupStatus.urlConfigured,
+    credentialsConfigured: livekitStartupStatus.credentialsConfigured
+});
 
 // Dashboard snapshots storage
 const dashboardSnapshots = new Map(); // name -> { data, saved_at }
@@ -83,62 +108,6 @@ const WEBHOOK_EVENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const messageProcessingCache = new Map(); // idempotency cache for duplicate message processing
 const MESSAGE_PROCESSING_CACHE_TTL_MS = 5 * 60 * 1000;
 const CHAT_SESSION_TTL_MS = 30 * 60 * 1000;
-
-const defaultVoiceChannels = [
-    { id: 1, name: 'General Staff', description: 'Open staff channel for general coordination', createdAt: new Date().toISOString() },
-    { id: 2, name: 'Support Team', description: 'Support staff only', createdAt: new Date().toISOString() },
-    { id: 3, name: 'Sales Team', description: 'Sales and upsell coordination', createdAt: new Date().toISOString() },
-    { id: 4, name: 'Management', description: 'Leadership and escalation channel', createdAt: new Date().toISOString() }
-];
-
-function ensureDefaultVoiceChannels() {
-    if (voiceChannels.size) return;
-    defaultVoiceChannels.forEach(channel => {
-        voiceChannels.set(channel.id, Object.assign({}, channel, { members: new Set(), activeSessionId: null }));
-    });
-}
-
-function broadcastVoicePresence() {
-    const list = Array.from(voiceUsers.values()).map(u => ({
-        userId: u.userId,
-        name: u.name,
-        role: u.role,
-        status: u.status || 'offline',
-        voiceSessionId: u.voiceSessionId || null,
-        muted: !!u.muted,
-        speaking: !!u.speaking,
-        currentChannelId: u.currentChannelId || null,
-        avatarUrl: u.avatarUrl || null
-    }));
-    io.emit('voice:presenceUpdate', list);
-}
-
-function getVoiceChannelList() {
-    ensureDefaultVoiceChannels();
-    return Array.from(voiceChannels.values()).map(ch => ({
-        id: ch.id,
-        name: ch.name,
-        description: ch.description,
-        memberCount: ch.members.size,
-        hasActiveSession: !!ch.activeSessionId
-    }));
-}
-
-function normalizeVoiceUser(socket, data) {
-    if (!socket || !data) return null;
-    return {
-        userId: data.userId,
-        name: data.name || data.displayName || 'Staff',
-        role: data.role || 'agent',
-        avatarUrl: data.avatarUrl || null,
-        socketId: socket.id,
-        status: data.status || 'online',
-        voiceSessionId: data.voiceSessionId || null,
-        muted: !!data.muted,
-        speaking: !!data.speaking,
-        currentChannelId: data.currentChannelId || null
-    };
-}
 
 async function ensureBranchSelectionTables() {
     try {
@@ -498,242 +467,6 @@ function shouldAIRespond(conversationId) {
         mapKeys: Array.from(agentActivity.keys())
     });
     return should;
-}
-
-async function initVoiceChannelsFromDb() {
-    ensureDefaultVoiceChannels();
-    try {
-        const channels = await prisma.voiceChannel.findMany();
-        if (Array.isArray(channels) && channels.length > 0) {
-            voiceChannels.clear();
-            channels.forEach(channel => {
-                voiceChannels.set(channel.id, Object.assign({}, channel, { members: new Set(), activeSessionId: null }));
-            });
-        }
-    } catch (err) {
-        console.warn('Voice channel DB load failed, using defaults', err?.message || err);
-    }
-}
-
-async function persistVoiceSession(session) {
-    if (!prisma || !session) return null;
-    try {
-        const created = await prisma.voiceSession.create({
-            data: {
-                type: session.type.toUpperCase(),
-                createdBy: session.createdBy || null,
-                startedAt: session.startedAt ? new Date(session.startedAt) : null,
-                endedAt: session.endedAt ? new Date(session.endedAt) : null,
-                status: session.status.toUpperCase(),
-                channelId: session.channelId || null
-            }
-        });
-        return created;
-    } catch (err) {
-        console.warn('persistVoiceSession failed', err?.message || err);
-        return null;
-    }
-}
-
-async function persistVoiceParticipants(sessionId, participants) {
-    if (!prisma || !sessionId || !Array.isArray(participants)) return [];
-    try {
-        return await Promise.all(participants.map(p => prisma.voiceParticipant.create({
-            data: {
-                sessionId,
-                userId: p.userId,
-                joinedAt: p.joinedAt ? new Date(p.joinedAt) : new Date(),
-                leftAt: p.leftAt ? new Date(p.leftAt) : null,
-                muted: !!p.muted
-            }
-        })));
-    } catch (err) {
-        console.warn('persistVoiceParticipants failed', err?.message || err);
-        return [];
-    }
-}
-
-function saveVoiceActivity(socketId, data) {
-    const user = voiceUsers.get(socketId);
-    if (!user) return;
-    user.speaking = !!data.speaking;
-    user.muted = !!data.muted;
-    user.status = data.status || user.status || 'online';
-    voiceUsers.set(socketId, user);
-    broadcastVoicePresence();
-}
-
-function getSocketByUserId(userId) {
-    for (const [socketId, record] of voiceUsers.entries()) {
-        if (String(record.userId) === String(userId)) return socketId;
-    }
-    return null;
-}
-
-function getVoiceSessionById(sessionId) {
-    return voiceSessions.get(sessionId) || null;
-}
-
-function endVoiceSession(sessionId, reason = 'ended') {
-    const session = voiceSessions.get(sessionId);
-    if (!session) return;
-    session.status = 'ended';
-    session.endedAt = new Date().toISOString();
-    session.participants.forEach((participant, socketId) => {
-        const user = voiceUsers.get(socketId);
-        if (user) {
-            user.voiceSessionId = null;
-            user.status = 'online';
-            voiceUsers.set(socketId, user);
-        }
-    });
-    voiceSessions.delete(sessionId);
-    broadcastVoicePresence();
-}
-
-function getRoomName(sessionId) {
-    return `voice-session-${sessionId}`;
-}
-
-function generateSecureToken(length = 64) {
-    return randomBytes(length).toString('hex');
-}
-
-function expireCallSession(token) {
-    const record = callSessions.get(token);
-    if (!record) return;
-    if (record.status === 'waiting' || record.status === 'ringing') {
-        record.status = 'missed';
-        record.endedAt = new Date().toISOString();
-        record.duration = 0;
-        record.timeoutId = null;
-        callSessions.set(token, record);
-        persistCallSession(record).catch(() => {});
-        if (record.staffSocketId) {
-            io.to(record.staffSocketId).emit('call:missed', { secureToken: token, status: record.status });
-        }
-        if (record.customerSocketId) {
-            io.to(record.customerSocketId).emit('call:status', { secureToken: token, status: record.status });
-        }
-    }
-}
-
-function createCallTimeout(token) {
-    const record = callSessions.get(token);
-    if (!record) return;
-    if (record.timeoutId) {
-        clearTimeout(record.timeoutId);
-    }
-    record.timeoutId = setTimeout(() => {
-        expireCallSession(token);
-    }, CALL_UNANSWERED_TIMEOUT_MS);
-    callSessions.set(token, record);
-}
-
-function cleanupCallSession(token) {
-    const record = callSessions.get(token);
-    if (!record) return;
-    if (record.timeoutId) {
-        clearTimeout(record.timeoutId);
-        record.timeoutId = null;
-    }
-    callSessions.delete(token);
-}
-
-function findCallSessionBySocket(socketId) {
-    for (const [token, session] of callSessions.entries()) {
-        if (session.staffSocketId === socketId || session.customerSocketId === socketId) {
-            return session;
-        }
-    }
-    return null;
-}
-
-function getOppositeSocket(token, socketId) {
-    const session = callSessions.get(token);
-    if (!session) return null;
-    if (session.staffSocketId === socketId) return session.customerSocketId;
-    if (session.customerSocketId === socketId) return session.staffSocketId;
-    return null;
-}
-
-function persistCallSession(session) {
-    return new Promise((resolve, reject) => {
-        if (!session || !session.secureToken) return resolve(null);
-        const values = [
-            session.secureToken,
-            session.conversationId,
-            session.customerName,
-            session.staffId,
-            session.staffName,
-            session.status,
-            session.startedAt ? session.startedAt : null,
-            session.answeredAt ? session.answeredAt : null,
-            session.endedAt ? session.endedAt : null,
-            session.duration,
-            session.expiresAt,
-            session.createdAt,
-            new Date().toISOString()
-        ];
-        const insertSql = isPg
-            ? `INSERT INTO call_sessions (secure_token, conversation_id, customer_name, staff_id, staff_name, status, started_at, answered_at, ended_at, duration, expires_at, created_at, updated_at)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-                   ON CONFLICT (secure_token) DO UPDATE SET
-                     conversation_id = EXCLUDED.conversation_id,
-                     customer_name = EXCLUDED.customer_name,
-                     staff_id = EXCLUDED.staff_id,
-                     staff_name = EXCLUDED.staff_name,
-                     status = EXCLUDED.status,
-                     started_at = EXCLUDED.started_at,
-                     answered_at = EXCLUDED.answered_at,
-                     ended_at = EXCLUDED.ended_at,
-                     duration = EXCLUDED.duration,
-                     expires_at = EXCLUDED.expires_at,
-                     updated_at = EXCLUDED.updated_at`
-            : `INSERT INTO call_sessions (secure_token, conversation_id, customer_name, staff_id, staff_name, status, started_at, answered_at, ended_at, duration, expires_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON DUPLICATE KEY UPDATE
-                     conversation_id = VALUES(conversation_id),
-                     customer_name = VALUES(customer_name),
-                     staff_id = VALUES(staff_id),
-                     staff_name = VALUES(staff_name),
-                     status = VALUES(status),
-                     started_at = VALUES(started_at),
-                     answered_at = VALUES(answered_at),
-                     ended_at = VALUES(ended_at),
-                     duration = VALUES(duration),
-                     expires_at = VALUES(expires_at),
-                     updated_at = VALUES(updated_at)`;
-
-        db.query(insertSql, values, (err) => {
-            if (err) {
-                console.error('persistCallSession error', err);
-                return reject(err);
-            }
-            resolve(session);
-        });
-    });
-}
-
-function getVoiceSessionSummary(session) {
-    return {
-        id: session.id,
-        type: session.type,
-        status: session.status,
-        createdBy: session.createdBy,
-        channelId: session.channelId || null,
-        startedAt: session.startedAt || null,
-        endedAt: session.endedAt || null,
-        participants: Array.from(session.participants.values()).map(participant => ({
-            userId: participant.userId,
-            name: participant.name,
-            role: participant.role,
-            muted: !!participant.muted,
-            speaking: !!participant.speaking,
-            joinedAt: participant.joinedAt,
-            leftAt: participant.leftAt || null
-        }))
-    };
 }
 
 function logIncomingMessagePayload(platform, conversationIdentifier, senderType, text, extra = {}) {
@@ -1649,12 +1382,13 @@ if (isPg) {
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 
-app.use(session({
+const sessionMiddleware = session({
     secret: "livesupportsecret",
     resave: false,
     saveUninitialized: true,
     cookie: { maxAge: 24 * 60 * 60 * 1000 } // Default 24 hours
-}));
+});
+app.use(sessionMiddleware);
 
 // Update lastActivity timestamp for authenticated sessions on each request
 app.use((req, res, next) => {
@@ -3253,14 +2987,11 @@ app.get('/api/tables', async (req, res) => {
             isBooking: false
         }));
 
-        const updateReservedToOccupiedSql = `UPDATE restaurant_tables SET status = 'occupied', updated_at = NOW() WHERE status = 'reserved' AND reserved_until <= NOW()`;
         const updateExpiredOccupiedSql = `UPDATE restaurant_tables SET status = 'vacant', customer_name = NULL, reserved_until = NULL, is_booking = FALSE, updated_at = NOW() WHERE status = 'occupied' AND reserved_until <= NOW() AND is_booking = FALSE`;
 
-        db.query(updateReservedToOccupiedSql, (updateErr) => {
-            if (updateErr) console.warn('Failed to update expired reservations:', updateErr.message || updateErr);
-            db.query(updateExpiredOccupiedSql, (expiredErr) => {
-                if (expiredErr) console.warn('Failed to update expired occupied table states:', expiredErr.message || expiredErr);
-                db.query('SELECT id, number, label, status, customer_name, reserved_until, is_booking FROM restaurant_tables ORDER BY number', (err, rows) => {
+        db.query(updateExpiredOccupiedSql, (expiredErr) => {
+            if (expiredErr) console.warn('Failed to update expired occupied table states:', expiredErr.message || expiredErr);
+            db.query('SELECT id, number, label, status, customer_name, reserved_until, is_booking FROM restaurant_tables ORDER BY number', (err, rows) => {
                     if (err) {
                         console.warn('GET /api/tables db error, returning fallback tables:', err.message || err);
                         return res.json(fallbackTables);
@@ -3293,7 +3024,6 @@ app.get('/api/tables', async (req, res) => {
                     });
 
                     res.json(normalizedTables);
-                });
             });
         });
     } catch (e) {
@@ -3316,8 +3046,8 @@ app.put('/api/tables/:number', express.json(), async (req, res) => {
             return res.status(400).json({ error: 'invalid payload' });
         }
 
-        const reservedUntilValue = reservedUntil ? new Date(reservedUntil) : null;
-        if (reservedUntil && isNaN(reservedUntilValue.getTime())) {
+        const reservedUntilValue = reservedUntil ? parseReservationDateTime(reservedUntil) : null;
+        if (reservedUntil && !reservedUntilValue) {
             return res.status(400).json({ error: 'invalid reservedUntil value' });
         }
 
@@ -4398,58 +4128,6 @@ app.get('/api/staff-presence', isAuthenticated, (req, res) => {
     res.json(staffPresence);
 });
 
-// Voice directory: return every staff member in the authenticated user's branch.
-// The online flag is derived from the live Socket.IO agent registry.
-app.get('/api/voice/staff', isAuthenticated, async (req, res) => {
-    try {
-        const branchId = Number(req.session?.branchId || req.session?.branch?.id || req.session?.user?.branch_id || 0);
-        if (!branchId) return res.json([]);
-
-        const staff = await prisma.staff.findMany({
-            where: { branch_id: branchId },
-            orderBy: { fullName: 'asc' },
-            select: {
-                id: true,
-                fullName: true,
-                email: true,
-                role: true,
-                branch_id: true,
-                branch: { select: { id: true, name: true } }
-            }
-        });
-
-        const onlineByUserId = new Map();
-        for (const agent of onlineAgents.values()) {
-            if (agent?.userId != null) onlineByUserId.set(String(agent.userId), agent);
-        }
-        for (const voiceUser of voiceUsers.values()) {
-            if (voiceUser?.userId != null) {
-                onlineByUserId.set(String(voiceUser.userId), voiceUser);
-            }
-        }
-
-        res.json(staff.map((member) => {
-            const presence = onlineByUserId.get(String(member.id));
-            const status = presence?.status || 'offline';
-            return {
-                id: member.id,
-                name: member.fullName || member.email || 'Staff',
-                email: member.email,
-                role: member.role || 'staff',
-                branchId: member.branch_id,
-                branchName: member.branch?.name || null,
-                online: Boolean(presence),
-                status,
-                speaking: Boolean(presence?.speaking),
-                muted: Boolean(presence?.muted)
-            };
-        }));
-    } catch (error) {
-        console.error('Failed to load voice staff directory:', error);
-        res.status(500).json({ error: 'voice_staff_lookup_failed' });
-    }
-});
-
 // ---------------------------
 // Settings API (per-user)
 // ---------------------------
@@ -4496,50 +4174,6 @@ if (isPg) {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (err) => { if (err) console.error('Error creating user_avatars table:', err); });
 }
-
-if (isPg) {
-    db.query(`
-        CREATE TABLE IF NOT EXISTS call_sessions (
-            secure_token TEXT PRIMARY KEY,
-            conversation_id INT NOT NULL,
-            customer_name TEXT,
-            staff_id INT NOT NULL,
-            staff_name TEXT NOT NULL,
-            status VARCHAR(50) NOT NULL,
-            started_at TIMESTAMP,
-            answered_at TIMESTAMP,
-            ended_at TIMESTAMP,
-            duration INT,
-            expires_at TIMESTAMP NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-        );
-    `, (err) => {
-        if (err) console.error('Error creating call_sessions table (pg):', err);
-    });
-} else {
-    db.query(`
-        CREATE TABLE IF NOT EXISTS call_sessions (
-            secure_token VARCHAR(255) PRIMARY KEY,
-            conversation_id INT NOT NULL,
-            customer_name TEXT,
-            staff_id INT NOT NULL,
-            staff_name VARCHAR(255) NOT NULL,
-            status VARCHAR(50) NOT NULL,
-            started_at DATETIME NULL,
-            answered_at DATETIME NULL,
-            ended_at DATETIME NULL,
-            duration INT NULL,
-            expires_at DATETIME NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    `, (err) => {
-        if (err) console.error('Error creating call_sessions table:', err);
-    });
-}
-
-
 
 // ---------------------------
 // Conversations & Messages
@@ -4697,6 +4331,7 @@ app.put('/api/conversations', isAuthenticated, (req, res) => {
     });
 });
 
+/* Customer call-link feature removed.
 app.post('/api/call-sessions', isAuthenticated, express.json(), (req, res) => {
     const staffId = req.session.userId;
     const staffName = req.session.user?.name || 'Support';
@@ -4835,6 +4470,7 @@ app.delete('/api/call-sessions/:token', isAuthenticated, (req, res) => {
     res.json({ success: true });
 });
 
+*/
 app.delete('/api/conversations', isAuthenticated, (req, res) => {
     const { id } = req.body || {};
     if (!id) {
@@ -8111,8 +7747,28 @@ const io = new Server(httpServer, {
     reconnectionAttempts: 5
 });
 globalThis.io = io;
+io.engine.use(sessionMiddleware);
 
 io.on("connection", (socket) => {
+    const sessionUser = socket.request?.session?.user;
+    const authenticatedUser = sessionUser && sessionUser.id ? {
+        userId: Number(sessionUser.id),
+        name: sessionUser.name || sessionUser.displayName || sessionUser.email || 'Staff',
+        role: String(sessionUser.role || 'staff').toLowerCase(),
+        branchId: sessionUser.branch_id != null ? Number(sessionUser.branch_id) : null
+    } : null;
+
+    if (!authenticatedUser) {
+        socket.emit('voice:auth:error', { error: 'not_logged_in' });
+        socket.disconnect(true);
+        return;
+    }
+
+    socket.join(`branch:${authenticatedUser.branchId || 'none'}`);
+    onlineAgents.set(socket.id, { ...authenticatedUser, socketId: socket.id, lastActive: Date.now(), status: 'active' });
+    const branchStaff = Array.from(onlineAgents.values()).filter((agent) => agent.branchId === authenticatedUser.branchId).map(({ userId, name, role, branchId, status }) => ({ userId, name, role, branchId, status }));
+    io.to(`branch:${authenticatedUser.branchId || 'none'}`).emit('voice:presence', branchStaff);
+
     console.log("New client connected:", socket.id);
     socket.join("inbox");
 
@@ -8146,6 +7802,7 @@ io.on("connection", (socket) => {
 
     // Agent registers after connecting with their user info
     socket.on("agent:register", (agent) => {
+        if (!authenticatedUser) return;
         // agent: { userId, name, role }
         try {
             const role = agent && agent.role ? String(agent.role).toLowerCase() : null;
@@ -8156,7 +7813,7 @@ io.on("connection", (socket) => {
             }
         } catch (e) {}
 
-        const record = Object.assign({}, agent, { socketId: socket.id, lastActive: Date.now(), activeConversation: null, autopilotMode: agent.autopilotMode || 'auto', status: 'online' });
+        const record = Object.assign({}, onlineAgents.get(socket.id), { socketId: socket.id, lastActive: Date.now(), activeConversation: null, autopilotMode: agent.autopilotMode || 'auto', status: 'active' });
         onlineAgents.set(socket.id, record);
         // Broadcast presence list to all clients
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, status: a.status || 'online', activeConversation: a.activeConversation }));
@@ -8237,6 +7894,7 @@ io.on("connection", (socket) => {
         });
     });
 
+    /* Legacy staff voice Socket.IO handlers removed from the active server path.
     socket.on('voice:register', (data, ack) => {
         console.log('[Voice Server] 🎤 voice:register received:', { socketId: socket.id, userId: data?.userId, name: data?.name });
         const record = normalizeVoiceUser(socket, Object.assign({}, data, { status: 'online', socketId: socket.id }));
@@ -8357,6 +8015,8 @@ io.on("connection", (socket) => {
         }
     });
 
+    */
+    /* Customer call-link Socket.IO handlers removed.
     socket.on('call:register', (data) => {
         if (!data || !data.secureToken || !data.role) return;
         const session = callSessions.get(data.secureToken);
@@ -8510,32 +8170,19 @@ io.on("connection", (socket) => {
         });
     });
 
+    */
     socket.on('disconnect', () => {
         onlineAgents.delete(socket.id);
-        voiceUsers.delete(socket.id);
-        for (const channel of voiceChannels.values()) {
-            if (channel.members.has(socket.id)) {
-                channel.members.delete(socket.id);
-            }
+        if (authenticatedUser) {
+            const branchStaff = Array.from(onlineAgents.values()).filter((agent) => agent.branchId === authenticatedUser.branchId).map(({ userId, name, role, branchId, status }) => ({ userId, name, role, branchId, status }));
+            io.to(`branch:${authenticatedUser.branchId || 'none'}`).emit('voice:presence', branchStaff);
         }
-        broadcastVoicePresence();
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
         io.emit('presenceUpdate', list);
-        const callSession = findCallSessionBySocket(socket.id);
-        if (callSession) {
-            callSession.status = 'ended';
-            callSession.endedAt = new Date().toISOString();
-            callSession.duration = callSession.startedAt ? Math.max(0, Math.round((new Date(callSession.endedAt) - new Date(callSession.startedAt)) / 1000)) : 0;
-            persistCallSession(callSession).catch(() => {});
-            const otherSocket = getOppositeSocket(callSession.secureToken, socket.id);
-            if (otherSocket) {
-                io.to(otherSocket).emit('call:ended', { secureToken: callSession.secureToken });
-            }
-            cleanupCallSession(callSession.secureToken);
-        }
         console.log("Client disconnected:", socket.id);
     });
 
+    /* Legacy private, broadcast, and channel voice handlers removed from the active server path.
     const handlePrivateCallRequest = (data) => {
         if (!data || !data.targetUserId || !data.sessionId) return;
         const caller = voiceUsers.get(socket.id) || (data.caller ? {
@@ -8774,15 +8421,9 @@ io.on("connection", (socket) => {
         });
     });
 
+    */
     socket.on("disconnect", () => {
         onlineAgents.delete(socket.id);
-        voiceUsers.delete(socket.id);
-        for (const channel of voiceChannels.values()) {
-            if (channel.members.has(socket.id)) {
-                channel.members.delete(socket.id);
-            }
-        }
-        broadcastVoicePresence();
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
         io.emit("presenceUpdate", list);
         console.log("Client disconnected:", socket.id);
@@ -9516,14 +9157,8 @@ httpServer.listen(PORT, () => {
                 } else {
                     console.log('DB connection test succeeded');
                 }
-                initVoiceChannelsFromDb().catch(err => {
-                    console.warn('Voice channel initialization failed:', err?.message || err);
-                });
             });
         } else {
-            initVoiceChannelsFromDb().catch(err => {
-                console.warn('Voice channel initialization failed:', err?.message || err);
-            });
         }
 
         console.log('Delivery tracking metrics will be kept in memory for this server process.');
@@ -9780,5 +9415,94 @@ app.post('/api/translate', express.json(), async (req, res) => {
     } catch (err) {
         console.error('POST /api/translate error', err);
         res.status(500).json({ error: 'internal_error' });
+    }
+});
+
+app.get('/api/voice/health', isAuthenticated, async (req, res) => {
+    const hasAuthenticatedSocket = Array.from(onlineAgents.values()).some((agent) => String(agent.userId) === String(req.session.userId || req.session.user?.id));
+    let database = 'AVAILABLE';
+    try {
+        await prisma.voiceChannel.count();
+    } catch (error) {
+        database = 'UNAVAILABLE';
+        console.warn('Voice health database check failed', { reason: error?.message || 'unknown' });
+    }
+    const livekitStatus = getLiveKitStatus();
+    let livekitConnectivity = livekitStatus.configured ? 'UNKNOWN' : 'NOT_CONFIGURED';
+    if (livekitStatus.configured) {
+        try {
+            const config = getLiveKitConfiguration();
+            const roomService = new RoomServiceClient(config.url, config.apiKey, config.apiSecret);
+            await Promise.race([
+                roomService.listRooms([]),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('health_timeout')), 2500))
+            ]);
+            livekitConnectivity = 'AVAILABLE';
+        } catch (error) {
+            livekitConnectivity = 'UNAVAILABLE';
+            console.warn('LiveKit health connectivity check failed', { reason: error?.message || 'unknown' });
+        }
+    }
+    res.json({
+        voice: livekitStatus.configured ? 'available' : 'not_configured',
+        authentication: 'AVAILABLE',
+        socket: hasAuthenticatedSocket ? 'AVAILABLE' : 'UNAVAILABLE',
+        database,
+        tokenGeneration: livekitStatus.configured ? 'AVAILABLE' : 'UNAVAILABLE',
+        turn: 'DELEGATED_TO_LIVEKIT',
+        sfu: livekitStatus.configured ? 'CONFIGURED' : 'NOT_CONFIGURED',
+        livekit: {
+            configured: livekitStatus.configured,
+            urlConfigured: livekitStatus.urlConfigured,
+            credentialsConfigured: livekitStatus.credentialsConfigured,
+            connectivity: livekitConnectivity
+        }
+    });
+});
+
+app.post('/api/voice/livekit-token', isAuthenticated, async (req, res) => {
+    const user = req.session.user;
+    const livekitConfig = getLiveKitConfiguration();
+    const tokenKey = `token:${user.id}`;
+    const tokenNow = Date.now();
+    const tokenBucket = voiceOperationBuckets.get(tokenKey) || { startedAt: tokenNow, count: 0 };
+    if (tokenNow - tokenBucket.startedAt >= VOICE_OPERATION_WINDOW_MS) {
+        tokenBucket.startedAt = tokenNow;
+        tokenBucket.count = 0;
+    }
+    tokenBucket.count += 1;
+    voiceOperationBuckets.set(tokenKey, tokenBucket);
+    if (tokenBucket.count > 5) {
+        return res.status(429).json({ error: 'voice_token_rate_limited' });
+    }
+    const branchId = Number(req.session.branchId || req.session.branch?.id || user?.branch_id || 0);
+    const requestedChannel = String(req.body?.channelId || '');
+    const expectedChannel = `branch:${branchId}`;
+    if (!branchId || requestedChannel !== expectedChannel) {
+        return res.status(403).json({ error: 'unauthorized_voice_channel' });
+    }
+    if (!getLiveKitStatus().configured) {
+        return res.status(503).json({ error: 'livekit_not_configured' });
+    }
+
+    const room = `livesupport-branch-${branchId}`;
+    try {
+        const roomService = new RoomServiceClient(livekitConfig.url, livekitConfig.apiKey, livekitConfig.apiSecret);
+        const participants = await roomService.listParticipants(room);
+        if (participants.length >= LIVEKIT_ROOM_LIMIT && !participants.some((participant) => String(participant.identity) === String(user.id))) {
+            return res.status(409).json({ error: 'voice_room_full' });
+        }
+        const token = new AccessToken(livekitConfig.apiKey, livekitConfig.apiSecret, {
+            identity: String(user.id),
+            name: user.name || user.email || `Staff ${user.id}`,
+            ttl: '10m'
+        });
+        token.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true, roomCreate: false });
+        const jwt = await token.toJwt();
+        console.log('Voice token authorized', { userId: user.id, branchId, room });
+        return res.json({ token: jwt, url: livekitConfig.clientUrl, room });
+    } catch (error) {
+        console.error('Voice token generation failed', { userId: user.id, branchId, reason: error?.message || 'unknown' });
+        return res.status(500).json({ error: 'voice_token_failed' });
     }
 });

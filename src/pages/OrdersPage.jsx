@@ -17,7 +17,7 @@ import {
   updateTableState
 } from '../services/ordersService';
 import { fetchRiders } from '../services/deliveriesService';
-import { buildOccupiedFromReservationPayload, buildOrderTableTransitionPayload, canUseTableForOrder, shouldTransitionReservedTable } from '../utils/tableReservation';
+import { buildOccupiedFromReservationPayload, buildOrderTableTransitionPayload, canUseTableForOrder, formatReservationDateTime, getTableStatus, parseReservationDateTime, shouldTransitionReservedTable, toReservationInputValue } from '../utils/tableReservation';
 
 const socket = io();
 const STATUS_OPTIONS = ['pending', 'processing', 'completed', 'cancelled'];
@@ -308,7 +308,7 @@ function OrdersPage() {
 
   const tableStats = useMemo(() => {
     const totals = tables.reduce((acc, table) => {
-      const status = normalizeTableStatus(table.status);
+      const status = getTableStatus(table, new Date());
       acc.total += 1;
       acc[status] = (acc[status] || 0) + 1;
       return acc;
@@ -322,7 +322,7 @@ function OrdersPage() {
       out_of_service: 0
     });
     return totals;
-  }, [tables]);
+  }, [tables, sessionTick]);
 
   const tableStatusLegend = [
     {
@@ -378,7 +378,7 @@ function OrdersPage() {
   const getTableStatusMeta = (status) => tableStatusLegend.find((item) => item.value === normalizeTableStatus(status)) || tableStatusLegend[0];
 
   const getPrimaryTableActions = (table) => {
-    const status = normalizeTableStatus(table.status);
+    const status = getTableStatus(table, new Date());
     if (status === 'vacant') {
       return [
         { label: 'Reserve', action: 'reserve', style: 'primary' },
@@ -410,7 +410,7 @@ function OrdersPage() {
   };
 
   const getMoreTableActions = (table) => {
-    const status = normalizeTableStatus(table.status);
+    const status = getTableStatus(table, new Date());
     const actions = [
       { label: 'View Table Details', action: 'details' },
       { label: 'View Booking / Reservation', action: 'booking' },
@@ -455,7 +455,7 @@ function OrdersPage() {
       customerName: table?.customerName || '',
       phoneNumber: table?.phoneNumber || '',
       guestCount: table?.guestCount || '2',
-      reservationDateTime: table?.reservedUntil ? new Date(table.reservedUntil).toISOString().slice(0, 16) : '',
+      reservationDateTime: table?.reservedUntil ? toReservationInputValue(table.reservedUntil) : '',
       notes: table?.notes || '',
       assignedStaff: table?.assignedStaff || '',
       status: table?.status || 'vacant'
@@ -789,7 +789,7 @@ function OrdersPage() {
     setTableActionPending(true);
     try {
       if (tableDialog.mode === 'reserve') {
-        const reservationTime = tableForm.reservationDateTime ? new Date(tableForm.reservationDateTime).toISOString() : null;
+        const reservationTime = tableForm.reservationDateTime ? parseReservationDateTime(tableForm.reservationDateTime)?.toISOString() : null;
         if (!tableForm.customerName.trim() || !tableForm.phoneNumber.trim() || !tableForm.guestCount || !tableForm.reservationDateTime) {
           throw new Error('Please complete all reservation fields.');
         }
@@ -814,7 +814,7 @@ function OrdersPage() {
         });
         success(`Table ${tableDialog.table.number} reserved.`);
       } else if (tableDialog.mode === 'book') {
-        const reservationTime = tableForm.reservationDateTime ? new Date(tableForm.reservationDateTime).toISOString() : null;
+        const reservationTime = tableForm.reservationDateTime ? parseReservationDateTime(tableForm.reservationDateTime)?.toISOString() : null;
         if (!tableForm.guestCount || !tableForm.reservationDateTime || !reservationTime || Number.isNaN(new Date(reservationTime).getTime())) {
           throw new Error('Please enter a valid reservation time and guest count.');
         }
@@ -840,7 +840,7 @@ function OrdersPage() {
           isBooking: true,
           sessionStartedAt: null
         });
-        success(`Table ${tableDialog.table.number} booked for ${new Date(reservationTime).toLocaleString()}.`);
+        success(`Table ${tableDialog.table.number} booked for ${formatReservationDateTime(reservationTime)}.`);
       } else if (tableDialog.mode === 'status') {
         updateTableLocally(tableDialog.table.number, { status: tableForm.status, reservedUntil: null, isBooking: false, customerName: tableForm.customerName || null });
         await updateTableState(tableDialog.table.number, {
@@ -1190,7 +1190,8 @@ function OrdersPage() {
                       </div>
                       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {tables.map((table) => {
-                          const statusMeta = tableStatusLegend.find((item) => item.value === (table.status || 'vacant')) || tableStatusLegend[0];
+                          const status = getTableStatus(table, new Date());
+                          const statusMeta = tableStatusLegend.find((item) => item.value === status) || tableStatusLegend[0];
                           return (
                             <div key={table.number} className={`rounded-2xl border p-4 ${statusMeta.cardClass}`}>
                               <div className="flex items-start justify-between gap-3">
@@ -1216,7 +1217,7 @@ function OrdersPage() {
                               {statusMeta.value === 'occupied' && formatSessionTimer(table) ? (
                                 <p className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-300">Session: {formatSessionTimer(table)}</p>
                               ) : null}
-                              {table.reservedUntil ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Until {new Date(table.reservedUntil).toLocaleString()}</p> : null}
+                              {table.reservedUntil ? <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Until {formatReservationDateTime(table.reservedUntil)}</p> : null}
                               <div className="mt-4 flex flex-wrap items-center gap-2">
                                 {getPrimaryTableActions(table).map((actionItem) => (
                                   <button
@@ -1302,7 +1303,7 @@ function OrdersPage() {
                   <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Table</p>
                   <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{tableDialog.table.label || `Table ${tableDialog.table.number}`}</p>
                   <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${getTableStatusMeta(tableDialog.table.status).badgeClass}`}>
-                    {getTableStatusMeta(tableDialog.table.status).label}
+                    {getTableStatusMeta(getTableStatus(tableDialog.table, new Date())).label}
                   </span>
                 </div>
                 <div className="space-y-2">
@@ -1372,7 +1373,7 @@ function OrdersPage() {
                 <div className="grid gap-4 lg:grid-cols-2">
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Status</p>
-                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{getTableStatusMeta(tableDialog.table.status).label}</p>
+                    <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{getTableStatusMeta(getTableStatus(tableDialog.table, new Date())).label}</p>
                   </div>
                   <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Guests</p>
@@ -1419,7 +1420,7 @@ function OrdersPage() {
               </div>
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Current status</p>
-                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{getTableStatusMeta(tableConfirm.table.status).label}</p>
+                <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-slate-100">{getTableStatusMeta(getTableStatus(tableConfirm.table, new Date())).label}</p>
               </div>
               <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                 <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Customer</p>

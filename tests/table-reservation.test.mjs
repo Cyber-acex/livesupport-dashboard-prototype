@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getTableStatus, shouldTransitionReservedTable, buildOccupiedFromReservationPayload } from '../src/utils/tableReservation.js';
+import { formatReservationDateTime, getTableStatus, parseReservationDateTime, shouldTransitionReservedTable, buildOccupiedFromReservationPayload } from '../src/utils/tableReservation.js';
 
 test('marks reserved tables as occupied once the reservation time is reached', () => {
   const now = new Date('2026-07-13T18:30:00.000Z');
@@ -47,4 +47,16 @@ test('preserves explicit states and returns cancelled reservations to vacant', (
   assert.equal(getTableStatus({ status: 'maintenance', reservedUntil: '2026-08-22T19:00:00.000Z' }, now), 'maintenance');
   assert.equal(getTableStatus({ status: 'out of service' }, now), 'out_of_service');
   assert.equal(getTableStatus({ status: 'reserved', reservationStatus: 'cancelled', reservedUntil: '2026-08-22T19:00:00.000Z' }, now), 'vacant');
+});
+
+test('interprets unzoned reservation input and displays it in Africa/Lagos', () => {
+  const reservation = parseReservationDateTime('2026-08-23T19:00');
+  const beforeStart = new Date('2026-08-23T17:59:59.000Z');
+  const atStart = new Date('2026-08-23T18:00:00.000Z');
+  const table = { status: 'reserved', reservedUntil: '2026-08-23T19:00' };
+
+  assert.equal(reservation.toISOString(), '2026-08-23T18:00:00.000Z');
+  assert.equal(getTableStatus(table, beforeStart), 'reserved');
+  assert.equal(getTableStatus(table, atStart), 'occupied');
+  assert.equal(formatReservationDateTime(reservation), 'Aug 23, 2026 7:00 PM');
 });

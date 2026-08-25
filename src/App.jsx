@@ -15,9 +15,8 @@ import LoginPage from './pages/Login';
 import CustomerWebChatPage from './pages/CustomerWebChatPage';
 import CustomerChatOnboardingPage from './pages/CustomerChatOnboardingPage';import FeedbackPage from './pages/FeedbackPage';
 import NotificationBanner from './components/NotificationBanner';
-import IncomingCallModal from './components/IncomingCallModal';
-import LiveCallHeader from './components/LiveCallHeader';
-import { useVoiceCommunication } from './contexts/VoiceCommunicationContext';
+import VoiceWidget from './components/VoiceWidget';
+import { useZoom } from './contexts/ZoomContext';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -43,23 +42,23 @@ class ErrorBoundary extends React.Component {
 
 function App() {
   const location = useLocation();
+  const { zoom } = useZoom();
   const pathname = location.pathname || '';
   const isLoginRoute = pathname === '/login';
   const isFeedbackRoute = pathname.startsWith('/rate/');
-  const { incomingCall, acceptIncomingCall, declineIncomingCall } = useVoiceCommunication();
+  const isAuthenticatedShell = !isLoginRoute && !isFeedbackRoute;
 
   return (
     <>
-      {!isLoginRoute && !isFeedbackRoute && <NotificationBanner />}
-      {!isLoginRoute && !isFeedbackRoute && <>
-        <IncomingCallModal
-          open={Boolean(incomingCall)}
-          caller={incomingCall?.caller || incomingCall?.fromUser || null}
-          onAccept={acceptIncomingCall}
-          onDecline={declineIncomingCall}
-        />
-        <LiveCallHeader />
-      </>}
+      {isAuthenticatedShell && <VoiceWidget />}
+      <div
+        className="app-zoom-shell"
+        style={{
+          '--app-zoom': isAuthenticatedShell ? zoom : 1,
+          zoom: isAuthenticatedShell ? 'var(--app-zoom)' : 1
+        }}
+      >
+      {isAuthenticatedShell && <NotificationBanner />}
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -82,6 +81,7 @@ function App() {
         <Route path="/refunds" element={<RefundsPage />} />
         {/* Deliveries page removed for presentation build */}
       </Routes>
+      </div>
     </>
   );
 }

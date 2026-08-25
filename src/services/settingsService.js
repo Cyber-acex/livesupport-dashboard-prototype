@@ -1,6 +1,6 @@
 // Settings Service - localStorage and appearance helpers
 import { normalizeAutopilotMode } from './autopilotMode.js';
-import { DEFAULT_ZOOM, normalizeZoomValue } from '../utils/zoom.js';
+import { DEFAULT_ZOOM, normalizeZoomValue, ZOOM_STORAGE_KEY } from '../utils/zoom.js';
 
 export function canChangeAiTone(role) {
   const normalizedRole = String(role || '').trim().toLowerCase();
@@ -10,7 +10,7 @@ export function canChangeAiTone(role) {
 export function getSettings() {
   const savedTarget = Number(localStorage.getItem('monthlyTargetAmount'));
   const monthlyTargetAmount = Number.isFinite(savedTarget) && savedTarget > 0 ? savedTarget : 20000;
-  const savedZoom = normalizeZoomValue(localStorage.getItem('appZoom') || localStorage.getItem('pageZoom') || DEFAULT_ZOOM);
+  const savedZoom = normalizeZoomValue(localStorage.getItem(ZOOM_STORAGE_KEY) || localStorage.getItem('appZoom') || localStorage.getItem('pageZoom') || DEFAULT_ZOOM);
 
   return {
     displayName: localStorage.getItem('displayName') || '',
@@ -19,7 +19,8 @@ export function getSettings() {
     sidebarPosition: localStorage.getItem('sidebarPosition') || 'left',
     sidebarWidth: localStorage.getItem('sidebarWidth') || 'standard',
     fontSize: localStorage.getItem('fontSize') || '100',
-    pageZoom: String(savedZoom),
+    pageZoom: String(Math.round(savedZoom * 100)),
+    interfaceZoom: savedZoom,
     msgAlert: localStorage.getItem('msgAlert') === 'true',
     ticketAlert: localStorage.getItem('ticketAlert') === 'true',
     soundAlert: localStorage.getItem('soundAlert') === 'true',
@@ -41,8 +42,9 @@ export function saveSettings(settings) {
   if (settings.fontSize !== undefined) localStorage.setItem('fontSize', settings.fontSize);
   if (settings.pageZoom !== undefined) {
     const normalizedZoom = normalizeZoomValue(settings.pageZoom);
-    localStorage.setItem('pageZoom', String(normalizedZoom));
-    localStorage.setItem('appZoom', String(normalizedZoom));
+    localStorage.setItem(ZOOM_STORAGE_KEY, String(normalizedZoom));
+    localStorage.setItem('pageZoom', String(Math.round(normalizedZoom * 100)));
+    localStorage.setItem('pageZoom', String(Math.round(normalizedZoom * 100)));
   }
   if (settings.msgAlert !== undefined) localStorage.setItem('msgAlert', String(settings.msgAlert));
   if (settings.ticketAlert !== undefined) localStorage.setItem('ticketAlert', String(settings.ticketAlert));
@@ -104,8 +106,7 @@ export function applyZoom(zoomPercentage) {
   if (typeof window !== 'undefined') {
     window.localStorage.setItem('appZoom', String(normalizedZoom));
     window.localStorage.setItem('pageZoom', String(normalizedZoom));
-    document.documentElement.style.setProperty('--app-zoom-scale', String(normalizedZoom / 100));
-    document.documentElement.style.setProperty('--app-zoom', `${normalizedZoom}%`);
+    document.documentElement.style.setProperty('--app-zoom', `${normalizedZoom * 100}%`);
     window.dispatchEvent(new Event('zoom:updated'));
   }
 }

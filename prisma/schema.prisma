@@ -28,6 +28,7 @@ model Branch {
   menus         Menu[]
   tables        Table[]
   staffProfiles StaffProfile[]
+  voiceChannels VoiceChannel[]
   staffs        Staff[]
 
   @@map("branches")
@@ -284,8 +285,7 @@ model User {
   settings            Setting?
   avatars             UserAvatar[]
   profile             StaffProfile?
-  voiceSessionsCreated VoiceSession[] @relation("VoiceSessionCreator")
-  voiceParticipations  VoiceParticipant[] @relation("VoiceParticipantUser")
+  voiceSettings       VoiceSettings?
 
   @@map("users")
   @@index([branch_id])
@@ -452,6 +452,36 @@ model Ticket {
   @@index([branch_id])
 }
 
+model VoiceChannel {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(100)
+  type      String   @default("BRANCH") @db.VarChar(20)
+  branchId  Int?     @map("branch_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@index([branchId])
+  @@map("voice_channels")
+}
+
+model VoiceSettings {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @unique @map("user_id")
+  pushToTalkKey String?  @map("push_to_talk_key") @db.VarChar(50)
+  inputDevice   String?  @map("input_device") @db.VarChar(255)
+  outputDevice  String?  @map("output_device") @db.VarChar(255)
+  inputVolume   Float    @default(1) @map("input_volume")
+  outputVolume  Float    @default(1) @map("output_volume")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("voice_settings")
+}
+
 model CustomerFeedback {
   id                Int       @id @default(autoincrement())
   token             String    @unique @db.VarChar(128)
@@ -570,64 +600,6 @@ model UserAvatar {
 
   @@map("user_avatars")
   @@index([user_id])
-}
-
-enum VoiceSessionType {
-  PRIVATE
-  CHANNEL
-  BROADCAST
-}
-
-enum VoiceSessionStatus {
-  PENDING
-  ACTIVE
-  ENDED
-  CANCELLED
-}
-
-model VoiceChannel {
-  id         Int            @id @default(autoincrement())
-  name       String         @db.VarChar(255)
-  description String?       @db.Text
-  createdAt  DateTime       @default(now()) @db.Timestamp(0)
-  sessions   VoiceSession[]
-
-  @@map("voice_channels")
-}
-
-model VoiceSession {
-  id          Int                @id @default(autoincrement())
-  type        VoiceSessionType   @default(PRIVATE)
-  createdBy   Int?
-  startedAt   DateTime?          @db.Timestamp(0)
-  endedAt     DateTime?          @db.Timestamp(0)
-  status      VoiceSessionStatus @default(PENDING)
-  createdAt   DateTime           @default(now()) @db.Timestamp(0)
-  channelId   Int?
-
-  participants VoiceParticipant[]
-  channel      VoiceChannel?      @relation(fields: [channelId], references: [id])
-  creator      User?              @relation("VoiceSessionCreator", fields: [createdBy], references: [id])
-
-  @@map("voice_sessions")
-  @@index([channelId])
-  @@index([createdBy])
-}
-
-model VoiceParticipant {
-  id         Int       @id @default(autoincrement())
-  sessionId  Int
-  userId     Int
-  joinedAt   DateTime  @default(now()) @db.Timestamp(0)
-  leftAt     DateTime? @db.Timestamp(0)
-  muted      Boolean   @default(false)
-
-  voiceSession VoiceSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  user         User         @relation("VoiceParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("voice_participants")
-  @@index([sessionId])
-  @@index([userId])
 }
 
 model DeliveryIssue {

@@ -3,7 +3,6 @@ import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import { useNotification } from '../contexts/NotificationContext';
-import { useZoom } from '../contexts/ZoomContext';
 import {
   getSettings,
   saveSettings,
@@ -15,13 +14,15 @@ import {
   canChangeAiTone
 } from '../services/settingsService';
 import { normalizeAutopilotMode } from '../services/autopilotMode';
-import { DEFAULT_ZOOM, ZOOM_LEVELS } from '../utils/zoom';
 import { hasRolePermission, normalizeRole } from '../utils/rolePermissions';
 import { applyAvatarToApp, resolveAvatarUploadFile } from '../utils/avatarUpload';
+import { useZoom } from '../contexts/ZoomContext';
+import { getZoomPercentLabel } from '../utils/zoom';
 
 function SettingsPage() {
   const location = useLocation();
   const { success, error, info } = useNotification();
+  const { zoom, setZoom, resetZoom, zoomLevels } = useZoom();
   const [activeSection, setActiveSection] = useState('account');
   const [settings, setSettings] = useState(getSettings());
   const [passwordChanged, setPasswordChanged] = useState(false);
@@ -41,7 +42,6 @@ function SettingsPage() {
   const latestAvatarFileRef = useRef(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showAdminUserPassword, setShowAdminUserPassword] = useState(false);
-  const { zoom, setZoom, increaseZoom, decreaseZoom, resetZoom, zoomLevels } = useZoom();
 
   const roleOptions = [
     { label: 'Admin', value: 'admin' },
@@ -75,7 +75,6 @@ function SettingsPage() {
     setSettings(initial);
     applyTheme(initial.theme);
     applyFontSize(initial.fontSize);
-    setZoom(Number(initial.pageZoom || DEFAULT_ZOOM));
 
     // Check if admin
     async function checkAdmin() {
@@ -94,11 +93,7 @@ function SettingsPage() {
       }
     }
     checkAdmin();
-  }, [setZoom]);
-
-  useEffect(() => {
-    setSettings((current) => (current.pageZoom === String(zoom) ? current : { ...current, pageZoom: String(zoom) }));
-  }, [zoom]);
+  }, []);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -346,12 +341,6 @@ function SettingsPage() {
       window.localStorage.setItem('sidebarWidth', width);
       window.dispatchEvent(new Event('settings:updated'));
     }
-  };
-
-  const handleZoomChange = (nextZoom) => {
-    const normalizedZoom = Number(nextZoom);
-    setSettings((current) => ({ ...current, pageZoom: String(normalizedZoom) }));
-    setZoom(normalizedZoom);
   };
 
   const handleAvatarUpload = (e) => {
@@ -838,6 +827,31 @@ function SettingsPage() {
                       </select>
                     </div>
 
+                    <fieldset className="border-t border-slate-200 pt-6 dark:border-slate-800">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <legend className="text-sm font-medium text-slate-700 dark:text-slate-100">Interface Zoom</legend>
+                          <p className="mt-1 max-w-xl text-sm text-slate-500 dark:text-slate-400">Adjust the size of the LiveSupport interface to fit more or less content on your screen.</p>
+                        </div>
+                        <span className="text-sm font-semibold text-brand-600 dark:text-brand-300">Current zoom: {getZoomPercentLabel(zoom)}</span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9" aria-label="Interface zoom presets">
+                        {zoomLevels.map((level) => {
+                          const label = getZoomPercentLabel(level);
+                          const selected = zoom === level;
+                          return (
+                            <label key={level} className={`cursor-pointer rounded-lg border px-2 py-2.5 text-center text-xs font-semibold transition focus-within:ring-4 focus-within:ring-indigo-500/20 ${selected ? 'border-brand-600 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-200' : 'border-slate-200 text-slate-600 hover:border-brand-300 dark:border-slate-700 dark:text-slate-300'}`}>
+                              <input type="radio" name="interface-zoom" value={level} checked={selected} onChange={() => setZoom(level)} className="sr-only" />
+                              <span className="flex items-center justify-center gap-1.5"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${selected ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'}`} />{label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <button type="button" onClick={resetZoom} className="mt-4 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-brand-300 hover:text-brand-600 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 dark:border-slate-700 dark:text-slate-300">
+                        Reset to 80%
+                      </button>
+                    </fieldset>
+
                     <div className="border-t border-slate-200 pt-4 sm:pt-6">
                       <label className="mb-3 block text-sm font-medium text-slate-700 dark:text-slate-100">Font Size</label>
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -854,90 +868,6 @@ function SettingsPage() {
                           {getFontSizeLabel(settings.fontSize)}
                         </span>
                       </div>
-                    </div>
-
-                    <div className="border-t border-slate-200 pt-4 sm:pt-6">
-                      <div className="rounded-2xl border border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-brand-50 p-4 shadow-[0_18px_45px_-24px_rgba(15,23,42,0.35)] backdrop-blur dark:border-slate-700 dark:from-slate-800/80 dark:via-slate-900 dark:to-brand-950/60 sm:p-5">
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-brand-600">
-                              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.16)]" />
-                              Live preview
-                            </div>
-                            <h3 className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">Adaptive workspace zoom</h3>
-                            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">Adjust the interface scale smoothly while preserving spacing, sticky panels, and responsive layouts.</p>
-                          </div>
-                          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">
-                            <span className="text-base">{zoom}%</span>
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            active
-                          </div>
-                        </div>
-
-                        <div className="mt-5 flex flex-col gap-4">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {zoomLevels.map((level) => (
-                              <button
-                                key={level}
-                                type="button"
-                                onClick={() => handleZoomChange(level)}
-                                className={`rounded-full border px-3 py-1.5 text-sm font-semibold transition-all ${Number(settings.pageZoom || zoom) === level ? 'border-brand-600 bg-brand-600 text-white shadow-lg shadow-brand-600/20' : 'border-slate-200 bg-white text-slate-600 hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'}`}
-                              >
-                                {level}%
-                              </button>
-                            ))}
-                          </div>
-
-                          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-inner shadow-slate-200/40 dark:border-slate-700 dark:bg-slate-900/70 sm:flex-row sm:items-center">
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                aria-label="Decrease zoom"
-                                onClick={() => decreaseZoom()}
-                                className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                              >
-                                −
-                              </button>
-                              <input
-                                type="range"
-                                min="75"
-                                max="200"
-                                step="5"
-                                value={Number(settings.pageZoom || zoom)}
-                                onChange={(event) => handleZoomChange(event.target.value)}
-                                className="h-2 w-full min-w-[180px] cursor-pointer appearance-none rounded-full bg-slate-200 accent-brand-600 dark:bg-slate-700"
-                                aria-label="Adjust workspace zoom"
-                              />
-                              <button
-                                type="button"
-                                aria-label="Increase zoom"
-                                onClick={() => increaseZoom()}
-                                className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-lg font-semibold text-slate-700 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                              >
-                                +
-                              </button>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-                              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                                {Number(settings.pageZoom || zoom)}%
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => resetZoom()}
-                                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-brand-300 hover:text-brand-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                              >
-                                Reset
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="rounded-lg border-t border-slate-200 bg-slate-50 p-4 pt-4 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 sm:pt-6">
-                      <p className="text-sm text-slate-600 dark:text-slate-300">
-                        <strong>Shortcuts:</strong> Ctrl/Cmd + / Ctrl/Cmd − / Ctrl/Cmd 0 adjust the app zoom instantly, and your choice is saved automatically.
-                      </p>
                     </div>
 
                     <div className="border-t border-slate-200 pt-4 sm:pt-6">
