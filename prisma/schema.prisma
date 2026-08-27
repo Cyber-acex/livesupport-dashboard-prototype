@@ -17,8 +17,8 @@ model Branch {
   longitude   Float?   @db.DoublePrecision
   is_active   Boolean  @default(true)
   is_archived Boolean  @default(false)
-  createdAt   DateTime @default(now()) @db.Timestamp(0) @map("created_at")
-  updatedAt   DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
 
   users         User[]
   customers     Customer[]
@@ -28,26 +28,57 @@ model Branch {
   menus         Menu[]
   tables        Table[]
   staffProfiles StaffProfile[]
-  voiceChannels VoiceChannel[]
   staffs        Staff[]
+  voiceChannels VoiceChannel[]
 
   @@map("branches")
 }
 
 model Staff {
-  id         Int      @id @default(autoincrement())
-  fullName   String?  @db.VarChar(255) @map("full_name")
-  email      String   @unique @db.VarChar(255)
-  phone      String?  @db.VarChar(50)
-  password   String?  @db.VarChar(255)
-  role       String?  @default("staff") @db.VarChar(50)
-  branch_id  Int?
-  branch     Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
-  createdAt  DateTime @default(now()) @db.Timestamp(0) @map("created_at")
-  updatedAt  DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+  id        Int      @id @default(autoincrement())
+  fullName  String?  @map("full_name") @db.VarChar(255)
+  email     String   @unique @db.VarChar(255)
+  phone     String?  @db.VarChar(50)
+  password  String?  @db.VarChar(255)
+  role      String?  @default("staff") @db.VarChar(50)
+  branch_id Int?
+  branch    Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
 
-  @@map("staffs")
   @@index([branch_id])
+  @@map("staffs")
+}
+
+model VoiceChannel {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(100)
+  type      String   @default("BRANCH") @db.VarChar(20)
+  branchId  Int      @map("branch_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  branch Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, type])
+  @@index([branchId])
+  @@map("voice_channels")
+}
+
+model VoiceSettings {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @unique @map("user_id")
+  pushToTalkKey String?  @map("push_to_talk_key") @db.VarChar(50)
+  inputDevice   String?  @map("input_device") @db.VarChar(255)
+  outputDevice  String?  @map("output_device") @db.VarChar(255)
+  inputVolume   Float    @default(1) @map("input_volume") @db.DoublePrecision
+  outputVolume  Float    @default(1) @map("output_volume") @db.DoublePrecision
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("voice_settings")
 }
 
 model Conversation {
@@ -55,318 +86,491 @@ model Conversation {
   phone             String?   @db.VarChar(255)
   name              String?   @db.VarChar(255)
   platform          String?   @default("whatsapp") @db.VarChar(50)
-  platform_user_id  String?   @db.VarChar(255) @map("platform_user_id")
+  platform_user_id  String?   @map("platform_user_id") @db.VarChar(255)
   status            String?   @default("OPEN") @db.VarChar(50)
   assigned_staff_id Int?      @map("assigned_staff_id")
-  last_message_at   DateTime? @db.Timestamp(0) @map("last_message_at")
+  last_message_at   DateTime? @map("last_message_at") @db.Timestamp(0)
   last_viewed       DateTime? @db.Timestamp(0)
   created_at        DateTime  @default(now()) @db.Timestamp(0)
-  updated_at        DateTime? @updatedAt @db.Timestamp(0) @map("updated_at")
+  updated_at        DateTime? @updatedAt @map("updated_at") @db.Timestamp(0)
   branch_id         Int?
   customer_id       Int?
   order_id          Int?      @map("order_id")
 
-  branch           Branch? @relation(fields: [branch_id], references: [id], onDelete: SetNull)
-  customer         Customer? @relation(fields: [customer_id], references: [id], onDelete: SetNull)
-  messages         Message[]
-  replies          Reply[]
-  aiMessages       AiMessage[]
-  staffMessages    StaffMessage[]
-  aiReplies        AiReply[]
-  staffReplies     StaffReply[]
-  resolved         Resolved?
-  escalations      Escalation?
-  aiFeedback       AiFeedback[]
-  deliveryIssues   DeliveryIssue[]
-  orders           Order[]
-  
+  branch         Branch?         @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  customer       Customer?       @relation(fields: [customer_id], references: [id], onDelete: SetNull)
+  messages       Message[]
+  replies        Reply[]
+  aiMessages     AiMessage[]
+  staffMessages  StaffMessage[]
+  aiReplies      AiReply[]
+  staffReplies   StaffReply[]
+  resolved       Resolved?
+  escalations    Escalation?
+  aiFeedback     AiFeedback[]
+  aiActivities   AiActivity[]
+  aiDecisions    AiDecision[]
+  aiActions      AiAction[]
+  aiCorrections  AiCorrection[]
+  deliveryIssues DeliveryIssue[]
+  orders         Order[]
 
-  @@map("conversations")
   @@index([branch_id])
   @@index([customer_id])
   @@index([platform_user_id])
   @@index([status])
+  @@map("conversations")
 }
 
 model ChatSession {
   id               Int      @id @default(autoincrement())
   platform         String   @db.VarChar(50)
-  platform_user_id String   @db.VarChar(255) @map("platform_user_id")
+  platform_user_id String   @map("platform_user_id") @db.VarChar(255)
   state            String   @default("WAITING_FOR_BRANCH") @db.VarChar(50)
-  pending_messages String?  @db.Text @map("pending_messages")
-  expires_at       DateTime @db.Timestamp(0) @map("expires_at")
-  created_at       DateTime @default(now()) @db.Timestamp(0) @map("created_at")
-  updated_at       DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+  pending_messages String?  @map("pending_messages") @db.Text
+  expires_at       DateTime @map("expires_at") @db.Timestamp(0)
+  created_at       DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updated_at       DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
 
-  @@map("chat_sessions")
   @@index([platform_user_id])
   @@index([state])
   @@index([expires_at])
+  @@map("chat_sessions")
 }
 
 model Customer {
   id        Int      @id @default(autoincrement())
   name      String   @unique @db.VarChar(255)
   phone     String?  @db.VarChar(255)
-  createdAt DateTime @default(now()) @db.Timestamp(0) @map("created_at")
-  updatedAt DateTime @updatedAt @db.Timestamp(0) @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
   branch_id Int?
 
   conversations Conversation[]
-  branch       Branch? @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  branch        Branch?        @relation(fields: [branch_id], references: [id], onDelete: SetNull)
 
-  @@map("customers")
   @@index([branch_id])
+  @@map("customers")
 }
 
 model Message {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  sender           String    @db.VarChar(50)
-  message          String?   @db.Text
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  sender          String   @db.VarChar(50)
+  message         String?  @db.Text
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("messages")
 }
 
 model Reply {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  sender           String    @db.VarChar(50)
-  message          String?   @db.Text
-  user_id          Int?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  sender          String   @db.VarChar(50)
+  message         String?  @db.Text
+  user_id         Int?
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("replies")
 }
 
 model AiMessage {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  sender           String    @db.VarChar(255)
-  message          String?   @db.Text
-  user_id          Int?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  sender          String   @db.VarChar(255)
+  message         String?  @db.Text
+  user_id         Int?
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("ai_messages")
 }
 
 model StaffMessage {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  sender           String    @db.VarChar(255)
-  message          String?   @db.Text
-  user_id          Int?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  sender          String   @db.VarChar(255)
+  message         String?  @db.Text
+  user_id         Int?
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("staff_messages")
 }
 
 model AiReply {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  sender           String    @db.VarChar(255)
-  message          String?   @db.Text
-  user_id          Int?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  sender          String   @db.VarChar(255)
+  message         String?  @db.Text
+  user_id         Int?
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("ai replies")
 }
 
 model StaffReply {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  sender           String    @db.VarChar(255)
-  message          String?   @db.Text
-  user_id          Int?
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  sender          String   @db.VarChar(255)
+  message         String?  @db.Text
+  user_id         Int?
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("staff replies")
 }
 
 model Resolved {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int       @unique
-  resolved_at      DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int      @unique
+  resolved_at     DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("resolved")
 }
 
 model Escalation {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int       @unique
-  customer_name    String?   @db.VarChar(255)
-  escalated_at     DateTime  @default(now()) @db.Timestamp(0)
-  claimed_by       String?   @db.VarChar(255)
-  claim_time       DateTime? @db.Timestamp(0)
-  snoozed_until    DateTime? @db.Timestamp(0)
-  alarm_active     Boolean?  @default(true)
+  id                Int       @id @default(autoincrement())
+  conversation_id   Int       @unique
+  customer_name     String?   @db.VarChar(255)
+  escalated_at      DateTime  @default(now()) @db.Timestamp(0)
+  claimed_by        String?   @db.VarChar(255)
+  claim_time        DateTime? @db.Timestamp(0)
+  snoozed_until     DateTime? @db.Timestamp(0)
+  alarm_active      Boolean?  @default(true)
   assigned_staff_id Int?
-  customer_id      Int?
-  branch_id        Int?
-  escalation_reason String?  @db.VarChar(255)
-  detected_intent  String?   @db.VarChar(255)
-  ai_confidence    Float?
-  original_message String?   @db.Text
-  status           String?   @db.VarChar(50)
+  customer_id       Int?
+  branch_id         Int?
+  escalation_reason String?   @db.VarChar(255)
+  detected_intent   String?   @db.VarChar(255)
+  ai_confidence     Float?
+  original_message  String?   @db.Text
+  status            String?   @db.VarChar(50)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
   @@map("escalations")
 }
 
 model Refund {
-  id               Int       @id @default(autoincrement())
-  refund_number    String?   @unique @db.VarChar(255)
-  order_id         String?   @db.VarChar(255)
-  customer_name    String?   @db.VarChar(255)
-  requested_by     String?   @db.VarChar(255)
-  approved_by      String?   @db.VarChar(255)
-  completed_by     String?   @db.VarChar(255)
-  status           String    @default("pending") @db.VarChar(50)
-  refund_type      String    @default("full") @db.VarChar(50)
-  refund_method    String?   @db.VarChar(50)
-  refund_reason    String?   @db.Text
-  manager_notes    String?   @db.Text
-  refund_amount    Decimal?  @db.Decimal(10, 2)
-  payment_reference String?  @db.VarChar(255)
-  requested_at     DateTime  @default(now()) @db.Timestamp(0)
-  approved_at      DateTime? @db.Timestamp(0)
-  completed_at     DateTime? @db.Timestamp(0)
-  refunded_at      DateTime? @db.Timestamp(0)
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
-  updated_at       DateTime  @updatedAt @db.Timestamp(0)
+  id                Int       @id @default(autoincrement())
+  refund_number     String?   @unique @db.VarChar(255)
+  order_id          String?   @db.VarChar(255)
+  customer_name     String?   @db.VarChar(255)
+  requested_by      String?   @db.VarChar(255)
+  approved_by       String?   @db.VarChar(255)
+  completed_by      String?   @db.VarChar(255)
+  status            String    @default("pending") @db.VarChar(50)
+  refund_type       String    @default("full") @db.VarChar(50)
+  refund_method     String?   @db.VarChar(50)
+  refund_reason     String?   @db.Text
+  manager_notes     String?   @db.Text
+  refund_amount     Decimal?  @db.Decimal(10, 2)
+  payment_reference String?   @db.VarChar(255)
+  requested_at      DateTime  @default(now()) @db.Timestamp(0)
+  approved_at       DateTime? @db.Timestamp(0)
+  completed_at      DateTime? @db.Timestamp(0)
+  refunded_at       DateTime? @db.Timestamp(0)
+  created_at        DateTime  @default(now()) @db.Timestamp(0)
+  updated_at        DateTime  @updatedAt @db.Timestamp(0)
 
   @@map("refunds")
 }
 
 model AiFeedback {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int?
-  message_id       Int?
-  user_id          Int?
-  rating           Int?
-  feedback_text    String?   @db.Text
-  correction       String?   @db.Text
-  created_at       DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int?
+  message_id      Int?
+  user_id         Int?
+  rating          Int?
+  feedback_text   String?  @db.Text
+  correction      String?  @db.Text
+  kind            String?  @db.VarChar(40)
+  category        String?  @db.VarChar(50)
+  severity        String?  @db.VarChar(20)
+  created_at      DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation? @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
 
-  @@map("ai_feedback")
   @@index([conversation_id])
   @@index([user_id])
+  @@index([category, created_at])
+  @@index([conversation_id, created_at])
+  @@map("ai_feedback")
+}
+
+model AiActivity {
+  id              Int           @id @default(autoincrement())
+  conversation_id Int?
+  message_id      Int?
+  event_type      String        @db.VarChar(50)
+  intent          String?       @db.VarChar(120)
+  confidence      Float?
+  action_type     String?       @db.VarChar(80)
+  outcome         String?       @db.VarChar(30)
+  metadata        Json?
+  created_at      DateTime      @default(now()) @db.Timestamp(0)
+  conversation    Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@index([conversation_id, created_at])
+  @@index([event_type, created_at])
+  @@map("ai_activity")
+}
+
+model AiDecision {
+  id              Int           @id @default(autoincrement())
+  conversation_id Int?
+  message_id      Int?
+  intent          String?       @db.VarChar(120)
+  confidence      Float?
+  selected_branch String?       @db.VarChar(120)
+  selected_action String?       @db.VarChar(80)
+  metadata        Json?
+  created_at      DateTime      @default(now()) @db.Timestamp(0)
+  conversation    Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@index([conversation_id, created_at])
+  @@index([intent, created_at])
+  @@map("ai_decisions")
+}
+
+model AiAction {
+  id              Int           @id @default(autoincrement())
+  conversation_id Int?
+  message_id      Int?
+  action_type     String        @db.VarChar(80)
+  input_ref       String?       @db.VarChar(255)
+  result          Json?
+  success         Boolean       @default(false)
+  error           String?       @db.Text
+  execution_ms    Int?
+  created_at      DateTime      @default(now()) @db.Timestamp(0)
+  conversation    Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@index([conversation_id, created_at])
+  @@index([action_type, success, created_at])
+  @@map("ai_actions")
+}
+
+model AiCorrection {
+  id                 Int           @id @default(autoincrement())
+  conversation_id    Int?
+  message_id         Int?
+  staff_id           Int?
+  original_response  String?       @db.Text
+  corrected_response String?       @db.Text
+  explanation        String?       @db.Text
+  expected_behavior  String?       @db.Text
+  status             String        @default("OPEN") @db.VarChar(30)
+  created_at         DateTime      @default(now()) @db.Timestamp(0)
+  conversation       Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@index([conversation_id, created_at])
+  @@index([status, created_at])
+  @@map("ai_corrections")
+}
+
+model AiLearningCandidate {
+  id              Int       @id @default(autoincrement())
+  title           String    @db.VarChar(255)
+  description     String?   @db.Text
+  proposed_rule   String    @db.Text
+  category        String?   @db.VarChar(80)
+  evidence_count  Int       @default(0)
+  confidence      Float?
+  source_feedback Json?
+  status          String    @default("PENDING") @db.VarChar(20)
+  reviewed_by     Int?
+  reviewed_at     DateTime? @db.Timestamp(0)
+  review_reason   String?   @db.Text
+  created_at      DateTime  @default(now()) @db.Timestamp(0)
+  updated_at      DateTime  @updatedAt @db.Timestamp(0)
+
+  @@index([status, created_at])
+  @@index([category, status])
+  @@map("ai_learning_candidates")
+}
+
+model AiRule {
+  id         Int      @id @default(autoincrement())
+  rule       String   @db.Text
+  category   String?  @db.VarChar(80)
+  priority   Int      @default(50)
+  active     Boolean  @default(true)
+  source     String?  @db.VarChar(80)
+  confidence Float?
+  branch_id  Int?
+  workflow   String?   @db.VarChar(80)
+  created_at DateTime @default(now()) @db.Timestamp(0)
+  updated_at DateTime @updatedAt @db.Timestamp(0)
+
+  @@index([active, category, priority])
+  @@index([active, branch_id, workflow])
+  @@map("ai_rules")
+}
+
+model AiExample {
+  id                  Int      @id @default(autoincrement())
+  situation           String   @db.Text
+  customer_message    String?  @db.Text
+  successful_response String?  @db.Text
+  action              String?  @db.VarChar(80)
+  outcome             String?  @db.VarChar(80)
+  quality_score       Float?
+  source              String?  @db.VarChar(80)
+  active              Boolean  @default(true)
+  created_at          DateTime @default(now()) @db.Timestamp(0)
+
+  @@index([active, created_at])
+  @@map("ai_examples")
+}
+
+model AiMistakePattern {
+  id               Int      @id @default(autoincrement())
+  pattern          String   @db.Text
+  occurrence_count Int      @default(1)
+  severity         String?  @db.VarChar(20)
+  first_seen       DateTime @default(now()) @db.Timestamp(0)
+  last_seen        DateTime @default(now()) @db.Timestamp(0)
+  resolved         Boolean  @default(false)
+
+  @@index([resolved, last_seen])
+  @@map("ai_mistake_patterns")
+}
+
+model AiEvaluationMetric {
+  id                       Int      @id @default(autoincrement())
+  period_start             DateTime @db.Timestamp(0)
+  total_conversations      Int      @default(0)
+  successful_conversations Int      @default(0)
+  failed_conversations     Int      @default(0)
+  corrections              Int      @default(0)
+  successful_actions       Int      @default(0)
+  failed_actions           Int      @default(0)
+  average_confidence       Float?
+  escalation_rate          Float?
+  correction_rate          Float?
+  resolution_rate          Float?
+  learning_candidates      Int      @default(0)
+  approved_improvements    Int      @default(0)
+  created_at               DateTime @default(now()) @db.Timestamp(0)
+
+  @@unique([period_start])
+  @@index([period_start])
+  @@map("ai_evaluation_metrics")
 }
 
 model User {
-  id          Int      @id @default(autoincrement())
-  email       String   @unique @db.VarChar(255)
-  password    String   @db.VarChar(255)
-  name        String   @db.VarChar(255)
-  role        String?  @default("agent") @db.VarChar(50)
-  disabled    Boolean? @default(false)
-  created_at  DateTime @default(now()) @db.Timestamp(0)
-  branch_id   Int?
+  id         Int      @id @default(autoincrement())
+  email      String   @unique @db.VarChar(255)
+  password   String   @db.VarChar(255)
+  name       String   @db.VarChar(255)
+  role       String?  @default("agent") @db.VarChar(50)
+  disabled   Boolean? @default(false)
+  created_at DateTime @default(now()) @db.Timestamp(0)
+  branch_id  Int?
 
-  branch              Branch? @relation(fields: [branch_id], references: [id], onDelete: SetNull)
-  settings            Setting?
-  avatars             UserAvatar[]
-  profile             StaffProfile?
-  voiceSettings       VoiceSettings?
+  branch        Branch?        @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  settings      Setting?
+  avatars       UserAvatar[]
+  profile       StaffProfile?
+  voiceSettings VoiceSettings?
 
-  @@map("users")
   @@index([branch_id])
+  @@map("users")
 }
 
 model Setting {
-  id            Int     @id @default(autoincrement())
-  user_id       Int     @unique
-  displayName   String? @db.VarChar(255)
-  email         String? @db.VarChar(255)
-  password      String? @db.VarChar(255)
-  autoReply     String? @db.VarChar(255)
-  chatEnabled   String? @db.VarChar(10)
-  msgAlert      Boolean?
-  ticketAlert   Boolean?
-  soundAlert    Boolean?
-  priority      String? @db.VarChar(20)
-  autoAssign    String? @db.VarChar(10)
-  theme         String? @db.VarChar(20)
-  translateEnabled Boolean? @db.Boolean @map("translate_enabled")
-  translateLang    String? @db.VarChar(10) @map("translate_lang")
-  avatarUrl        String? @db.Text @map("avatar_url")
-  autopilotMode    String? @db.VarChar(20) @map("autopilotmode")
-  aiTone           String? @db.VarChar(20) @map("ai_tone")
+  id               Int      @id @default(autoincrement())
+  user_id          Int      @unique
+  displayName      String?  @db.VarChar(255)
+  email            String?  @db.VarChar(255)
+  password         String?  @db.VarChar(255)
+  autoReply        String?  @db.VarChar(255)
+  chatEnabled      String?  @db.VarChar(10)
+  msgAlert         Boolean?
+  ticketAlert      Boolean?
+  soundAlert       Boolean?
+  priority         String?  @db.VarChar(20)
+  autoAssign       String?  @db.VarChar(10)
+  theme            String?  @db.VarChar(20)
+  translateEnabled Boolean? @map("translate_enabled") @db.Boolean
+  translateLang    String?  @map("translate_lang") @db.VarChar(10)
+  avatarUrl        String?  @map("avatar_url") @db.Text
+  autopilotMode    String?  @map("autopilotmode") @db.VarChar(20)
+  aiLearningEnabled Boolean? @default(true) @map("ai_learning_enabled")
+  aiCandidateDetection Boolean? @default(true) @map("ai_candidate_detection")
+  aiRequireApproval Boolean? @default(true) @map("ai_require_approval")
+  aiEvidenceThreshold Int? @default(3) @map("ai_evidence_threshold")
+  aiLearningScope String? @default("global") @map("ai_learning_scope") @db.VarChar(20)
 
-  user          User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("settings")
 }
 
 model Order {
-  id                 Int       @id @default(autoincrement())
-  order_id           String?   @unique @db.VarChar(255)
-  customer_name      String?   @db.VarChar(255)
-  phone              String?   @db.VarChar(255)
-  product            String?   @db.Text
-  amount             Decimal?  @db.Decimal(10,2)
-  total_amount       Decimal?  @db.Decimal(10,2)
-  status             String?   @db.VarChar(50)
-  order_date         DateTime? @db.Timestamp(0)
-  conversation_id    Int?
-  voucher_id         Int?
-  voucher_code       String?   @db.VarChar(255)
-  discount_type      String?   @db.VarChar(50)
-  discount_amount    Decimal?  @db.Decimal(10,2)
-  subtotal           Decimal?  @db.Decimal(10,2)
-  final_total        Decimal?  @db.Decimal(10,2)
-  branch_id          Int?
-  conversation       Conversation? @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
-  voucher            Voucher?  @relation(fields: [voucher_id], references: [id], onDelete: SetNull)
-  branch             Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
-  deliveries         Delivery[]
+  id              Int           @id @default(autoincrement())
+  order_id        String?       @unique @db.VarChar(255)
+  customer_name   String?       @db.VarChar(255)
+  phone           String?       @db.VarChar(255)
+  product         String?       @db.Text
+  amount          Decimal?      @db.Decimal(10, 2)
+  total_amount    Decimal?      @db.Decimal(10, 2)
+  status          String?       @db.VarChar(50)
+  order_date      DateTime?     @db.Timestamp(0)
+  conversation_id Int?
+  voucher_id      Int?
+  voucher_code    String?       @db.VarChar(255)
+  discount_type   String?       @db.VarChar(50)
+  discount_amount Decimal?      @db.Decimal(10, 2)
+  subtotal        Decimal?      @db.Decimal(10, 2)
+  final_total     Decimal?      @db.Decimal(10, 2)
+  branch_id       Int?
+  conversation    Conversation? @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  voucher         Voucher?      @relation(fields: [voucher_id], references: [id], onDelete: SetNull)
+  branch          Branch?       @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  deliveries      Delivery[]
 
-  @@map("orders")
   @@index([conversation_id])
   @@index([voucher_id])
   @@index([branch_id])
+  @@map("orders")
 }
 
 model Delivery {
-  id                  Int       @id @default(autoincrement())
-  order_id            Int
-  rider_name          String?   @db.VarChar(255)
-  vehicle             String?   @db.VarChar(128)
-  current_lat         Float?
-  current_lng         Float?
-  customer_lat        Float?
-  customer_lng        Float?
-  delivery_status     String?   @db.VarChar(64)
+  id                   Int       @id @default(autoincrement())
+  order_id             Int
+  rider_name           String?   @db.VarChar(255)
+  vehicle              String?   @db.VarChar(128)
+  current_lat          Float?
+  current_lng          Float?
+  customer_lat         Float?
+  customer_lng         Float?
+  delivery_status      String?   @db.VarChar(64)
   order_confirmed_time DateTime? @db.Timestamp(0)
-  rider_assigned_time   DateTime? @db.Timestamp(0)
-  picked_up_time        DateTime? @db.Timestamp(0)
-  in_transit_time       DateTime? @db.Timestamp(0)
-  arriving_time         DateTime? @db.Timestamp(0)
-  delivered_time        DateTime? @db.Timestamp(0)
+  rider_assigned_time  DateTime? @db.Timestamp(0)
+  picked_up_time       DateTime? @db.Timestamp(0)
+  in_transit_time      DateTime? @db.Timestamp(0)
+  arriving_time        DateTime? @db.Timestamp(0)
+  delivered_time       DateTime? @db.Timestamp(0)
   created_at           DateTime  @default(now()) @db.Timestamp(0)
   updated_at           DateTime  @default(now()) @db.Timestamp(0)
   order                Order     @relation(fields: [order_id], references: [id], onDelete: Cascade)
 
-  @@map("deliveries")
   @@index([order_id])
+  @@map("deliveries")
 }
 
 model Receipt {
@@ -379,138 +583,108 @@ model Receipt {
 }
 
 model Voucher {
-  id                    Int       @id @default(autoincrement())
-  code                  String    @unique @db.VarChar(255)
-  type                 String    @db.VarChar(50)
-  value                Decimal   @db.Decimal(10,2)
-  minimum_order        Decimal?  @db.Decimal(10,2)
-  minimum_quantity     Int?      @default(0)
-  maximum_discount     Decimal?  @db.Decimal(10,2)
-  starts_at            DateTime? @db.Timestamp(0)
-  expires_at           DateTime? @db.Timestamp(0)
-  usage_limit          Int?
-  used_count           Int       @default(0)
-  per_customer_limit   Int?      @default(0)
-  is_active            Boolean   @default(true)
-  new_customers_only   Boolean   @default(false)
-  applicable_items     String?   @db.Text
-  applicable_categories String?  @db.Text
-  created_by           Int?
-  created_at           DateTime  @default(now()) @db.Timestamp(0)
-  updated_at           DateTime  @updatedAt @db.Timestamp(0)
-  orders               Order[]
-  redemptions          VoucherRedemption[]
+  id                    Int                 @id @default(autoincrement())
+  code                  String              @unique @db.VarChar(255)
+  type                  String              @db.VarChar(50)
+  value                 Decimal             @db.Decimal(10, 2)
+  minimum_order         Decimal?            @db.Decimal(10, 2)
+  minimum_quantity      Int?                @default(0)
+  maximum_discount      Decimal?            @db.Decimal(10, 2)
+  starts_at             DateTime?           @db.Timestamp(0)
+  expires_at            DateTime?           @db.Timestamp(0)
+  usage_limit           Int?
+  used_count            Int                 @default(0)
+  per_customer_limit    Int?                @default(0)
+  is_active             Boolean             @default(true)
+  new_customers_only    Boolean             @default(false)
+  applicable_items      String?             @db.Text
+  applicable_categories String?             @db.Text
+  created_by            Int?
+  created_at            DateTime            @default(now()) @db.Timestamp(0)
+  updated_at            DateTime            @updatedAt @db.Timestamp(0)
+  orders                Order[]
+  redemptions           VoucherRedemption[]
 
-  @@map("vouchers")
   @@index([code])
   @@index([is_active])
   @@index([expires_at])
   @@index([starts_at])
+  @@map("vouchers")
 }
 
 model VoucherRedemption {
-  id               Int      @id @default(autoincrement())
-  voucher_id       Int
-  voucher_code     String   @db.VarChar(255)
-  order_id         String?  @db.VarChar(255)
-  customer_id      Int?
-  customer_phone   String?  @db.VarChar(255)
-  discount_type    String   @db.VarChar(50)
-  discount_amount  Decimal  @db.Decimal(10,2)
-  subtotal         Decimal  @db.Decimal(10,2)
-  final_total      Decimal  @db.Decimal(10,2)
-  redeemed_at      DateTime @default(now()) @db.Timestamp(0)
-  voucher          Voucher  @relation(fields: [voucher_id], references: [id], onDelete: Cascade)
+  id              Int      @id @default(autoincrement())
+  voucher_id      Int
+  voucher_code    String   @db.VarChar(255)
+  order_id        String?  @db.VarChar(255)
+  customer_id     Int?
+  customer_phone  String?  @db.VarChar(255)
+  discount_type   String   @db.VarChar(50)
+  discount_amount Decimal  @db.Decimal(10, 2)
+  subtotal        Decimal  @db.Decimal(10, 2)
+  final_total     Decimal  @db.Decimal(10, 2)
+  redeemed_at     DateTime @default(now()) @db.Timestamp(0)
+  voucher         Voucher  @relation(fields: [voucher_id], references: [id], onDelete: Cascade)
 
-  @@map("voucher_redemptions")
   @@index([voucher_id])
   @@index([order_id])
   @@index([customer_id])
   @@index([customer_phone])
+  @@map("voucher_redemptions")
 }
 
 model Ticket {
-  id            Int      @id @default(autoincrement())
-  ticket_type   String?  @db.VarChar(255)
-  subject       String?  @db.VarChar(255)
-  customer_name String?  @db.VarChar(255)
-  customer_phone String? @db.VarChar(255)
-  assignee      String?  @db.VarChar(255)
-  priority      String?  @db.VarChar(20)
-  status        String?  @db.VarChar(50)
-  content       String?  @db.Text
-  tags          String?  @db.Text
-  attachments   String?  @db.Text
-  sla_due       DateTime? @db.Timestamp(0)
-  escalated     Boolean? @db.Boolean
-  created_at    DateTime  @default(now()) @db.Timestamp(0)
-  branch_id     Int?
-  branch        Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  id              Int              @id @default(autoincrement())
+  ticket_type     String?          @db.VarChar(255)
+  subject         String?          @db.VarChar(255)
+  customer_name   String?          @db.VarChar(255)
+  customer_phone  String?          @db.VarChar(255)
+  assignee        String?          @db.VarChar(255)
+  priority        String?          @db.VarChar(20)
+  status          String?          @db.VarChar(50)
+  content         String?          @db.Text
+  tags            String?          @db.Text
+  attachments     String?          @db.Text
+  sla_due         DateTime?        @db.Timestamp(0)
+  escalated       Boolean?         @db.Boolean
+  created_at      DateTime         @default(now()) @db.Timestamp(0)
+  branch_id       Int?
+  branch          Branch?          @relation(fields: [branch_id], references: [id], onDelete: SetNull)
   escalatedTicket EscalatedTicket?
 
-  @@map("tickets")
   @@index([branch_id])
-}
-
-model VoiceChannel {
-  id        Int      @id @default(autoincrement())
-  name      String   @db.VarChar(100)
-  type      String   @default("BRANCH") @db.VarChar(20)
-  branchId  Int?     @map("branch_id")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
-
-  branch Branch? @relation(fields: [branchId], references: [id], onDelete: Cascade)
-
-  @@index([branchId])
-  @@map("voice_channels")
-}
-
-model VoiceSettings {
-  id            Int      @id @default(autoincrement())
-  userId        Int      @unique @map("user_id")
-  pushToTalkKey String?  @map("push_to_talk_key") @db.VarChar(50)
-  inputDevice   String?  @map("input_device") @db.VarChar(255)
-  outputDevice  String?  @map("output_device") @db.VarChar(255)
-  inputVolume   Float    @default(1) @map("input_volume")
-  outputVolume  Float    @default(1) @map("output_volume")
-  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(0)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(0)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("voice_settings")
+  @@map("tickets")
 }
 
 model CustomerFeedback {
-  id                Int       @id @default(autoincrement())
-  token             String    @unique @db.VarChar(128)
-  ticket_id         Int
-  customer_id       Int?
-  branch_id         Int?
-  rating            Int?
-  comment           String?   @db.Text
-  used              Boolean   @default(false)
-  created_at        DateTime  @default(now()) @db.Timestamp(0)
-  expires_at        DateTime  @db.Timestamp(0)
-  used_at           DateTime? @db.Timestamp(0)
-  submitted_at      DateTime? @db.Timestamp(0)
-  feedback_source   String?   @db.VarChar(100)
+  id                  Int       @id @default(autoincrement())
+  token               String    @unique @db.VarChar(128)
+  ticket_id           Int
+  customer_id         Int?
+  branch_id           Int?
+  rating              Int?
+  comment             String?   @db.Text
+  used                Boolean   @default(false)
+  created_at          DateTime  @default(now()) @db.Timestamp(0)
+  expires_at          DateTime  @db.Timestamp(0)
+  used_at             DateTime? @db.Timestamp(0)
+  submitted_at        DateTime? @db.Timestamp(0)
+  feedback_source     String?   @db.VarChar(100)
   created_by_staff_id Int?
 
-  @@map("customer_feedback")
   @@index([ticket_id])
   @@index([branch_id])
+  @@map("customer_feedback")
 }
 
 model EscalatedTicket {
-  id            Int      @id @default(autoincrement())
-  ticket_id     Int      @unique
-  ticket        Ticket   @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
-  escalated_at  DateTime @default(now()) @db.Timestamp(0)
-  escalated_by  String?  @db.VarChar(255)
-  reason        String?  @db.Text
-  resolved_at   DateTime? @db.Timestamp(0)
+  id           Int       @id @default(autoincrement())
+  ticket_id    Int       @unique
+  ticket       Ticket    @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  escalated_at DateTime  @default(now()) @db.Timestamp(0)
+  escalated_by String?   @db.VarChar(255)
+  reason       String?   @db.Text
+  resolved_at  DateTime? @db.Timestamp(0)
 
   @@map("escalated_tickets")
 }
@@ -520,72 +694,72 @@ model Food {
   category   String   @db.VarChar(100)
   key_name   String   @db.VarChar(100)
   name       String   @db.VarChar(255)
-  price      Decimal  @db.Decimal(10,2)
+  price      Decimal  @db.Decimal(10, 2)
   available  Int
   image_url  String?  @db.Text
   created_at DateTime @default(now()) @db.Timestamp(0)
   updated_at DateTime @default(now()) @db.Timestamp(0)
 
-  @@map("foods")
   @@unique([category, key_name], name: "uk_category_key")
+  @@map("foods")
 }
 
 model Menu {
-  id         Int      @id @default(autoincrement())
-  category   String   @db.VarChar(100)
-  key_name   String   @db.VarChar(100)
-  name       String   @db.VarChar(255)
-  price      Decimal  @db.Decimal(10,2)
-  available  Int
-  image_url  String?  @db.Text
-  created_at DateTime @default(now()) @db.Timestamp(0)
-  updated_at DateTime @default(now()) @db.Timestamp(0)
-  branch_id  Int?
-  branch     Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  id           Int              @id @default(autoincrement())
+  category     String           @db.VarChar(100)
+  key_name     String           @db.VarChar(100)
+  name         String           @db.VarChar(255)
+  price        Decimal          @db.Decimal(10, 2)
+  available    Int
+  image_url    String?          @db.Text
+  created_at   DateTime         @default(now()) @db.Timestamp(0)
+  updated_at   DateTime         @default(now()) @db.Timestamp(0)
+  branch_id    Int?
+  branch       Branch?          @relation(fields: [branch_id], references: [id], onDelete: SetNull)
   stockEntries MenuStockEntry[]
 
-  @@map("menu")
   @@unique([category, key_name], name: "uk_category_key")
   @@index([branch_id])
+  @@map("menu")
 }
 
 model MenuStockEntry {
-  id              Int      @id @default(autoincrement())
-  menu_id         Int?
-  item_name       String   @db.VarChar(255)
-  category        String   @db.VarChar(100)
-  stock_quantity  Int      @default(0)
-  created_at      DateTime @default(now()) @db.Timestamp(0)
-  updated_at      DateTime @updatedAt @db.Timestamp(0)
-  menu            Menu?    @relation(fields: [menu_id], references: [id], onDelete: SetNull)
+  id             Int      @id @default(autoincrement())
+  menu_id        Int?
+  item_name      String   @db.VarChar(255)
+  category       String   @db.VarChar(100)
+  stock_quantity Int      @default(0)
+  created_at     DateTime @default(now()) @db.Timestamp(0)
+  updated_at     DateTime @updatedAt @db.Timestamp(0)
+  menu           Menu?    @relation(fields: [menu_id], references: [id], onDelete: SetNull)
 
-  @@map("menu_stock")
   @@unique([category, item_name], name: "uk_menu_stock_item")
   @@index([menu_id])
+  @@map("menu_stock")
 }
 
 model Table {
-  id            Int      @id @default(autoincrement())
-  number        Int      @unique
-  label         String   @db.VarChar(255)
-  status        String   @default("vacant") @db.VarChar(50)
-  customerName  String?  @db.VarChar(255) @map("customer_name")
-  reservedUntil DateTime? @db.Timestamp(0) @map("reserved_until")
-  isBooking     Boolean  @default(false) @map("is_booking")
-  created_at    DateTime @default(now()) @db.Timestamp(0)
-  updated_at    DateTime @updatedAt @db.Timestamp(0)
+  id            Int       @id @default(autoincrement())
+  number        Int       @unique
+  label         String    @db.VarChar(255)
+  status        String    @default("vacant") @db.VarChar(50)
+  customerName  String?   @map("customer_name") @db.VarChar(255)
+  reservedUntil DateTime? @map("reserved_until") @db.Timestamp(0)
+  isBooking     Boolean   @default(false) @map("is_booking")
+  created_at    DateTime  @default(now()) @db.Timestamp(0)
+  updated_at    DateTime  @updatedAt @db.Timestamp(0)
   branch_id     Int?
-  branch        Branch?  @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  branch        Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
 
-  @@map("restaurant_tables")
   @@index([branch_id])
+  @@map("restaurant_tables")
 }
 
 model WhatsappToken {
-  id         Int      @id @default(autoincrement())
-  token      String?  @db.Text
+  id         Int       @id @default(autoincrement())
+  token      String?   @db.Text
   expires_at DateTime?
-  created_at DateTime @default(now()) @db.Timestamp(0)
+  created_at DateTime  @default(now()) @db.Timestamp(0)
 
   @@map("whatsapp_tokens")
 }
@@ -598,67 +772,67 @@ model UserAvatar {
   created_at DateTime @default(now()) @db.Timestamp(0)
   user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
-  @@map("user_avatars")
   @@index([user_id])
+  @@map("user_avatars")
 }
 
 model DeliveryIssue {
-  id               Int       @id @default(autoincrement())
-  conversation_id  Int
-  customer_name    String?   @db.VarChar(255)
-  reported_at      DateTime  @default(now()) @db.Timestamp(0)
+  id              Int      @id @default(autoincrement())
+  conversation_id Int
+  customer_name   String?  @db.VarChar(255)
+  reported_at     DateTime @default(now()) @db.Timestamp(0)
 
-  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 
-  @@map("delivery_issues")
   @@index([conversation_id])
+  @@map("delivery_issues")
 }
 
 model Email {
-  id            Int       @id @default(autoincrement())
-  from          String    @db.VarChar(255)
-  fromEmail     String    @db.VarChar(255)
-  to            String    @db.VarChar(255)
-  subject       String    @db.VarChar(255)
-  body          String    @db.Text
-  preview       String?   @db.Text
-  date          DateTime? @db.Timestamp(0)
-  isRead        Boolean   @default(false)
-  isImportant   Boolean   @default(false)
-  isArchived    Boolean   @default(false)
-  isSpam        Boolean   @default(false)
-  created_at    DateTime  @default(now()) @db.Timestamp(0)
-  updated_at    DateTime  @updatedAt @db.Timestamp(0)
+  id          Int       @id @default(autoincrement())
+  from        String    @db.VarChar(255)
+  fromEmail   String    @db.VarChar(255)
+  to          String    @db.VarChar(255)
+  subject     String    @db.VarChar(255)
+  body        String    @db.Text
+  preview     String?   @db.Text
+  date        DateTime? @db.Timestamp(0)
+  isRead      Boolean   @default(false)
+  isImportant Boolean   @default(false)
+  isArchived  Boolean   @default(false)
+  isSpam      Boolean   @default(false)
+  created_at  DateTime  @default(now()) @db.Timestamp(0)
+  updated_at  DateTime  @updatedAt @db.Timestamp(0)
 
-  @@map("emails")
   @@index([fromEmail])
   @@index([to])
   @@index([created_at])
+  @@map("emails")
 }
 
 model StaffProfile {
-  id              Int       @id @default(autoincrement())
-  user_id         Int       @unique
-  firstName        String?   @db.VarChar(255)
-  lastName         String?   @db.VarChar(255)
-  email           String?   @db.VarChar(255)
-  phone           String?   @db.VarChar(255)
-  bio             String?   @db.Text
-  country         String?   @db.VarChar(255)
-  cityState       String?   @db.VarChar(255)
-  postalCode      String?   @db.VarChar(255)
-  taxId           String?   @db.VarChar(255)
-  avatarUrl       String?   @db.Text
-  created_at      DateTime  @default(now()) @db.Timestamp(0)
-  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamp(0)
-  branch_id       Int?
+  id         Int      @id @default(autoincrement())
+  user_id    Int      @unique
+  firstName  String?  @db.VarChar(255)
+  lastName   String?  @db.VarChar(255)
+  email      String?  @db.VarChar(255)
+  phone      String?  @db.VarChar(255)
+  bio        String?  @db.Text
+  country    String?  @db.VarChar(255)
+  cityState  String?  @db.VarChar(255)
+  postalCode String?  @db.VarChar(255)
+  taxId      String?  @db.VarChar(255)
+  avatarUrl  String?  @db.Text
+  created_at DateTime @default(now()) @db.Timestamp(0)
+  updated_at DateTime @default(now()) @updatedAt @db.Timestamp(0)
+  branch_id  Int?
 
-  user            User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  branch          Branch?   @relation(fields: [branch_id], references: [id], onDelete: SetNull)
+  user   User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  branch Branch? @relation(fields: [branch_id], references: [id], onDelete: SetNull)
 
-  @@map("staff_profiles")
   @@index([user_id])
   @@index([branch_id])
+  @@map("staff_profiles")
 }
 
 model DashboardSnapshot {
@@ -671,15 +845,14 @@ model DashboardSnapshot {
 }
 
 model PasswordReset {
-  id        Int      @id @default(autoincrement())
-  email     String   @db.VarChar(255)
-  token     String   @unique @db.VarChar(255)
+  id        Int       @id @default(autoincrement())
+  email     String    @db.VarChar(255)
+  token     String    @unique @db.VarChar(255)
   expiresAt DateTime
   usedAt    DateTime?
-  createdAt DateTime @default(now()) @db.Timestamp(0)
+  createdAt DateTime  @default(now()) @db.Timestamp(0)
 
-  @@map("password_resets")
   @@index([email])
   @@index([token])
+  @@map("password_resets")
 }
-

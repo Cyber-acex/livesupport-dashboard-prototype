@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeIncomingPlatformMessage, buildPendingSessionPayload, processPlatformMessage, shouldBypassBranchSelectionForPlatform } from '../services/platformConversationService.js';
+import { db } from '../db/database.js';
 
 test('normalizes WhatsApp payload into a shared internal format', () => {
   const normalized = normalizeIncomingPlatformMessage({
@@ -71,19 +72,24 @@ test('routes a first WhatsApp message through the same pending branch workflow',
 test('routes a first Messenger message directly into the Ikeja branch without prompting for selection', async () => {
   globalThis.io = { to: () => ({ emit: () => {} }) };
   const messengerUserId = `messenger-guest-isolated-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const result = await processPlatformMessage({
-    platform: 'messenger',
-    platformUserId: messengerUserId,
-    phone: messengerUserId,
-    sender: 'received',
-    text: 'Hello there',
-    sendReply: async () => {}
-  });
+  try {
+    const result = await processPlatformMessage({
+      platform: 'messenger',
+      platformUserId: messengerUserId,
+      phone: messengerUserId,
+      sender: 'received',
+      text: 'Hello there',
+      sendReply: async () => {}
+    });
 
-  assert.equal(result.handled, true);
-  assert.equal(result.path, 'existing-conversation');
-  assert.ok(result.conversationId > 0);
-  delete globalThis.io;
+    assert.equal(result.handled, true);
+    assert.equal(result.path, 'existing-conversation');
+    assert.ok(result.conversationId > 0);
+  } finally {
+    await db.promise().query('DELETE FROM messages WHERE conversation_id IN (SELECT id FROM conversations WHERE platform_user_id = ?)', [messengerUserId]);
+    await db.promise().query('DELETE FROM conversations WHERE platform_user_id = ?', [messengerUserId]);
+    delete globalThis.io;
+  }
 });
 
 test('falls back to direct message handling for Messenger when no active branches are available', () => {

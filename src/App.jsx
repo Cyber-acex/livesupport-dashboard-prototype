@@ -1,3 +1,4 @@
+import AILearningPage from './pages/AILearningPage';
 import React from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
@@ -15,8 +16,8 @@ import LoginPage from './pages/Login';
 import CustomerWebChatPage from './pages/CustomerWebChatPage';
 import CustomerChatOnboardingPage from './pages/CustomerChatOnboardingPage';import FeedbackPage from './pages/FeedbackPage';
 import NotificationBanner from './components/NotificationBanner';
-import VoiceWidget from './components/VoiceWidget';
 import { useZoom } from './contexts/ZoomContext';
+import StaffVoiceWidget from './components/StaffVoiceWidget';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -47,24 +48,17 @@ function App() {
   const isLoginRoute = pathname === '/login';
   const isFeedbackRoute = pathname.startsWith('/rate/');
   const isAuthenticatedShell = !isLoginRoute && !isFeedbackRoute;
-
   return (
     <>
-      {isAuthenticatedShell && <VoiceWidget />}
-      <div
-        className="app-zoom-shell"
-        style={{
-          '--app-zoom': isAuthenticatedShell ? zoom : 1,
-          zoom: isAuthenticatedShell ? 'var(--app-zoom)' : 1
-        }}
-      >
-      {isAuthenticatedShell && <NotificationBanner />}
+      {!isLoginRoute && !isFeedbackRoute && <NotificationBanner />}
+      <div className="app-zoom-shell" style={{ '--app-zoom': isAuthenticatedShell ? zoom : 1, zoom: isAuthenticatedShell ? 'var(--app-zoom)' : 1 }}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/tickets" element={<TicketsPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/ai-learning" element={<AILearningPage />} />
         <Route path="/orders/*" element={<OrdersPage />} />
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/knowledge/policies" element={<PolicyPage />} />
@@ -82,6 +76,7 @@ function App() {
         {/* Deliveries page removed for presentation build */}
       </Routes>
       </div>
+      {isAuthenticatedShell && <StaffVoiceWidget />}
     </>
   );
 }

@@ -1,131 +1,170 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Room, RoomEvent, Track } from 'livekit-client';
+﻿import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
+import { MeshVoiceEngine } from '../services/voice/meshVoiceEngine';
+import { mergePresenceIntoDirectory } from '../utils/voicePresence';
 
 const VoiceCommunicationContext = createContext(null);
-const debugVoice = (...args) => { if (import.meta.env.DEV || import.meta.env.VITE_VOICE_DEBUG === 'true') console.debug('[VOICE]', ...args); };
+const defaultCurrentUser = { id: null, name: 'Staff', role: 'staff', department: 'Operations', branch: 'Current Branch', status: 'available', avatar: 'ST', availability: 'Available' };
+
+function resolveCurrentUser() {
+  if (typeof window === 'undefined') return defaultCurrentUser;
+  const user = window.currentUser || window.__CURRENT_USER__;
+  return user ? { ...defaultCurrentUser, id: user.id || user.userId || null, name: user.name || user.displayName || 'Staff', role: user.role || 'staff', branch: user.branchName || user.branch || 'Current Branch', avatar: user.avatar_url || user.avatarUrl || 'ST' } : defaultCurrentUser;
+}
+
+function participantView(participant, speakingIds) {
+  return { userId: participant.identity, name: participant.name || participant.identity, speaking: speakingIds.has(participant.identity), connected: true };
+}
 
 export function VoiceCommunicationProvider({ children }) {
-  const [connectionState, setConnectionState] = useState('connecting');
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('staff');
+  const [search, setSearch] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('All');
+  const [roleFilter, setRoleFilter] = useState('All');
+  const [sortOrder, setSortOrder] = useState('alpha');
+  const [staffDirectory, setStaffDirectory] = useState([]);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [currentUser, setCurrentUser] = useState(resolveCurrentUser);
   const [channelState, setChannelState] = useState('disconnected');
+  const [connectionState, setConnectionState] = useState('connecting');
   const [microphoneState, setMicrophoneState] = useState('idle');
-  const [currentUser, setCurrentUser] = useState(null);
-  const [activeStaff, setActiveStaff] = useState([]);
   const [activeParticipants, setActiveParticipants] = useState([]);
   const [muted, setMuted] = useState(false);
   const [deafened, setDeafened] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [error, setError] = useState(null);
-  const [diagnostics, setDiagnostics] = useState({ transport: 'livekit', room: null, localMicrophone: 'none', published: false, remoteAudioTracks: 0, activeSpeaker: null });
+  const [transmitting, setTransmittingState] = useState(false);
+  const [error, setError] = useState('');
+  const [diagnostics, setDiagnostics] = useState({ authentication: 'UNKNOWN', branch: 'UNKNOWN', tokenRequest: 'IDLE', room: '', localParticipant: 'DISCONNECTED', microphonePermission: 'UNKNOWN', localMicrophone: 'UNPUBLISHED', remoteParticipants: '0', remoteAudioTracks: '0', activeSpeaker: '', lastError: '', connection: 'connecting' });
+  const voiceEngineRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const remoteAudioRef = useRef(new Map());
+  const signalingHandlersRef = useRef(null);
   const socketRef = useRef(null);
-  const roomRef = useRef(null);
-  const audioElementsRef = useRef(new Map());
-  const currentUserRef = useRef(null);
-  const mutedRef = useRef(false);
-  const deafenedRef = useRef(false);
-  const joinedChannelRef = useRef(null);
+  const speakingIdsRef = useRef(new Set());
+  const transmitRef = useRef(false);
 
-  const mapParticipant = useCallback((participant) => ({
-    userId: participant.identity,
-    name: participant.name || participant.identity,
-    role: participant.metadata || 'staff',
-    speaking: participant.isSpeaking,
-    muted: !participant.isMicrophoneEnabled
-  }), []);
-
-  const syncParticipants = useCallback((room) => {
-    const participants = Array.from(room.remoteParticipants.values()).map(mapParticipant);
+  const setDiagnostic = useCallback((key, value) => setDiagnostics((previous) => ({ ...previous, [key]: value })), []);
+  const refreshParticipants = useCallback(() => {
+    const engine = voiceEngineRef.current;
+    if (!engine) return;
+    const participants = Array.from(engine.peers.values()).map(({ peerId }) => participantView({ identity: peerId }, speakingIdsRef.current));
     setActiveParticipants(participants);
-    setDiagnostics((previous) => ({ ...previous, room: room.name, remoteAudioTracks: participants.reduce((count, participant) => count + (room.remoteParticipants.get(String(participant.userId))?.audioTrackPublications?.size || 0), 0) }));
-  }, [mapParticipant]);
-
-  const attachAudio = useCallback((track, publication, participant) => {
-    const elements = track.attach();
-    elements.forEach((element) => { element.autoplay = true; element.muted = deafenedRef.current; element.setAttribute('aria-hidden', 'true'); });
-    audioElementsRef.current.set(`${participant.identity}:${publication.trackSid}`, elements);
-    setDiagnostics((previous) => ({ ...previous, remoteAudioTracks: audioElementsRef.current.size }));
-    debugVoice('remote audio subscribed', { participant: participant.identity });
+    setDiagnostic('remoteParticipants', String(participants.length));
+  }, [setDiagnostic]);
+  const applyDeafen = useCallback((value) => {
+    remoteAudioRef.current.forEach((audio) => { audio.volume = value ? 0 : 1; });
   }, []);
 
-  const detachAudio = useCallback((track, publication, participant) => {
-    track.detach().forEach((element) => element.remove());
-    audioElementsRef.current.delete(`${participant.identity}:${publication.trackSid}`);
-    setDiagnostics((previous) => ({ ...previous, remoteAudioTracks: audioElementsRef.current.size }));
-  }, []);
-
-  useEffect(() => {
-    let mounted = true;
-    const socket = io({ autoConnect: false, withCredentials: true });
-    const room = new Room({ adaptiveStream: true, dynacast: true });
-    socketRef.current = socket;
-    roomRef.current = room;
-
-    socket.on('connect', () => { if (mounted) setConnectionState('connected'); });
-    socket.on('disconnect', () => { if (mounted) setConnectionState('reconnecting'); });
-    socket.on('connect_error', () => { if (mounted) { setConnectionState('error'); setError('LiveSupport connection failed.'); } });
-    socket.on('voice:presence', (entries) => { if (mounted && Array.isArray(entries)) setActiveStaff(entries.filter((entry) => entry.status === 'active')); });
-    room.on(RoomEvent.ConnectionStateChanged, (state) => {
-      if (!mounted) return;
-      debugVoice('LiveKit connection state', state);
-      setChannelState(state === 'connected' ? 'connected' : state === 'reconnecting' ? 'reconnecting' : 'disconnected');
-      setDiagnostics((previous) => ({ ...previous, connection: state }));
-    });
-    room.on(RoomEvent.ParticipantConnected, () => syncParticipants(room));
-    room.on(RoomEvent.ParticipantDisconnected, (participant) => { setActiveParticipants((previous) => previous.filter((entry) => String(entry.userId) !== String(participant.identity))); });
-    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => { if (track.kind === Track.Kind.Audio) attachAudio(track, publication, participant); syncParticipants(room); });
-    room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => { if (track.kind === Track.Kind.Audio) detachAudio(track, publication, participant); syncParticipants(room); });
-    room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => { const activeSpeaker = speakers[0] ? speakers[0].identity : null; setSpeaking(Boolean(currentUserRef.current && activeSpeaker === String(currentUserRef.current.id))); setActiveParticipants((previous) => previous.map((participant) => ({ ...participant, speaking: speakers.some((speaker) => String(speaker.identity) === String(participant.userId)) }))); setDiagnostics((previous) => ({ ...previous, activeSpeaker })); });
-    room.on(RoomEvent.LocalTrackPublished, () => setDiagnostics((previous) => ({ ...previous, published: true })));
-    room.on(RoomEvent.LocalTrackUnpublished, () => setDiagnostics((previous) => ({ ...previous, published: false })));
-
-    fetch('/api/user', { credentials: 'same-origin' }).then((response) => response.ok ? response.json() : null).then((user) => { if (mounted && user) { currentUserRef.current = user; setCurrentUser(user); socket.connect(); } }).catch(() => { if (mounted) setConnectionState('error'); });
-    return () => { mounted = false; room.disconnect(); audioElementsRef.current.forEach((elements) => elements.forEach((element) => element.remove())); audioElementsRef.current.clear(); socket.removeAllListeners(); socket.disconnect(); };
-  }, [attachAudio, detachAudio, syncParticipants]);
+  const leaveVoice = useCallback(async () => {
+    const engine = voiceEngineRef.current;
+    voiceEngineRef.current = null;
+    setChannelState('disconnected');
+    setConnectionState('disconnected');
+    setActiveParticipants([]);
+    setTransmittingState(false);
+    setMuted(false);
+    setDeafened(false);
+    socketRef.current?.emit('voice:leave');
+    if (socketRef.current && signalingHandlersRef.current) {
+      Object.entries(signalingHandlersRef.current).forEach(([event, handler]) => socketRef.current.off(event, handler));
+      signalingHandlersRef.current = null;
+    }
+    await engine?.close();
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    remoteAudioRef.current.forEach((audio) => { audio.pause(); audio.srcObject = null; });
+    remoteAudioRef.current.clear();
+    setDiagnostic('localParticipant', 'DISCONNECTED');
+    setDiagnostic('room', '');
+  }, [setDiagnostic]);
 
   const joinVoice = useCallback(async () => {
-    if (!currentUser || !roomRef.current || channelState === 'connected' || channelState === 'reconnecting') return;
-    setError(null); setMicrophoneState('requesting');
-    const channelId = `branch:${currentUser.branchId || 'none'}`;
+    if (voiceEngineRef.current || !currentUser?.id) return;
+    setError(''); setChannelState('connecting'); setConnectionState('connecting'); setMicrophoneState('requesting'); setDiagnostic('tokenRequest', 'REQUESTING');
     try {
-      const response = await fetch('/api/voice/livekit-token', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channelId }) });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error === 'livekit_not_configured' ? 'LiveKit voice is not configured yet.' : data.error || 'Voice authorization failed.');
-      const room = roomRef.current;
-      await room.connect(data.url, data.token);
-      await room.localParticipant.setMicrophoneEnabled(true);
-      await room.localParticipant.setMicrophoneEnabled(false);
-      joinedChannelRef.current = channelId;
-      setMicrophoneState('ready');
-      setChannelState('connected');
-      setDiagnostics((previous) => ({ ...previous, room: room.name, localMicrophone: 'ready', connection: 'connected' }));
-      syncParticipants(room);
+      const socket = socketRef.current;
+      if (!socket) throw new Error('Voice signaling is unavailable. Please reload and try again.');
+      if (!socket.connected) await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); socket.connect(); });
+      const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      localStreamRef.current = localStream;
+      const engine = new MeshVoiceEngine({ socket, localStream, onRemoteStream: (peerId, stream) => {
+        let audio = remoteAudioRef.current.get(peerId);
+        if (!audio) { audio = new Audio(); audio.autoplay = true; remoteAudioRef.current.set(peerId, audio); }
+        audio.srcObject = stream;
+        audio.volume = deafened ? 0 : 1;
+        void audio.play().catch(() => {});
+        setDiagnostic('remoteAudioTracks', String(remoteAudioRef.current.size));
+      }, onPeerState: (peerId, state) => {
+        if (state === 'connected') { setChannelState('connected'); setConnectionState('connected'); refreshParticipants(); }
+        if (state === 'disconnected' || state === 'closed') { engine.removePeer(peerId); refreshParticipants(); }
+      }});
+      voiceEngineRef.current = engine;
+      const handlePeerList = (peers = []) => { peers.forEach(({ peerId }) => engine.createPeer(peerId)); refreshParticipants(); };
+      const handlePeerJoined = ({ peerId }) => { engine.createPeer(peerId); refreshParticipants(); };
+      const handlePeerLeft = ({ peerId }) => { engine.removePeer(peerId); remoteAudioRef.current.get(peerId)?.remove(); remoteAudioRef.current.delete(peerId); refreshParticipants(); };
+      const handleOffer = ({ peerId, offer }) => void engine.handleOffer(peerId, offer);
+      const handleAnswer = ({ peerId, answer }) => void engine.handleAnswer(peerId, answer);
+      const handleCandidate = ({ peerId, candidate }) => void engine.handleCandidate(peerId, candidate);
+      socket.on('voice:peer-list', handlePeerList); socket.on('voice:peer-joined', handlePeerJoined); socket.on('voice:peer-left', handlePeerLeft);
+      socket.on('voice:offer', handleOffer); socket.on('voice:answer', handleAnswer); socket.on('voice:ice-candidate', handleCandidate);
+      signalingHandlersRef.current = { 'voice:peer-list': handlePeerList, 'voice:peer-joined': handlePeerJoined, 'voice:peer-left': handlePeerLeft, 'voice:offer': handleOffer, 'voice:answer': handleAnswer, 'voice:ice-candidate': handleCandidate };
+      const joined = await new Promise((resolve, reject) => socket.emit('voice:join', { channelId: 'branch' }, (result) => result?.ok ? resolve(result) : reject(new Error(result?.error || 'Unable to join staff voice.'))));
+      void joined;
+      setChannelState('connected'); setConnectionState('connected'); setMicrophoneState('available'); setDiagnostic('tokenRequest', 'AUTHORIZED'); setDiagnostic('branch', 'AUTHORIZED'); setDiagnostic('localParticipant', 'CONNECTED'); setDiagnostic('microphonePermission', 'GRANTED');
     } catch (joinError) {
-      setMicrophoneState(joinError.name === 'NotAllowedError' ? 'denied' : 'error');
-      setChannelState('error');
-      setError(joinError.message || 'Voice connection failed.');
+      await leaveVoice();
+      const message = joinError?.name === 'NotAllowedError' ? 'Microphone access was denied. Please allow microphone access and try again.' : joinError?.message || 'Unable to connect to staff voice.';
+      setError(message); setMicrophoneState('error'); setConnectionState('error'); setDiagnostic('lastError', message);
     }
-  }, [currentUser, channelState, syncParticipants]);
+  }, [currentUser?.id, deafened, leaveVoice, refreshParticipants, setDiagnostic]);
 
   const setTransmitting = useCallback((value) => {
-    const room = roomRef.current;
-    if (!room || room.state !== 'connected') return;
-    const shouldTransmit = Boolean(value) && !mutedRef.current;
-    room.localParticipant.setMicrophoneEnabled(shouldTransmit).then(() => { setSpeaking(shouldTransmit); setDiagnostics((previous) => ({ ...previous, published: shouldTransmit })); }).catch(() => setError('Unable to change microphone state.'));
-  }, []);
+    transmitRef.current = Boolean(value);
+    if (!localStreamRef.current || muted) return;
+    localStreamRef.current.getAudioTracks().forEach((track) => { track.enabled = Boolean(value); });
+    setTransmittingState(Boolean(value));
+  }, [muted]);
+  const toggleMute = useCallback(() => {
+    const nextMuted = !muted; setMuted(nextMuted); if (nextMuted) setTransmittingState(false);
+    localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !nextMuted && transmitRef.current; });
+  }, [muted]);
+  const toggleDeafen = useCallback(() => { const next = !deafened; setDeafened(next); applyDeafen(next); }, [applyDeafen, deafened]);
 
-  const leaveVoice = useCallback(() => {
-    roomRef.current?.disconnect();
-    audioElementsRef.current.forEach((elements) => elements.forEach((element) => element.remove()));
-    audioElementsRef.current.clear();
-    joinedChannelRef.current = null;
-    setActiveParticipants([]); setChannelState('disconnected'); setMicrophoneState('idle'); setSpeaking(false);
-    setDiagnostics({ transport: 'livekit', room: null, localMicrophone: 'none', published: false, remoteAudioTracks: 0, activeSpeaker: null });
-  }, []);
+  useEffect(() => {
+    const stop = () => setTransmitting(false);
+    window.addEventListener('blur', stop); document.addEventListener('visibilitychange', stop);
+    return () => { window.removeEventListener('blur', stop); document.removeEventListener('visibilitychange', stop); void leaveVoice(); };
+  }, [leaveVoice, setTransmitting]);
+  useEffect(() => {
+    let active = true;
+    const hydrate = async () => { try {
+      const [sessionResponse, staffResponse] = await Promise.all([fetch('/api/user', { credentials: 'same-origin' }), fetch('/api/voice/staff', { credentials: 'same-origin' })]);
+      const user = sessionResponse.ok ? await sessionResponse.json() : null;
+      if (user?.id && active) setCurrentUser({ ...defaultCurrentUser, ...user, branch: user.branchName || user.branch || 'Current Branch', name: user.name || 'Staff' });
+      const staff = staffResponse.ok ? await staffResponse.json() : [];
+      if (active) { setStaffDirectory(mergePresenceIntoDirectory(Array.isArray(staff) ? staff : [], Array.isArray(staff) ? staff : [])); setIsHydrated(true); }
+      setDiagnostic('authentication', user?.id ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
+    } catch { if (active) setIsHydrated(true); } };
+    void hydrate(); return () => { active = false; };
+  }, [setDiagnostic]);
+  useEffect(() => {
+    if (!currentUser?.id || socketRef.current) return undefined;
+    const socket = io(window.location.origin, { transports: ['polling', 'websocket'] }); socketRef.current = socket;
+    socket.on('connect', () => socket.emit('voice:register', { userId: currentUser.id, name: currentUser.name, role: currentUser.role, branch: currentUser.branch, status: 'online' }));
+    socket.on('voice:presenceUpdate', (payload) => setStaffDirectory((previous) => mergePresenceIntoDirectory(previous, Array.isArray(payload) ? payload : [])));
+    return () => { socket.disconnect(); socketRef.current = null; };
+  }, [currentUser]);
 
-  const toggleMute = useCallback(() => { const next = !mutedRef.current; mutedRef.current = next; setMuted(next); if (next) setTransmitting(false); else if (roomRef.current?.state === 'connected') roomRef.current.localParticipant.setMicrophoneEnabled(false).catch(() => {}); }, [setTransmitting]);
-  const toggleDeafen = useCallback(() => { const next = !deafenedRef.current; deafenedRef.current = next; setDeafened(next); audioElementsRef.current.forEach((elements) => elements.forEach((element) => { element.muted = next; })); }, []);
-  const value = useMemo(() => ({ connectionState, channelState, microphoneState, currentUser, activeStaff, activeParticipants, localParticipant: currentUser, muted, deafened, speaking, error, diagnostics, joinVoice, leaveVoice, setTransmitting, toggleMute, toggleDeafen, clearError: () => setError(null) }), [connectionState, channelState, microphoneState, currentUser, activeStaff, activeParticipants, muted, deafened, speaking, error, diagnostics, joinVoice, leaveVoice, setTransmitting, toggleMute, toggleDeafen]);
+  const togglePanel = useCallback(() => setIsOpen((value) => !value), []);
+  const setPanelOpen = useCallback((value) => setIsOpen(value), []);
+  const openCall = useCallback(() => { void joinVoice(); }, [joinVoice]);
+  const session = channelState === 'connected' ? { peer: { name: 'Branch voice' }, quality: 'WebRTC', duration: 0, isMuted: muted, volume: deafened ? 0 : 1, securityVerified: true, isHeld: false, boosted: false } : null;
+  const value = useMemo(() => ({ isOpen, setPanelOpen, togglePanel, activeTab, setActiveTab, search, setSearch, departmentFilter, setDepartmentFilter, roleFilter, setRoleFilter, sortOrder, setSortOrder, staffDirectory, activeStaff: staffDirectory, currentUser, setCurrentUser, isHydrated, incomingCall: null, setIncomingCall: () => {}, outgoingCall: null, setOutgoingCall: () => {}, session, setSession: () => {}, broadcast: null, setBroadcast: () => {}, toast: null, setToast: () => {}, connectionState, channelState, microphoneState, activeParticipants, muted, deafened, speaking: transmitting, transmitting, error, diagnostics, pushToast: () => {}, openCall, acceptIncomingCall: joinVoice, declineIncomingCall: () => {}, endSession: leaveVoice, leaveVoice, joinVoice, setTransmitting, toggleMute, toggleDeafen, cancelOutgoingCall: leaveVoice, startBroadcast: joinVoice, endBroadcast: leaveVoice, toggleHold: () => {}, cycleVolume: () => {}, verifySecurity: () => {}, toggleBoost: () => {}, toggleBroadcastMute: () => {}, toggleBroadcastLock: () => {}, inviteStaffToBroadcast: () => {} }), [activeParticipants, activeTab, channelState, connectionState, currentUser, deafened, departmentFilter, diagnostics, error, isHydrated, isOpen, joinVoice, leaveVoice, microphoneState, muted, openCall, roleFilter, search, session, setPanelOpen, sortOrder, staffDirectory, toggleDeafen, toggleMute, togglePanel, transmitting, setTransmitting]);
   return <VoiceCommunicationContext.Provider value={value}>{children}</VoiceCommunicationContext.Provider>;
 }
 
-export function useVoiceCommunication() { const context = useContext(VoiceCommunicationContext); if (!context) throw new Error('useVoiceCommunication must be used within VoiceCommunicationProvider'); return context; }
+export function useVoiceCommunication() {
+  const context = useContext(VoiceCommunicationContext);
+  if (!context) throw new Error('useVoiceCommunication must be used within a VoiceCommunicationProvider');
+  return context;
+}

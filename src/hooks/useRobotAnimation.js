@@ -14,7 +14,6 @@ export function useRobotAnimation({
   clicked = false,
   enabled = true,
   modelObject = null,
-  voiceActive = false,
   activityPulse = 0,
   danceActive = false
 } = {}) {
@@ -124,7 +123,7 @@ export function useRobotAnimation({
       if (!mesh.material) return;
       const material = mesh.material;
       const blinkFactor = blinkActive ? 0.18 : 1;
-      const emissiveBoost = hovered || voiceActive ? 2.2 : 1.35;
+      const emissiveBoost = hovered ? 2.2 : 1.35;
       const glowOpacity = hovered ? 1 : 0.82;
 
       if (material.emissive) {
@@ -141,7 +140,7 @@ export function useRobotAnimation({
       }
       if (glowRef.current && glowRef.current.material) {
         glowRef.current.material.opacity = hovered ? 0.3 : 0.16 + activityPulse * 0.03 + (danceActive ? 0.08 : 0);
-        glowRef.current.material.color.set(voiceActive ? '#4ad4ff' : '#66e6ff');
+        glowRef.current.material.color.set('#66e6ff');
       }
     });
 

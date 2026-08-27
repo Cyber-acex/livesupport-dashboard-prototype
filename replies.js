@@ -4,8 +4,10 @@ import path from "path";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { config as dbConfig, prisma } from './db/database.js';
-import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
+import { resolveMenuItemMatches, calculateOrderPricing, validateCreatedOrder, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
 import { detectConversationIntent, shouldInjectBusinessContext, buildPromptContext, createGreetingReply, isAddressReplyForPendingQuestion } from './utils/aiConversationFlow.js';
+import { getActiveBranchContext } from './utils/branchSelection.js';
+import { retrieveRelevantKnowledge, safeAiLog, logAiActivity, recordDecision, recordAction } from './services/aiLearningService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -829,8 +831,15 @@ function getBranchDisplayName(branchId = null) {
 async function buildSupportReply(message = '', options = {}) {
     const lowerMessage = String(message || '').toLowerCase();
     const branchId = options?.branchId;
+    const intent = options?.intent || 'Unknown';
     const branchLabel = getBranchDisplayName(branchId);
     const branchContext = branchId ? `For ${branchLabel}, ` : '';
+
+    // NEW_ORDER requests must go to AI for proper ordering flow.
+    // Never use canned responses for new order attempts.
+    if (intent === 'New Order') {
+        return null;
+    }
 
     if (isMenuInquiry(message)) {
         // Try reading live menu from the database first; fall back to canned text when unavailable
@@ -1536,6 +1545,7 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
     const customerName = await getCustomerName(phone, conversationId);
     const resolvedBranchId = Number(branchId || await getConversationBranchId(conversationId) || 0) || null;
 
+    const actionStart = Date.now();
     try {
         const menuRows = await prisma.menu.findMany({
             select: { id: true, category: true, key_name: true, name: true, price: true, available: true },
@@ -1569,6 +1579,7 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
                 branch_id: resolvedBranchId
             }
         });
+        safeAiLog(() => recordAction({ conversation_id: conversationId, action_type: 'ORDER_CREATE', input_ref: String(conversationId), result: { orderId: order.order_id || null }, success: true, execution_ms: Date.now() - actionStart }));
 
         if (!order || !order.order_id || !String(order.order_id).trim()) {
             return { success: false, orderId: null, message: 'I’m sorry, the order could not be verified after creation.' };
@@ -1656,6 +1667,14 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
         console.log("getMistralReply called with phone:", phone, "conversationId:", conversationId, "branchId:", effectiveBranchId, "state:", conversationState?.workflowState || 'none');
 
         const intent = detectConversationIntent(message, conversationState);
+        const learningRules = await retrieveRelevantKnowledge({ intent, message, branchId: effectiveBranchId, workflow: conversationState?.workflowState, limit: 6 }).catch((error) => {
+            console.warn('AI knowledge retrieval failed:', error?.message || error);
+            return [];
+        });
+        safeAiLog(() => Promise.all([
+            logAiActivity({ conversation_id: conversationId || null, event_type: 'DECISION', intent, metadata: { ruleCount: learningRules.length } }),
+            recordDecision({ conversation_id: conversationId || null, intent, metadata: { ruleCount: learningRules.length } })
+        ]));
 
         let conversationHistory = [];
         if (conversationId) {
@@ -1709,7 +1728,7 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
         }
 
-        const supportReply = await buildSupportReply(message, { branchId: effectiveBranchId });
+        const supportReply = await buildSupportReply(message, { branchId: effectiveBranchId, intent });
         if (supportReply) {
             return supportReply;
         }
@@ -1952,6 +1971,7 @@ Follow these policy guardrails when taking action:
 ${policyGuidance}
 
 Never invent compensation, refund amounts, or replacement guarantees. Only offer actions supported by the policy, verified order information, or documented escalation.`;
+    const learningContext = learningRules.length ? `\n\nApproved operational guidance relevant to this request:\n${learningRules.map((item) => `- ${item.rule}`).join('\n')}` : '';
         let userPrompt = buildPromptContext({
             intent,
             message,
@@ -1959,10 +1979,24 @@ Never invent compensation, refund amounts, or replacement guarantees. Only offer
             businessContext,
             conversationState
         });
-        userPrompt += `${kbContext}${menuContext}${persistedWorkflowContext}${branchLockContext}`;
+        userPrompt += `${kbContext}${menuContext}${persistedWorkflowContext}${branchLockContext}${learningContext}`;
 
         if (menuInquiry) {
             userPrompt += `\n\nImportant: Use the Orders page menu information above when answering this customer's menu or ordering question. Do not rely on any menu-related entries from the knowledge base for this response.`;
+        }
+
+        if (intent === 'New Order') {
+            userPrompt += `\n\nCUSTOMER INTENT: NEW ORDER
+The customer is explicitly trying to place a NEW order, not asking about an existing one.
+
+CRITICAL RULES:
+- NEVER ask for an existing order ID or order number
+- Help them place a fresh order by asking what they'd like to order
+- If they mention items (burgers, pizza, etc.), acknowledge them and ask clarifying questions if needed (quantity, size, preferences)
+- Build their order naturally through conversation
+- Once their order items are clear, ask if they want anything else
+- Only ask for delivery address if they mention delivery
+- Keep the conversation flowing naturally - don't dump all questions at once`;
         }
 
         if (conversationHistory.length > 0) {
@@ -2046,6 +2080,7 @@ IMPORTANT: Do not confirm or create the order until the customer clearly indicat
 
         latency.totalMs = Date.now() - totalStart;
         logLatencySummary(latency);
+        safeAiLog(() => logAiActivity({ conversation_id: conversationId || null, event_type: 'RESPONSE', intent, outcome: 'SUCCESS', metadata: { model: aiConfig.model, latencyMs: latency.totalMs } }));
         return reply;
     } catch (error) {
         console.log("Mistral reply error:", error.message);

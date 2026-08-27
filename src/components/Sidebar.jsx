@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Activity, BarChart3, BookOpen, ChevronDown, ChevronsLeft, ChevronsRight, CircleDollarSign, ClipboardList, Home, Inbox, LayoutGrid, MoreHorizontal, Settings, Ticket, WalletCards, X } from 'lucide-react';
+import { Activity, BarChart3, BookOpen, BrainCircuit, ChevronDown, ChevronsLeft, ChevronsRight, CircleDollarSign, ClipboardList, Home, Inbox, LayoutGrid, MoreHorizontal, Settings, Ticket, WalletCards, X } from 'lucide-react';
 import { useSidebar } from '../contexts/SidebarContext';
 import { getSettings } from '../services/settingsService';
 import { getStoredAvatarUrl } from '../utils/avatarUpload';
@@ -9,6 +9,7 @@ const menuItems = [
   { to: '/dashboard', label: 'Dashboard', icon: Home },
   { to: '/tickets', label: 'Tickets', icon: Ticket },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+    { to: '/ai-learning', label: 'AI Learning', icon: BrainCircuit },
   { to: '/knowledge', label: 'Knowledge Base', icon: BookOpen },
   {
     to: '/orders',

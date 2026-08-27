@@ -263,6 +263,17 @@ function isPickup(session) {
 export function applyWorkflowTransition(currentState = {}, { customerMessage = '', draftOrder = null, action = null } = {}) {
   const session = normalizeConversationState(currentState);
   const patchDraft = mergeDraftOrder(session.draftOrder, inferOrderFieldsFromMessage(customerMessage, session.draftOrder));
+  
+  // Try to extract order items from the customer message if we're building an order
+  const workflowState = String(session.workflowState || '').toLowerCase();
+  if (workflowState.includes('building') || workflowState.includes('greeting')) {
+    const extractedItems = tryExtractOrderItems(customerMessage);
+    if (extractedItems && extractedItems.length > 0) {
+      const currentItems = Array.isArray(patchDraft.items) ? patchDraft.items : [];
+      patchDraft.items = [...currentItems, ...extractedItems];
+    }
+  }
+  
   const mergedDraft = mergeDraftOrder(patchDraft, draftOrder);
   const next = mergeConversationState(session, {
     draftOrder: mergedDraft,
@@ -332,6 +343,41 @@ export function applyWorkflowTransition(currentState = {}, { customerMessage = '
   next.workflowState = 'Building Order';
   next.pendingQuestions = [];
   return next;
+}
+
+export function tryExtractOrderItems(message = '', currentItems = []) {
+  if (!message) return currentItems;
+  
+  const text = String(message || '').toLowerCase().trim();
+  
+  // Common menu item patterns
+  const itemPatterns = [
+    { regex: /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:burger|burgers)/gi, name: 'burger' },
+    { regex: /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:pizza|pizzas)/gi, name: 'pizza' },
+    { regex: /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:fries|fried)/gi, name: 'fries' },
+    { regex: /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:coke|cola|soda)/gi, name: 'coke' },
+    { regex: /(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?(?:salad|salads)/gi, name: 'salad' },
+  ];
+  
+  const extractedItems = [];
+  
+  for (const pattern of itemPatterns) {
+    const matches = [...text.matchAll(pattern.regex)];
+    for (const match of matches) {
+      const qtyStr = match[1] || '1';
+      const qty = parseInt(qtyStr, 10) || (qtyStr === 'one' ? 1 : qtyStr === 'two' ? 2 : qtyStr === 'three' ? 3 : 1);
+      extractedItems.push({ name: pattern.name, quantity: qty });
+    }
+  }
+  
+  // Also look for simple item mentions
+  if (!extractedItems.length) {
+    if (text.includes('burger')) extractedItems.push({ name: 'burger', quantity: 1 });
+    else if (text.includes('pizza')) extractedItems.push({ name: 'pizza', quantity: 1 });
+    else if (text.includes('fries')) extractedItems.push({ name: 'fries', quantity: 1 });
+  }
+  
+  return extractedItems.length > 0 ? extractedItems : currentItems;
 }
 
 export { ORDER_WORKFLOW_STATES };

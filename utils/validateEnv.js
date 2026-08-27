@@ -1,5 +1,5 @@
-const requiredVars = ['DATABASE_URL', 'SESSION_SECRET'];
-const optionalVars = ['OSRM_URL', 'APP_URL'];
+const requiredVars = ['DATABASE_URL', 'SESSION_SECRET', 'MISTRAL_API_KEY'];
+const optionalVars = ['OSRM_URL', 'APP_URL', 'VOICE_STUN_URLS', 'VOICE_TURN_URL', 'VOICE_TURN_USERNAME', 'VOICE_TURN_CREDENTIAL'];
 
 function validateEnv() {
   const missing = [];

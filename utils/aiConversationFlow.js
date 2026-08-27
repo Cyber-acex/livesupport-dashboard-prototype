@@ -47,7 +47,10 @@ export const SUPPORTED_INTENTS = [
 ];
 
 function normalizeText(message = '') {
-  return String(message || '').trim().toLowerCase();
+  return String(message || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .toLowerCase();
 }
 
 function isAddressLikeText(message = '') {

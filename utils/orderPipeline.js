@@ -84,6 +84,21 @@ function formatMoney(value) {
   return `$${Number(value || 0).toFixed(2)}`;
 }
 
+function validateCreatedOrder(order, { lineItems = [], pricing = {}, status = 'confirmed' } = {}) {
+  if (!order || !String(order.order_id || '').trim()) return false;
+  if (String(order.status || '').toLowerCase() !== String(status).toLowerCase()) return false;
+
+  const expectedProduct = lineItems.map((item) => `${item.name} x${item.quantity}`).join(', ');
+  if (order.product !== expectedProduct) return false;
+
+  return [
+    ['subtotal', pricing.subtotal],
+    ['total_amount', pricing.finalTotal],
+    ['final_total', pricing.finalTotal],
+    ['discount_amount', pricing.discountAmount]
+  ].every(([field, expected]) => Number(order[field]) === Number(expected));
+}
+
 function buildOrderConfirmationMessage({ orderId, customerId, customerName, lineItems = [], pricing = {}, estimatedPreparationTime, estimatedDeliveryTime, status = 'Confirmed' }) {
   const lines = [];
   const resolvedCustomerId = customerId || customerName || 'Customer';
@@ -93,7 +108,7 @@ function buildOrderConfirmationMessage({ orderId, customerId, customerName, line
   lines.push('Ordered items:');
 
   for (const item of lineItems) {
-    lines.push(`· ${item.name} x${item.quantity} @ ${formatMoney(item.unitPrice)} = ${formatMoney(item.lineTotal)}`);
+    lines.push(`• ${item.name} x${item.quantity} @ ${formatMoney(item.unitPrice)} = ${formatMoney(item.lineTotal)}`);
   }
 
   lines.push(`Subtotal: ${formatMoney(pricing.subtotal || 0)}`);
@@ -108,4 +123,4 @@ function buildOrderConfirmationMessage({ orderId, customerId, customerName, line
   return lines.join('\n');
 }
 
-export { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage, formatMoney, normalizeName };
+export { resolveMenuItemMatches, calculateOrderPricing, validateCreatedOrder, buildOrderConfirmationMessage, formatMoney, normalizeName };

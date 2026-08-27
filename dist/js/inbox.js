@@ -296,7 +296,6 @@ const messagesContainer = document.getElementById("chat-messages");
 const scrollToBottomBtn = document.getElementById("scroll-down-btn");
 const messageInput = document.getElementById("staff-input");
 const sendButton = document.getElementById("staff-send");
-const voiceRecordBtn = document.getElementById("voice-record-btn");
 const aiSuggestionField = document.getElementById("ai-text");
 const aiUseButton = document.getElementById("ai-send");
 const aiSuggestionPanel = document.querySelector('.ai-suggestion');
@@ -328,9 +327,6 @@ const saveChatNameBtn = document.getElementById('saveChatNameBtn');
 const cancelChatNameBtn = document.getElementById('cancelChatNameBtn');
 let selectedFile = null;
 let originalChatName = '';
-let mediaRecorder = null;
-let audioChunks = [];
-let isRecording = false;
 
 window.inboxAppLoaded = true;
 // Global pending handoff audio state so a user gesture can resume playback
@@ -1483,73 +1479,6 @@ sendButton.addEventListener("click", async () => {
     setSendButtonState(false);
 });
 
-if (voiceRecordBtn) {
-    voiceRecordBtn.addEventListener("click", async () => {
-        if (isRecording) {
-            stopRecording();
-        } else {
-            startRecording();
-        }
-    });
-}
-
-async function startRecording() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-
-        mediaRecorder.ondataavailable = (event) => {
-            audioChunks.push(event.data);
-        };
-
-        mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-            await sendVoiceMessage(currentConversationId, audioBlob);
-            stream.getTracks().forEach(track => track.stop());
-        };
-
-        mediaRecorder.start();
-        isRecording = true;
-        voiceRecordBtn.classList.add('recording');
-        voiceRecordBtn.textContent = '⏹️';
-        voiceRecordBtn.title = 'Stop recording';
-    } catch (error) {
-        console.error('Error starting recording:', error);
-        alert('Could not access microphone. Please check permissions.');
-    }
-}
-
-function stopRecording() {
-    if (mediaRecorder && isRecording) {
-        mediaRecorder.stop();
-        isRecording = false;
-        voiceRecordBtn.classList.remove('recording');
-        voiceRecordBtn.textContent = '🎤';
-        voiceRecordBtn.title = 'Record voice message';
-    }
-}
-
-async function sendVoiceMessage(conversationId, audioBlob) {
-    if (!conversationId || !audioBlob) return false;
-
-    const formData = new FormData();
-    formData.append("conversation_id", conversationId);
-    formData.append("file", audioBlob, `voice-${Date.now()}.wav`);
-
-    const res = await fetch("/api/send-media", {
-        method: "POST",
-        body: formData
-    });
-
-    if (!res.ok) {
-        alert("Failed to send voice message. Please try again.");
-        return false;
-    }
-
-    return true;
-}
-
 async function sendFileMessage(conversationId, file, caption = "") {
     if (!conversationId || !file) return false;
 
@@ -1750,7 +1679,6 @@ function updateConversationEntry(msg, isCurrentConversation) {
     } catch (e) {
         // ignore
     }
-}
 
     const previewText = msg.message ? (msg.message.length > 50 ? msg.message.slice(0, 47) + '...' : msg.message) : '';
     const convDiv = findConversationElement(msg.conversation_id);

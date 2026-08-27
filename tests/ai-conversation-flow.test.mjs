@@ -15,6 +15,10 @@ test('detects greetings as a greeting intent without business context', () => {
   assert.ok(SUPPORTED_INTENTS.includes(intent));
 });
 
+test('detects Messenger greetings containing invisible formatting characters', () => {
+  assert.equal(detectConversationIntent('he\u200By'), 'Greeting');
+});
+
 test('keeps greeting replies simple and avoids business context', () => {
   const reply = createGreetingReply();
   assert.match(reply, /How can I help you today/);

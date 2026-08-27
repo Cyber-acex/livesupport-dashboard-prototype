@@ -2,8 +2,7 @@
 import fetch from "node-fetch";
 import http from "http";
 import { Server } from "socket.io";
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import "dotenv/config";
+import dotenv from "dotenv";
 import express from "express";
 import bodyParser from "body-parser";
 import session from "express-session";
@@ -16,6 +15,7 @@ import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '.env') });
 import { db, connectDatabase, config as dbConfig, prisma } from "./db/database.js";
 import { getMistralReply, resolveAiRequestConfig, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, MENU_ITEMS, createTicket, detectTicketCategory } from "./replies.js";
 import { sendEmail } from "./utils/email.js";
@@ -41,6 +41,7 @@ import { normalizeOrderRiderId } from './utils/orderRider.js';
 import { routeIncomingPlatformMessage } from './services/platformConversationService.js';
 import { ensureNotificationsTable, getNotificationsForUser, markNotificationRead, markAllNotificationsRead, dismissNotification, createNotification, createBranchNotification } from './services/notificationService.js';
 import { parseReservationDateTime } from './src/utils/tableReservation.js';
+import { DEFAULT_VOICE_CHANNEL, voiceChannelName, isValidSignalDescription, isValidIceCandidate, isAuthorizedVoiceTarget, createVoiceRateLimiter } from './src/services/voice/voiceProtocol.js';
 const app = express();
 app.set('trust proxy', true);
 
@@ -60,10 +61,6 @@ const agentActivity = new Map(); // conversation_id -> { lastMessage: timestamp,
 const escalationTimers = new Map();
 // Track presence and typing
 const onlineAgents = new Map(); // socketId -> { userId, name, role, socketId, lastActive, activeConversation }
-const voiceOperationBuckets = new Map();
-const VOICE_ROOM_LIMIT = 10;
-const VOICE_OPERATION_LIMIT = 30;
-const VOICE_OPERATION_WINDOW_MS = 10 * 1000;
 const typingIndicators = new Map(); // conversationId -> Set of agent names
 // Track user sessions to support force-logout
 const userSessions = new Map(); // userId -> Set of sessionIDs
@@ -71,35 +68,6 @@ const userSessions = new Map(); // userId -> Set of sessionIDs
 const pendingCsatByPhone = new Map();
 const FEEDBACK_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const FEEDBACK_LINK_BASE_URL = process.env.FEEDBACK_LINK_BASE_URL || process.env.APP_URL || '';
-const LIVEKIT_ROOM_LIMIT = 10;
-
-function getLiveKitConfiguration() {
-    const rawUrl = String(process.env.LIVEKIT_URL || '').trim();
-    const url = rawUrl ? rawUrl.replace(/^ws(s?):\/\//i, (_, secure) => secure ? 'https://' : 'http://').replace(/\/$/, '') : '';
-    return {
-        url,
-        clientUrl: rawUrl,
-        apiKey: String(process.env.LIVEKIT_API_KEY || '').trim(),
-        apiSecret: String(process.env.LIVEKIT_API_SECRET || '').trim()
-    };
-}
-
-function getLiveKitStatus() {
-    const config = getLiveKitConfiguration();
-    return {
-        configured: Boolean(config.url && config.apiKey && config.apiSecret),
-        urlConfigured: Boolean(config.url),
-        credentialsConfigured: Boolean(config.apiKey && config.apiSecret)
-    };
-}
-
-const livekitStartupStatus = getLiveKitStatus();
-console.log('LiveKit configuration', {
-    configured: livekitStartupStatus.configured,
-    urlConfigured: livekitStartupStatus.urlConfigured,
-    credentialsConfigured: livekitStartupStatus.credentialsConfigured
-});
-
 // Dashboard snapshots storage
 const dashboardSnapshots = new Map(); // name -> { data, saved_at }
 const conversationStateCache = new Map(); // conversationId -> session snapshot
@@ -108,6 +76,36 @@ const WEBHOOK_EVENT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const messageProcessingCache = new Map(); // idempotency cache for duplicate message processing
 const MESSAGE_PROCESSING_CACHE_TTL_MS = 5 * 60 * 1000;
 const CHAT_SESSION_TTL_MS = 30 * 60 * 1000;
+const VOICE_MAX_PARTICIPANTS = Math.max(2, Number(process.env.VOICE_MAX_PARTICIPANTS || 10));
+
+function getAuthenticatedVoiceIdentity(req) {
+    const sessionUser = req.session?.user;
+    if (!sessionUser?.id || sessionUser.branch_id == null) return null;
+    return {
+        userId: Number(sessionUser.id),
+        role: String(sessionUser.role || 'staff').toLowerCase(),
+        branchId: Number(sessionUser.branch_id),
+        name: sessionUser.name || sessionUser.email || 'Staff'
+    };
+}
+
+async function resolveVoiceAccess(req) {
+    const identity = getAuthenticatedVoiceIdentity(req);
+    if (!identity || !Number.isInteger(identity.userId) || !Number.isInteger(identity.branchId)) return null;
+    const staff = await prisma.staff.findUnique({ where: { id: identity.userId }, include: { branch: true } });
+    if (!staff || staff.branch_id !== identity.branchId || !staff.branch || staff.branch.is_archived || !staff.branch.is_active) return null;
+    return { ...identity, branchName: staff.branch.name };
+}
+
+function getVoiceIceServers() {
+    const servers = [];
+    const stunUrls = String(process.env.VOICE_STUN_URLS || 'stun:stun.l.google.com:19302').split(',').map((url) => url.trim()).filter(Boolean);
+    if (stunUrls.length) servers.push({ urls: stunUrls });
+    if (process.env.VOICE_TURN_URL) {
+        servers.push({ urls: process.env.VOICE_TURN_URL, username: process.env.VOICE_TURN_USERNAME || undefined, credential: process.env.VOICE_TURN_CREDENTIAL || undefined });
+    }
+    return servers;
+}
 
 async function ensureBranchSelectionTables() {
     try {
@@ -1834,7 +1832,7 @@ async function runWithIdempotency(key, processor) {
     }
 }
 
-async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessage, phone, branchId }) {
+async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessage, phone, branchId, messageId = null }) {
     const normalizedConversationId = Number(conversationId || 0);
     const resolvedPhone = phone || null;
     if (!normalizedConversationId || !customerMessage) return null;
@@ -1881,7 +1879,8 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
             resolvedPhone,
             normalizedConversationId,
             Number(branchId || 0) || null,
-            resolvedSession
+            resolvedSession,
+            messageId
         );
     }
 
@@ -1972,7 +1971,8 @@ app.post('/api/customer-web-chat/messages', express.json(), async (req, res) => 
                 conversationId: resolvedConversationId,
                 customerMessage: message,
                 phone: phone || conversationRow.phone || null,
-                branchId: normalizedBranchId || Number(conversationRow.branch_id || 0)
+                branchId: normalizedBranchId || Number(conversationRow.branch_id || 0),
+                messageId: messageId || clientMessageId || null
             }));
 
             if (replyPayload) {
@@ -4331,146 +4331,6 @@ app.put('/api/conversations', isAuthenticated, (req, res) => {
     });
 });
 
-/* Customer call-link feature removed.
-app.post('/api/call-sessions', isAuthenticated, express.json(), (req, res) => {
-    const staffId = req.session.userId;
-    const staffName = req.session.user?.name || 'Support';
-    const { conversationId, customerName } = req.body || {};
-    if (!conversationId) {
-        return res.status(400).json({ error: 'conversation_id_required' });
-    }
-
-    const secureToken = generateSecureToken(32);
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + CALL_EXPIRY_MINUTES * 60000).toISOString();
-
-    const callSession = {
-        secureToken,
-        conversationId,
-        customerName: customerName || null,
-        staffId,
-        staffName,
-        status: 'waiting',
-        createdAt: now.toISOString(),
-        expiresAt,
-        startedAt: null,
-        answeredAt: null,
-        endedAt: null,
-        duration: null,
-        staffSocketId: null,
-        customerSocketId: null,
-        timeoutId: null
-    };
-
-    callSessions.set(secureToken, callSession);
-    createCallTimeout(secureToken);
-
-    res.json({
-        secureToken,
-        callLink: `${process.env.APP_URL || `http://localhost:${process.env.PORT || 3000}`}/call/${secureToken}`,
-        expiresAt,
-        status: callSession.status
-    });
-});
-
-app.get('/api/call-sessions/:token', (req, res) => {
-    const token = req.params.token;
-    if (!token) {
-        return res.status(400).json({ error: 'token_required' });
-    }
-    const session = callSessions.get(token);
-    if (!session) {
-        return res.status(404).json({ error: 'call_not_found' });
-    }
-    if (new Date(session.expiresAt) < new Date()) {
-        return res.status(410).json({ error: 'call_link_expired' });
-    }
-    res.json({
-        secureToken: session.secureToken,
-        conversationId: session.conversationId,
-        customerName: session.customerName,
-        staffName: session.staffName,
-        status: session.status,
-        expiresAt: session.expiresAt
-    });
-});
-
-app.put('/api/call-sessions/:token/status', express.json(), (req, res) => {
-    const token = req.params.token;
-    const { status } = req.body || {};
-    const session = callSessions.get(token);
-    if (!session) {
-        return res.status(404).json({ error: 'call_not_found' });
-    }
-    if (!['ringing', 'answered', 'rejected', 'ended', 'missed', 'failed'].includes(status)) {
-        return res.status(400).json({ error: 'invalid_status' });
-    }
-    if (new Date(session.expiresAt) < new Date() && status !== 'answered') {
-        return res.status(410).json({ error: 'call_link_expired' });
-    }
-
-    session.status = status;
-    if (status === 'ringing') {
-        session.startedAt = session.startedAt || new Date().toISOString();
-    }
-    if (status === 'answered') {
-        session.answeredAt = new Date().toISOString();
-        session.startedAt = session.startedAt || session.answeredAt;
-    }
-    if (status === 'ended' || status === 'rejected' || status === 'missed' || status === 'failed') {
-        session.endedAt = new Date().toISOString();
-        session.duration = session.startedAt ? Math.max(0, Math.round((new Date(session.endedAt) - new Date(session.startedAt)) / 1000)) : 0;
-        if (session.timeoutId) {
-            clearTimeout(session.timeoutId);
-            session.timeoutId = null;
-        }
-    }
-
-    callSessions.set(token, session);
-    if (session.staffSocketId) {
-        io.to(session.staffSocketId).emit('call:status', { secureToken: token, status });
-    }
-    if (session.customerSocketId) {
-        io.to(session.customerSocketId).emit('call:status', { secureToken: token, status });
-    }
-    res.json({ success: true, status });
-});
-
-app.get('/call/:token', (req, res) => {
-    const token = req.params.token;
-    const session = callSessions.get(token);
-    if (!session) {
-        const notFoundPath = path.join(__dirname, 'public', '404.html');
-        if (fs.existsSync(notFoundPath)) {
-            return res.status(404).sendFile(notFoundPath);
-        }
-        return res.status(404).send('Page not found');
-    }
-    if (new Date(session.expiresAt) < new Date()) {
-        const expiredPath = path.join(__dirname, 'public', 'call-expired.html');
-        if (fs.existsSync(expiredPath)) {
-            return res.status(410).sendFile(expiredPath);
-        }
-        return res.status(410).send('Call link expired');
-    }
-    const callPagePath = path.join(__dirname, 'public', 'call.html');
-    if (fs.existsSync(callPagePath)) {
-        return res.sendFile(callPagePath);
-    }
-    return res.status(500).send('Call page is unavailable');
-});
-
-app.delete('/api/call-sessions/:token', isAuthenticated, (req, res) => {
-    const token = req.params.token;
-    const session = callSessions.get(token);
-    if (!session) {
-        return res.status(404).json({ error: 'call_not_found' });
-    }
-    cleanupCallSession(token);
-    res.json({ success: true });
-});
-
-*/
 app.delete('/api/conversations', isAuthenticated, (req, res) => {
     const { id } = req.body || {};
     if (!id) {
@@ -7608,12 +7468,6 @@ app.post('/api/settings', async (req, res) => {
         return res.status(401).json({ error: 'not_logged_in' });
     }
 
-    const userRole = String(req.session?.user?.role || '').trim().toLowerCase();
-    const isBranchToneUpdate = typeof data?.aiTone === 'string' && data.aiTone.trim();
-    if (isBranchToneUpdate && userRole !== 'admin' && userRole !== 'manager') {
-        return res.status(403).json({ error: 'admin_or_manager_required_for_ai_tone' });
-    }
-
     try {
         const settingsData = {
             displayName: data.displayName || undefined,
@@ -7626,13 +7480,8 @@ app.post('/api/settings', async (req, res) => {
             autopilotMode: data.autopilotMode || undefined,
             priority: data.priority || undefined,
             autoAssign: data.autoAssign || undefined,
-            aiTone: data.aiTone || undefined,
             theme: data.theme || 'Light'
         };
-
-        if (data.aiTone && typeof data.aiTone === 'string') {
-            process.env.AI_TONE = data.aiTone;
-        }
 
         // Remove undefined values to keep existing data
         Object.keys(settingsData).forEach(key => {
@@ -7734,6 +7583,36 @@ app.post('/api/settings/avatar', isAuthenticated, handleAvatarUpload, (req, res)
 // ---------------------------
 // Create HTTP server & Socket.IO
 // ---------------------------
+app.get('/api/voice/staff', isAuthenticated, async (req, res) => {
+    try {
+        const access = await resolveVoiceAccess(req);
+        if (!access) return res.status(403).json({ error: 'voice_access_denied' });
+
+        const seen = new Set();
+        const staff = Array.from(onlineAgents.values())
+            .filter((agent) => agent.branchId === access.branchId && !seen.has(agent.userId))
+            .map((agent) => {
+                seen.add(agent.userId);
+                return { userId: agent.userId, name: agent.name, role: agent.role, branchId: access.branchId, status: 'active' };
+            });
+        res.json(staff);
+    } catch (error) {
+        console.error('[Voice] Failed to load active staff:', error.message);
+        res.status(500).json({ error: 'voice_staff_unavailable' });
+    }
+});
+
+app.get('/api/voice/config', isAuthenticated, async (req, res) => {
+    try {
+        const access = await resolveVoiceAccess(req);
+        if (!access) return res.status(403).json({ error: 'voice_access_denied' });
+        res.json({ branchId: access.branchId, branchName: access.branchName, channelId: DEFAULT_VOICE_CHANNEL, iceServers: getVoiceIceServers() });
+    } catch (error) {
+        console.error('[Voice] Config request failed:', error.message);
+        res.status(503).json({ error: 'voice_unavailable' });
+    }
+});
+
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
     cors: {
@@ -7749,6 +7628,17 @@ const io = new Server(httpServer, {
 globalThis.io = io;
 io.engine.use(sessionMiddleware);
 
+function broadcastVoicePresence(branchId) {
+    const seen = new Set();
+    const presence = Array.from(onlineAgents.values())
+        .filter((agent) => agent.branchId === branchId && !seen.has(agent.userId))
+        .map((agent) => {
+            seen.add(agent.userId);
+            return { userId: agent.userId, name: agent.name, role: agent.role, branchId, status: agent.status || 'active', voiceChannelId: agent.voiceChannelId || null, muted: Boolean(agent.muted), deafened: Boolean(agent.deafened), speaking: Boolean(agent.speaking) };
+        });
+    io.to(`branch:${branchId || 'none'}`).emit('voice:presenceUpdate', presence);
+}
+
 io.on("connection", (socket) => {
     const sessionUser = socket.request?.session?.user;
     const authenticatedUser = sessionUser && sessionUser.id ? {
@@ -7759,18 +7649,80 @@ io.on("connection", (socket) => {
     } : null;
 
     if (!authenticatedUser) {
-        socket.emit('voice:auth:error', { error: 'not_logged_in' });
         socket.disconnect(true);
         return;
     }
 
     socket.join(`branch:${authenticatedUser.branchId || 'none'}`);
-    onlineAgents.set(socket.id, { ...authenticatedUser, socketId: socket.id, lastActive: Date.now(), status: 'active' });
+    onlineAgents.set(socket.id, { ...authenticatedUser, socketId: socket.id, lastActive: Date.now(), status: 'active', voiceChannelId: null, muted: true, deafened: false, speaking: false });
+    broadcastVoicePresence(authenticatedUser.branchId);
     const branchStaff = Array.from(onlineAgents.values()).filter((agent) => agent.branchId === authenticatedUser.branchId).map(({ userId, name, role, branchId, status }) => ({ userId, name, role, branchId, status }));
-    io.to(`branch:${authenticatedUser.branchId || 'none'}`).emit('voice:presence', branchStaff);
 
     console.log("New client connected:", socket.id);
     socket.join("inbox");
+
+    const rejectVoice = (event, reason = 'voice_request_rejected') => {
+        console.warn('[Voice] Rejected request', { event, userId: authenticatedUser.userId, branchId: authenticatedUser.branchId, reason });
+        socket.emit('voice:error', { code: reason });
+    };
+    const getVoiceRecord = () => onlineAgents.get(socket.id);
+    const allowSignal = createVoiceRateLimiter({ maxEvents: 100 });
+
+    socket.on('voice:join', (data = {}, acknowledge) => {
+        const record = getVoiceRecord();
+        const channelId = typeof data.channelId === 'string' ? data.channelId : '';
+        if (!record || channelId !== DEFAULT_VOICE_CHANNEL) { rejectVoice('voice:join', 'invalid_voice_channel'); acknowledge?.({ ok: false, error: 'invalid_voice_channel' }); return; }
+        const room = voiceChannelName(record.branchId, channelId);
+        const members = Array.from(onlineAgents.values()).filter((agent) => agent.voiceChannelId === channelId && agent.branchId === record.branchId);
+        if (!record.voiceChannelId && members.length >= VOICE_MAX_PARTICIPANTS) { rejectVoice('voice:join', 'voice_channel_full'); acknowledge?.({ ok: false, error: 'voice_channel_full' }); return; }
+        if (record.voiceChannelId === channelId) { acknowledge?.({ ok: true }); return socket.emit('voice:peer-list', members.filter((agent) => agent.socketId !== socket.id).map(({ userId, name, socketId }) => ({ userId, name, peerId: socketId }))); }
+        record.voiceChannelId = channelId;
+        record.muted = true;
+        record.speaking = false;
+        onlineAgents.set(socket.id, record);
+        socket.join(room);
+        const peers = members.filter((agent) => agent.socketId !== socket.id).map(({ userId, name, socketId }) => ({ userId, name, peerId: socketId }));
+        socket.emit('voice:peer-list', peers);
+        acknowledge?.({ ok: true });
+        socket.to(room).emit('voice:peer-joined', { userId: record.userId, name: record.name, peerId: socket.id });
+        broadcastVoicePresence(record.branchId);
+        console.info('[Voice] Joined', { userId: record.userId, branchId: record.branchId, channelId });
+    });
+
+    socket.on('voice:leave', () => {
+        const record = getVoiceRecord();
+        if (!record?.voiceChannelId) return;
+        const room = voiceChannelName(record.branchId, record.voiceChannelId);
+        socket.leave(room);
+        record.voiceChannelId = null;
+        record.muted = true;
+        record.speaking = false;
+        onlineAgents.set(socket.id, record);
+        socket.to(room).emit('voice:peer-left', { peerId: socket.id, userId: record.userId });
+        broadcastVoicePresence(record.branchId);
+        console.info('[Voice] Left', { userId: record.userId, branchId: record.branchId });
+    });
+
+    const forwardSignal = (event, data, key) => {
+        const record = getVoiceRecord();
+        const target = typeof data?.peerId === 'string' ? onlineAgents.get(data.peerId) : null;
+        const payload = data?.[key];
+        const allowed = allowSignal();
+        if (!allowed || !isAuthorizedVoiceTarget(record, target, record.voiceChannelId) || (key === 'offer' || key === 'answer' ? !isValidSignalDescription(payload) : !isValidIceCandidate(payload))) return rejectVoice(event, allowed ? 'invalid_voice_signal' : 'voice_rate_limited');
+        io.to(target.socketId).emit(event, { peerId: socket.id, userId: record.userId, [key]: payload });
+    };
+    socket.on('voice:offer', (data) => forwardSignal('voice:offer', data, 'offer'));
+    socket.on('voice:answer', (data) => forwardSignal('voice:answer', data, 'answer'));
+    socket.on('voice:ice-candidate', (data) => forwardSignal('voice:ice-candidate', data, 'candidate'));
+    socket.on('voice:state', (data = {}) => {
+        const record = getVoiceRecord();
+        if (!record?.voiceChannelId || typeof data !== 'object') return rejectVoice('voice:state', 'not_in_voice_channel');
+        record.muted = Boolean(data.muted);
+        record.deafened = Boolean(data.deafened);
+        record.speaking = Boolean(data.speaking) && !record.muted;
+        onlineAgents.set(socket.id, record);
+        broadcastVoicePresence(record.branchId);
+    });
 
     socket.on('notification:join', (data) => {
         if (!data || !data.userId) return;
@@ -7815,6 +7767,7 @@ io.on("connection", (socket) => {
 
         const record = Object.assign({}, onlineAgents.get(socket.id), { socketId: socket.id, lastActive: Date.now(), activeConversation: null, autopilotMode: agent.autopilotMode || 'auto', status: 'active' });
         onlineAgents.set(socket.id, record);
+        broadcastVoicePresence(authenticatedUser.branchId);
         // Broadcast presence list to all clients
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, status: a.status || 'online', activeConversation: a.activeConversation }));
         io.emit("presenceUpdate", list);
@@ -7894,129 +7847,7 @@ io.on("connection", (socket) => {
         });
     });
 
-    /* Legacy staff voice Socket.IO handlers removed from the active server path.
-    socket.on('voice:register', (data, ack) => {
-        console.log('[Voice Server] 🎤 voice:register received:', { socketId: socket.id, userId: data?.userId, name: data?.name });
-        const record = normalizeVoiceUser(socket, Object.assign({}, data, { status: 'online', socketId: socket.id }));
-        if (!record || !record.userId) {
-            console.error('[Voice Server] ❌ Invalid voice:register - missing userId');
-            if (typeof ack === 'function') ack({ ok: false, error: 'Missing userId' });
-            return;
-        }
-        voiceUsers.set(socket.id, record);
-        console.log('[Voice Server] ✅ Voice user registered:', record);
-        broadcastVoicePresence();
-        socket.emit('voice:channels', getVoiceChannelList());
-        if (typeof ack === 'function') ack({ ok: true, userId: record.userId, socketId: socket.id });
-    });
-
-    socket.on('voice:getChannels', () => {
-        socket.emit('voice:channels', getVoiceChannelList());
-    });
-
-    socket.on('call:start', (data) => {
-        console.log('[Voice Server] 📞 call:start received:', { callId: data?.callId, recipientId: data?.recipientId, fromUserId: data?.caller?.userId, voiceUsersCount: voiceUsers.size });
-        if (!data || !data.recipientId || !data.callId) {
-            console.error('[Voice Server] ❌ Invalid call:start - missing recipientId or callId');
-            return;
-        }
-        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.recipientId));
-        console.log('[Voice Server] Recipient lookup:', { found: !!recipient, searchingFor: data.recipientId, voiceUsers: Array.from(voiceUsers.values()).map(u => ({ userId: u.userId, socketId: u.socketId })) });
-        if (!recipient?.socketId) {
-            console.error('[Voice Server] ❌ Recipient not found in voiceUsers');
-            socket.emit('call:error', { message: 'Recipient is not online.' });
-            return;
-        }
-        const payload = {
-            ...data,
-            fromUserId: data.caller?.id || data.caller?.userId || data.fromUserId || socket.id
-        };
-        console.log('[Voice Server] 📤 Sending call:incoming to recipient:', { recipientSocketId: recipient.socketId, payload: payload });
-        io.to(recipient.socketId).emit('call:incoming', payload);
-        if (payload.offer) {
-            io.to(recipient.socketId).emit('webrtc:offer', {
-                callId: payload.callId,
-                offer: payload.offer,
-                fromUserId: payload.fromUserId
-            });
-        }
-    });
-
-    socket.on('call:accept', (data) => {
-        if (!data || !data.callId || !data.toUserId) return;
-        const callerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
-        if (callerSocket?.socketId) {
-            io.to(callerSocket.socketId).emit('call:accepted', {
-                callId: data.callId,
-                fromUserId: data.fromUserId || socket.id
-            });
-        }
-    });
-
-    socket.on('call:decline', (data) => {
-        if (!data || !data.callId || !data.toUserId) return;
-        const callerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
-        if (callerSocket?.socketId) {
-            io.to(callerSocket.socketId).emit('call:declined', {
-                callId: data.callId,
-                fromUserId: data.fromUserId || socket.id
-            });
-        }
-    });
-
-    socket.on('call:end', (data) => {
-        if (!data || !data.callId || !data.toUserId) return;
-        const peerSocket = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
-        const payload = {
-            callId: data.callId,
-            fromUserId: data.fromUserId || socket.id
-        };
-        if (socket?.id) {
-            io.to(socket.id).emit('call:ended', payload);
-        }
-        if (peerSocket?.socketId) {
-            io.to(peerSocket.socketId).emit('call:ended', payload);
-        }
-    });
-
-    socket.on('webrtc:offer', (data) => {
-        if (!data || !data.toUserId || !data.callId || !data.offer) return;
-        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
-        if (recipient?.socketId) {
-            io.to(recipient.socketId).emit('webrtc:offer', {
-                callId: data.callId,
-                offer: data.offer,
-                fromUserId: data.fromUserId || socket.id
-            });
-        }
-    });
-
-    socket.on('webrtc:answer', (data) => {
-        if (!data || !data.toUserId || !data.callId || !data.answer) return;
-        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
-        if (recipient?.socketId) {
-            io.to(recipient.socketId).emit('webrtc:answer', {
-                callId: data.callId,
-                answer: data.answer,
-                fromUserId: data.fromUserId || socket.id
-            });
-        }
-    });
-
-    socket.on('webrtc:icecandidate', (data) => {
-        if (!data || !data.toUserId || !data.callId || !data.candidate) return;
-        const recipient = Array.from(voiceUsers.values()).find((entry) => String(entry.userId) === String(data.toUserId));
-        if (recipient?.socketId) {
-            io.to(recipient.socketId).emit('webrtc:icecandidate', {
-                callId: data.callId,
-                candidate: data.candidate,
-                fromUserId: data.fromUserId || socket.id
-            });
-        }
-    });
-
-    */
-    /* Customer call-link Socket.IO handlers removed.
+        /* Customer call-link Socket.IO handlers removed.
     socket.on('call:register', (data) => {
         if (!data || !data.secureToken || !data.role) return;
         const session = callSessions.get(data.secureToken);
@@ -8172,257 +8003,20 @@ io.on("connection", (socket) => {
 
     */
     socket.on('disconnect', () => {
+        const record = onlineAgents.get(socket.id);
+        const branchId = record?.branchId;
+        if (record?.voiceChannelId) socket.to(voiceChannelName(record.branchId, record.voiceChannelId)).emit('voice:peer-left', { peerId: socket.id, userId: record.userId });
         onlineAgents.delete(socket.id);
+        broadcastVoicePresence(branchId);
         if (authenticatedUser) {
             const branchStaff = Array.from(onlineAgents.values()).filter((agent) => agent.branchId === authenticatedUser.branchId).map(({ userId, name, role, branchId, status }) => ({ userId, name, role, branchId, status }));
-            io.to(`branch:${authenticatedUser.branchId || 'none'}`).emit('voice:presence', branchStaff);
         }
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
         io.emit('presenceUpdate', list);
         console.log("Client disconnected:", socket.id);
     });
 
-    /* Legacy private, broadcast, and channel voice handlers removed from the active server path.
-    const handlePrivateCallRequest = (data) => {
-        if (!data || !data.targetUserId || !data.sessionId) return;
-        const caller = voiceUsers.get(socket.id) || (data.caller ? {
-            userId: data.caller.userId || data.caller.id || null,
-            name: data.caller.name || data.caller.displayName || 'Staff',
-            role: data.caller.role || 'agent'
-        } : null);
-        const targetSocketId = getSocketByUserId(data.targetUserId);
-        if (!caller?.userId || !targetSocketId) {
-            console.warn('Private voice call could not be routed', {
-                targetUserId: data.targetUserId,
-                callerUserId: caller?.userId || null,
-                targetSocketId: targetSocketId || null,
-                sessionId: data.sessionId
-            });
-            socket.emit('voice:private:error', {
-                sessionId: data.sessionId,
-                message: 'The selected staff is not online or not registered for voice calls.'
-            });
-            return;
-        }
-        const sessionId = data.sessionId;
-        const session = {
-            id: sessionId,
-            type: 'private',
-            createdBy: caller.userId,
-            status: 'pending',
-            room: getRoomName(sessionId),
-            channelId: null,
-            participants: new Map(),
-            startedAt: null,
-            endedAt: null
-        };
-        session.participants.set(socket.id, { userId: caller.userId, name: caller.name, role: caller.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
-        voiceSessions.set(sessionId, session);
-        io.to(targetSocketId).emit('voice:private:incoming', {
-            sessionId,
-            from: { userId: caller.userId, name: caller.name, role: caller.role }
-        });
-    };
-
-    socket.on('voice:private:request', (data) => handlePrivateCallRequest(data));
-    socket.on('voice:private:initiate', (data) => handlePrivateCallRequest(data));
-
-    socket.on('voice:private:response', async (data) => {
-        if (!data || !data.sessionId || typeof data.accepted === 'undefined') return;
-        const session = getVoiceSessionById(data.sessionId);
-        if (!session || session.type !== 'private' || session.status !== 'pending') return;
-        const responder = voiceUsers.get(socket.id) || (data.responder ? {
-            userId: data.responder.userId || data.responder.id || null,
-            name: data.responder.name || data.responder.displayName || 'Staff',
-            role: data.responder.role || 'agent'
-        } : null);
-        if (!responder?.userId) return;
-        const callerSocketId = Array.from(session.participants.keys())[0];
-        const caller = voiceUsers.get(callerSocketId);
-        if (!caller) return;
-
-        if (data.accepted) {
-            session.status = 'active';
-            session.startedAt = new Date().toISOString();
-            session.participants.set(socket.id, { userId: responder.userId, name: responder.name, role: responder.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
-            voiceSessions.set(session.id, session);
-            [callerSocketId, socket.id].forEach(id => {
-                const user = voiceUsers.get(id);
-                if (user) {
-                    user.voiceSessionId = session.id;
-                    user.status = 'in voice chat';
-                    voiceUsers.set(id, user);
-                }
-            });
-            broadcastVoicePresence();
-            io.to(callerSocketId).emit('voice:private:accepted', { sessionId: session.id, peer: { userId: responder.userId, name: responder.name } });
-            io.to(socket.id).emit('voice:private:started', { sessionId: session.id, peer: { userId: caller.userId, name: caller.name } });
-            const dbSession = await persistVoiceSession(session);
-            if (dbSession) {
-                await persistVoiceParticipants(dbSession.id, Array.from(session.participants.values()));
-            }
-        } else {
-            io.to(callerSocketId).emit('voice:private:rejected', { sessionId: session.id, by: responder.userId });
-            voiceSessions.delete(session.id);
-        }
-    });
-
-    socket.on('voice:signal', (data) => {
-        if (!data || !data.targetUserId || !data.sessionId || !data.signal) return;
-        const targetSocketId = getSocketByUserId(data.targetUserId);
-        if (!targetSocketId) return;
-        io.to(targetSocketId).emit('voice:signal', {
-            sessionId: data.sessionId,
-            fromUserId: voiceUsers.get(socket.id)?.userId || null,
-            signal: data.signal,
-            type: data.type || 'offer'
-        });
-    });
-
-    socket.on('voice:end', (data) => {
-        if (!data || !data.sessionId) return;
-        const session = getVoiceSessionById(data.sessionId);
-        if (!session) return;
-        session.participants.forEach((participant, participantSocketId) => {
-            io.to(participantSocketId).emit('voice:ended', { sessionId: session.id, by: voiceUsers.get(socket.id)?.userId || null });
-        });
-        endVoiceSession(session.id);
-    });
-
-    socket.on('voice:activity', (data) => {
-        if (!data) return;
-        saveVoiceActivity(socket.id, data);
-    });
-
-    socket.on('voice:broadcast:start', (data) => {
-        const host = voiceUsers.get(socket.id);
-        if (!host) return;
-        const sessionId = data.sessionId || randomUUID();
-        const session = {
-            id: sessionId,
-            type: 'broadcast',
-            createdBy: host.userId,
-            status: 'active',
-            room: getRoomName(sessionId),
-            channelId: null,
-            participants: new Map(),
-            startedAt: new Date().toISOString(),
-            endedAt: null
-        };
-        session.participants.set(socket.id, { userId: host.userId, name: host.name, role: host.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
-        voiceSessions.set(sessionId, session);
-        host.voiceSessionId = sessionId;
-        host.status = 'broadcasting';
-        voiceUsers.set(socket.id, host);
-        broadcastVoicePresence();
-        Array.from(voiceUsers.values()).forEach(user => {
-            if (user.socketId === socket.id) return;
-            io.to(user.socketId).emit('voice:broadcast:incoming', { sessionId, from: { userId: host.userId, name: host.name } });
-        });
-    });
-
-    socket.on('voice:broadcast:invite', (data) => {
-        if (!data || !data.targetUserId || !data.sessionId) return;
-        const session = getVoiceSessionById(data.sessionId);
-        if (!session || session.type !== 'broadcast' || session.status !== 'active') return;
-        const inviter = voiceUsers.get(socket.id);
-        if (!inviter || String(inviter.userId) !== String(session.createdBy)) return;
-        const targetSocketId = getSocketByUserId(data.targetUserId);
-        if (!targetSocketId || targetSocketId === socket.id) return;
-        io.to(targetSocketId).emit('voice:broadcast:incoming', { sessionId: session.id, from: { userId: inviter.userId, name: inviter.name } });
-    });
-
-    socket.on('voice:broadcast:join', (data) => {
-        if (!data || !data.sessionId) return;
-        const session = getVoiceSessionById(data.sessionId);
-        if (!session || session.type !== 'broadcast' || session.status !== 'active') return;
-        const listener = voiceUsers.get(socket.id);
-        if (!listener) return;
-        session.participants.set(socket.id, { userId: listener.userId, name: listener.name, role: listener.role, muted: false, speaking: false, joinedAt: new Date().toISOString() });
-        voiceSessions.set(session.id, session);
-        listener.voiceSessionId = session.id;
-        listener.status = 'in voice chat';
-        voiceUsers.set(socket.id, listener);
-        broadcastVoicePresence();
-        const hostSocketId = getSocketByUserId(session.createdBy);
-        if (hostSocketId) {
-            io.to(hostSocketId).emit('voice:broadcast:joinRequest', { sessionId: session.id, user: { userId: listener.userId, name: listener.name } });
-        }
-        socket.emit('voice:broadcast:joined', { sessionId: session.id, hostUserId: session.createdBy });
-    });
-
-    socket.on('voice:broadcast:leave', (data) => {
-        if (!data || !data.sessionId) return;
-        const session = getVoiceSessionById(data.sessionId);
-        if (!session) return;
-        session.participants.delete(socket.id);
-        const user = voiceUsers.get(socket.id);
-        if (user) {
-            user.voiceSessionId = null;
-            user.status = 'online';
-            voiceUsers.set(socket.id, user);
-        }
-        voiceSessions.set(session.id, session);
-        broadcastVoicePresence();
-        if (session.participants.size === 0) {
-            endVoiceSession(session.id);
-        }
-    });
-
-    socket.on('voice:channel:join', (data) => {
-        if (!data || !data.channelId) return;
-        const user = voiceUsers.get(socket.id);
-        const channel = voiceChannels.get(data.channelId);
-        if (!user || !channel) return;
-        channel.members.add(socket.id);
-        voiceChannels.set(data.channelId, channel);
-        user.currentChannelId = data.channelId;
-        user.status = 'in channel';
-        voiceUsers.set(socket.id, user);
-        broadcastVoicePresence();
-        socket.emit('voice:channel:joined', {
-            channel: { id: channel.id, name: channel.name, description: channel.description },
-            members: Array.from(channel.members).map(id => {
-                const m = voiceUsers.get(id);
-                return m ? { userId: m.userId, name: m.name, role: m.role, muted: m.muted, speaking: m.speaking } : null;
-            }).filter(Boolean)
-        });
-        channel.members.forEach(memberSocketId => {
-            if (memberSocketId !== socket.id) {
-                io.to(memberSocketId).emit('voice:channel:memberUpdate', { channelId: channel.id, user: { userId: user.userId, name: user.name, role: user.role, muted: user.muted, speaking: user.speaking } });
-            }
-        });
-    });
-
-    socket.on('voice:channel:leave', (data) => {
-        if (!data || !data.channelId) return;
-        const user = voiceUsers.get(socket.id);
-        const channel = voiceChannels.get(data.channelId);
-        if (!user || !channel) return;
-        channel.members.delete(socket.id);
-        voiceChannels.set(data.channelId, channel);
-        user.currentChannelId = null;
-        user.status = 'online';
-        voiceUsers.set(socket.id, user);
-        broadcastVoicePresence();
-        channel.members.forEach(memberSocketId => {
-            io.to(memberSocketId).emit('voice:channel:memberLeft', { channelId: channel.id, userId: user.userId });
-        });
-    });
-
-    socket.on('voice:channel:signal', (data) => {
-        if (!data || !data.targetUserId || !data.signal || !data.channelId) return;
-        const targetSocketId = getSocketByUserId(data.targetUserId);
-        if (!targetSocketId) return;
-        io.to(targetSocketId).emit('voice:channel:signal', {
-            channelId: data.channelId,
-            fromUserId: voiceUsers.get(socket.id)?.userId || null,
-            signal: data.signal
-        });
-    });
-
-    */
-    socket.on("disconnect", () => {
+        socket.on("disconnect", () => {
         onlineAgents.delete(socket.id);
         const list = Array.from(onlineAgents.values()).map(a => ({ userId: a.userId, name: a.name, role: a.role, activeConversation: a.activeConversation }));
         io.emit("presenceUpdate", list);
@@ -9418,91 +9012,3 @@ app.post('/api/translate', express.json(), async (req, res) => {
     }
 });
 
-app.get('/api/voice/health', isAuthenticated, async (req, res) => {
-    const hasAuthenticatedSocket = Array.from(onlineAgents.values()).some((agent) => String(agent.userId) === String(req.session.userId || req.session.user?.id));
-    let database = 'AVAILABLE';
-    try {
-        await prisma.voiceChannel.count();
-    } catch (error) {
-        database = 'UNAVAILABLE';
-        console.warn('Voice health database check failed', { reason: error?.message || 'unknown' });
-    }
-    const livekitStatus = getLiveKitStatus();
-    let livekitConnectivity = livekitStatus.configured ? 'UNKNOWN' : 'NOT_CONFIGURED';
-    if (livekitStatus.configured) {
-        try {
-            const config = getLiveKitConfiguration();
-            const roomService = new RoomServiceClient(config.url, config.apiKey, config.apiSecret);
-            await Promise.race([
-                roomService.listRooms([]),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('health_timeout')), 2500))
-            ]);
-            livekitConnectivity = 'AVAILABLE';
-        } catch (error) {
-            livekitConnectivity = 'UNAVAILABLE';
-            console.warn('LiveKit health connectivity check failed', { reason: error?.message || 'unknown' });
-        }
-    }
-    res.json({
-        voice: livekitStatus.configured ? 'available' : 'not_configured',
-        authentication: 'AVAILABLE',
-        socket: hasAuthenticatedSocket ? 'AVAILABLE' : 'UNAVAILABLE',
-        database,
-        tokenGeneration: livekitStatus.configured ? 'AVAILABLE' : 'UNAVAILABLE',
-        turn: 'DELEGATED_TO_LIVEKIT',
-        sfu: livekitStatus.configured ? 'CONFIGURED' : 'NOT_CONFIGURED',
-        livekit: {
-            configured: livekitStatus.configured,
-            urlConfigured: livekitStatus.urlConfigured,
-            credentialsConfigured: livekitStatus.credentialsConfigured,
-            connectivity: livekitConnectivity
-        }
-    });
-});
-
-app.post('/api/voice/livekit-token', isAuthenticated, async (req, res) => {
-    const user = req.session.user;
-    const livekitConfig = getLiveKitConfiguration();
-    const tokenKey = `token:${user.id}`;
-    const tokenNow = Date.now();
-    const tokenBucket = voiceOperationBuckets.get(tokenKey) || { startedAt: tokenNow, count: 0 };
-    if (tokenNow - tokenBucket.startedAt >= VOICE_OPERATION_WINDOW_MS) {
-        tokenBucket.startedAt = tokenNow;
-        tokenBucket.count = 0;
-    }
-    tokenBucket.count += 1;
-    voiceOperationBuckets.set(tokenKey, tokenBucket);
-    if (tokenBucket.count > 5) {
-        return res.status(429).json({ error: 'voice_token_rate_limited' });
-    }
-    const branchId = Number(req.session.branchId || req.session.branch?.id || user?.branch_id || 0);
-    const requestedChannel = String(req.body?.channelId || '');
-    const expectedChannel = `branch:${branchId}`;
-    if (!branchId || requestedChannel !== expectedChannel) {
-        return res.status(403).json({ error: 'unauthorized_voice_channel' });
-    }
-    if (!getLiveKitStatus().configured) {
-        return res.status(503).json({ error: 'livekit_not_configured' });
-    }
-
-    const room = `livesupport-branch-${branchId}`;
-    try {
-        const roomService = new RoomServiceClient(livekitConfig.url, livekitConfig.apiKey, livekitConfig.apiSecret);
-        const participants = await roomService.listParticipants(room);
-        if (participants.length >= LIVEKIT_ROOM_LIMIT && !participants.some((participant) => String(participant.identity) === String(user.id))) {
-            return res.status(409).json({ error: 'voice_room_full' });
-        }
-        const token = new AccessToken(livekitConfig.apiKey, livekitConfig.apiSecret, {
-            identity: String(user.id),
-            name: user.name || user.email || `Staff ${user.id}`,
-            ttl: '10m'
-        });
-        token.addGrant({ roomJoin: true, room, canPublish: true, canSubscribe: true, roomCreate: false });
-        const jwt = await token.toJwt();
-        console.log('Voice token authorized', { userId: user.id, branchId, room });
-        return res.json({ token: jwt, url: livekitConfig.clientUrl, room });
-    } catch (error) {
-        console.error('Voice token generation failed', { userId: user.id, branchId, reason: error?.message || 'unknown' });
-        return res.status(500).json({ error: 'voice_token_failed' });
-    }
-});

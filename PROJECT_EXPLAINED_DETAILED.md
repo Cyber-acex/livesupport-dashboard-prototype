@@ -307,7 +307,6 @@ The AI integration is centralized in [replies.js](replies.js).
 The file defines:
 
 - `resolveAiRequestConfig()`
-- `resolveAiTone()`
 - model selection
 - timeout settings
 - token limits
@@ -463,29 +462,7 @@ This clearly indicates the system was designed for a food delivery platform or s
 
 ---
 
-## 12. Voice and live calling support
-
-The app contains voice communication infrastructure:
-
-- voice presence logic
-- live call sessions
-- incoming call modal popup
-- WebRTC-related support code under [src/services/voice](src/services/voice)
-- [src/contexts/VoiceCommunicationContext](src/contexts)
-
-### Key features
-
-- staff online/offline status
-- voice call session state
-- active call channel membership
-- incoming call flows
-- answering/declining calls
-
-These are not trivial extras—they show the project was meant to support live operations teams.
-
----
-
-## 13. Authentication and staff account systems
+## 12. Authentication and staff account systems
 
 The auth flow is in [routes/auth.js](routes/auth.js). It includes:
 
@@ -750,15 +727,7 @@ Delivery behavior is split between [services/deliveryTrackingService.js](service
 
 The subsystem tracks rider coordinates, calculates distance, requests route/ETA data, synchronizes delivery state with orders, and publishes updates through Socket.IO. Runtime location data uses a cache TTL, while durable order and delivery records remain in the database.
 
-## 30. Voice architecture
-
-The server tracks voice users, voice sessions, voice channels, and customer/staff call sessions. The React side exposes this through `VoiceCommunicationContext`, `IncomingCallModal`, and `LiveCallHeader`.
-
-Services under `src/services/voice` separate signaling, presence, call state, microphone acquisition, and WebRTC peer connection behavior. Socket.IO coordinates session state; WebRTC transports browser audio.
-
-The `twilio` dependency indicates a telephony/SMS integration boundary, while the browser-side WebRTC services support direct live audio behavior.
-
-## 31. Authentication and recovery
+## 30. Authentication and recovery
 
 [routes/auth.js](routes/auth.js) is a factory that receives Prisma and returns an Express router. This makes database access explicit and supports isolated testing.
 

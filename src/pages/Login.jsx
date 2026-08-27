@@ -119,7 +119,6 @@ export default function Login() {
   }, [email]);
 
   const handleSubmit = (event) => {
-    setIsSubmitting(true);
     setErrorMessage('');
   };
 

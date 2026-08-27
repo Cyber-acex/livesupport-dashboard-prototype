@@ -1641,20 +1641,6 @@ body.light-theme .topbar .back-btn { background: rgba(0,0,0,0.04); color: #11182
     transition: transform 0.14s cubic-bezier(.2,.9,.2,1), box-shadow 0.14s ease, opacity 0.12s ease;
 }
 
-.voice-btn {
-    background: linear-gradient(90deg, #10b981 0%, #059669 100%) !important;
-    box-shadow: 0 10px 24px rgba(16, 185, 129, 0.14) !important;
-}
-
-.voice-btn:hover {
-    box-shadow: 0 18px 36px rgba(16, 185, 129, 0.18) !important;
-}
-
-.voice-btn.recording {
-    background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%) !important;
-    animation: pulse 1s infinite;
-}
-
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.7; }

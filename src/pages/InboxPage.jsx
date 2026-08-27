@@ -24,6 +24,8 @@ const platformFilters = [
   { id: 'web', label: 'Webchat' }
 ];
 
+const aiFeedbackCategories = ['WRONG_INTENT', 'WRONG_INFORMATION', 'WRONG_ACTION', 'WRONG_CONTEXT', 'REPEATED_QUESTION', 'HALLUCINATION', 'WRONG_BRANCH', 'OTHER'];
+
 function formatDate(value) {
   return formatInboxTimestamp(value);
 }
@@ -102,6 +104,9 @@ function InboxPage({ defaultPlatform = null }) {
   const [escalatedConversationIds, setEscalatedConversationIds] = useState([]);
   const [escalatingConversationId, setEscalatingConversationId] = useState(null);
   const [isDeletingConversation, setIsDeletingConversation] = useState(false);
+  const [feedbackTarget, setFeedbackTarget] = useState(null);
+  const [feedbackForm, setFeedbackForm] = useState({ category: 'OTHER', explanation: '', correction: '', expectedBehavior: '' });
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const escalationAudio = useMemo(() => {
     const audio = new Audio(encodeURI('/uploads/Notification sounds/escalation sound.wav'));
     audio.preload = 'auto';
@@ -906,6 +911,40 @@ function InboxPage({ defaultPlatform = null }) {
     setShowScrollToBottom(false);
   }
 
+  function openAiFeedback(message) {
+    setFeedbackTarget(message);
+    setFeedbackForm({ category: 'OTHER', explanation: '', correction: '', expectedBehavior: '' });
+  }
+
+  async function submitAiFeedback() {
+    if (!feedbackTarget || !activeConversation?.id || isSubmittingFeedback) return;
+    setIsSubmittingFeedback(true);
+    try {
+      const response = await fetch('/api/ai-feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          conversation_id: activeConversation.id,
+          message_id: Number.isFinite(Number(feedbackTarget.id)) ? Number(feedbackTarget.id) : undefined,
+          category: feedbackForm.category,
+          feedback_text: feedbackForm.explanation,
+          correction: feedbackForm.correction,
+          expected_behavior: feedbackForm.expectedBehavior,
+          original_response: feedbackTarget.content,
+          kind: feedbackForm.correction || feedbackForm.expectedBehavior ? 'correction' : 'evaluation'
+        })
+      });
+      if (!response.ok) throw new Error('Unable to save AI feedback');
+      setFeedbackTarget(null);
+      success('AI feedback recorded for learning review');
+    } catch (submitError) {
+      error(submitError.message || 'Unable to save AI feedback');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  }
+
   const conversationMessages = useMemo(() => {
     if (!activeConversation) return [];
     return (messages.length > 0 ? messages : []).map((message, index) => {
@@ -914,6 +953,7 @@ function InboxPage({ defaultPlatform = null }) {
       return {
         id: message.id || `${activeConversation.id}-${index}`,
         sender: isAgent ? 'agent' : 'customer',
+        isAi: ['ai', 'assistant', 'bot'].includes(senderValue),
         content: message.message || message.content || '',
         createdAt: message.created_at || message.createdAt
       };
@@ -1354,6 +1394,11 @@ function InboxPage({ defaultPlatform = null }) {
                                             : palette.incoming
                                         }`}>
                                           <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                                          {message.isAi ? (
+                                            <button type="button" onClick={() => openAiFeedback(message)} className="mt-3 inline-flex items-center gap-1 rounded-lg border border-white/30 px-2 py-1 text-[11px] font-semibold text-current opacity-80 transition hover:opacity-100">
+                                              <Bot className="h-3 w-3" /> Teach AI
+                                            </button>
+                                          ) : null}
                                           {message.createdAt ? (
                                             <div className="mt-3 text-right text-[11px] leading-none text-slate-400 dark:text-slate-500">
                                               {formatInboxTimestamp(message.createdAt)}
@@ -1522,6 +1567,22 @@ function InboxPage({ defaultPlatform = null }) {
           </main>
         </div>
       </div>
+
+      {feedbackTarget ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+            <div className="flex items-start justify-between gap-4">
+              <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-teal-600">Teach AI</p><h3 className="mt-1 text-xl font-semibold text-slate-900 dark:text-white">What should improve?</h3></div>
+              <button type="button" onClick={() => setFeedbackTarget(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-500 dark:border-slate-700">Close</button>
+            </div>
+            <div className="mt-4 rounded-2xl bg-slate-50 p-3 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-300">{feedbackTarget.content}</div>
+            <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">Category<select value={feedbackForm.category} onChange={(event) => setFeedbackForm((form) => ({ ...form, category: event.target.value }))} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900">{aiFeedbackCategories.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}</select></label>
+            <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">Explanation<textarea value={feedbackForm.explanation} onChange={(event) => setFeedbackForm((form) => ({ ...form, explanation: event.target.value }))} rows={2} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900" placeholder="Why was this incorrect?" /></label>
+            <label className="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-200">Correct response or expected behavior<textarea value={feedbackForm.correction} onChange={(event) => setFeedbackForm((form) => ({ ...form, correction: event.target.value, expectedBehavior: event.target.value }))} rows={3} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900" placeholder="What should the AI do instead?" /></label>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setFeedbackTarget(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button><button type="button" onClick={submitAiFeedback} disabled={isSubmittingFeedback} className="rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{isSubmittingFeedback ? 'Saving...' : 'Submit feedback'}</button></div>
+          </div>
+        </div>
+      ) : null}
 
       {isReceiptModalOpen ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-xl">

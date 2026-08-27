@@ -4,7 +4,7 @@ import { ContactShadows, Environment, Float, OrbitControls, useGLTF, useTexture 
 import { motion, useMotionValue, useSpring } from 'framer-motion';
 import { useRobotAnimation } from '../hooks/useRobotAnimation';
 
-function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, danceActive, robotUrl, faceTextureUrl }) {
+function RobotModel({ hovered, clicked, pointer, activityPulse, danceActive, robotUrl, faceTextureUrl }) {
   const gltf = useGLTF(robotUrl);
   const faceTex = useTexture(faceTextureUrl);
   const scene = gltf.scene || gltf.scenes?.[0];
@@ -14,7 +14,6 @@ function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, dan
     pointer,
     modelObject: scene,
     enabled: true,
-    voiceActive,
     activityPulse,
     danceActive
   });
@@ -66,7 +65,7 @@ function RobotModel({ hovered, clicked, pointer, voiceActive, activityPulse, dan
   );
 }
 
-function HolographicPlatform({ pulse = 0, voiceActive = false }) {
+function HolographicPlatform({ pulse = 0 }) {
   const ringRef = useRef(null);
 
   useFrame((state) => {
@@ -78,7 +77,7 @@ function HolographicPlatform({ pulse = 0, voiceActive = false }) {
     <group position={[0, -0.34, 0]}>
       <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <ringGeometry args={[0.54, 0.72, 72]} />
-        <meshBasicMaterial color={voiceActive ? '#3cdcff' : '#6feaff'} transparent opacity={0.7} depthWrite={false} />
+        <meshBasicMaterial color="#6feaff" transparent opacity={0.7} depthWrite={false} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
         <torusGeometry args={[0.64, 0.021, 12, 80]} />
@@ -96,7 +95,7 @@ function HolographicPlatform({ pulse = 0, voiceActive = false }) {
   );
 }
 
-function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, danceActive, robotUrl, faceTextureUrl }) {
+function RobotScene({ hovered, clicked, pointer, activityPulse, danceActive, robotUrl, faceTextureUrl }) {
   return (
     <Canvas
       className="h-full w-full"
@@ -119,7 +118,6 @@ function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, dan
             hovered={hovered}
             clicked={clicked}
             pointer={pointer}
-            voiceActive={voiceActive}
             activityPulse={activityPulse}
             danceActive={danceActive}
             robotUrl={robotUrl}
@@ -127,7 +125,7 @@ function RobotScene({ hovered, clicked, pointer, voiceActive, activityPulse, dan
           />
         </Float>
       </Suspense>
-      <HolographicPlatform pulse={activityPulse} voiceActive={voiceActive} />
+      <HolographicPlatform pulse={activityPulse} />
       <ContactShadows position={[0, -0.3, 0]} opacity={0.28} scale={3.1} blur={1.3} far={1.4} resolution={512} />
       <OrbitControls enableZoom={false} enablePan={false} enableRotate={false} />
     </Canvas>
@@ -138,7 +136,6 @@ export default function SidebarRobot({ compact = false }) {
   const [hovered, setHovered] = useState(false);
   const [clicked, setClicked] = useState(false);
   const [danceActive, setDanceActive] = useState(false);
-  const [voiceActive, setVoiceActive] = useState(false);
   const [activityPulse, setActivityPulse] = useState(0);
   const [pointer, setPointer] = useState({ x: 0, y: 0 });
   const robotUrl = useMemo(() => new URL('../../uploads/logo.glb', import.meta.url).href, []);
@@ -162,26 +159,19 @@ export default function SidebarRobot({ compact = false }) {
     const handleAI = () => {
       setActivityPulse(1);
     };
-    const handleVoice = () => {
-      setVoiceActive(true);
-      setActivityPulse(1);
-    };
     const handleIdle = () => {
-      setVoiceActive(false);
       setActivityPulse(0);
     };
 
     window.addEventListener('livesupport:ticket', handleTicket);
     window.addEventListener('livesupport:customer', handleCustomer);
     window.addEventListener('livesupport:ai', handleAI);
-    window.addEventListener('livesupport:voice', handleVoice);
     window.addEventListener('livesupport:idle', handleIdle);
 
     return () => {
       window.removeEventListener('livesupport:ticket', handleTicket);
       window.removeEventListener('livesupport:customer', handleCustomer);
       window.removeEventListener('livesupport:ai', handleAI);
-      window.removeEventListener('livesupport:voice', handleVoice);
       window.removeEventListener('livesupport:idle', handleIdle);
     };
   }, []);
@@ -253,7 +243,6 @@ export default function SidebarRobot({ compact = false }) {
           hovered={hovered}
           clicked={clicked}
           pointer={pointer}
-          voiceActive={voiceActive}
           activityPulse={activityPulse}
           danceActive={danceActive}
           robotUrl={robotUrl}
