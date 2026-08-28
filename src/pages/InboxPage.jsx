@@ -127,6 +127,7 @@ function InboxPage({ defaultPlatform = null }) {
   const [editingConversationName, setEditingConversationName] = useState('');
   const [isSavingConversationName, setIsSavingConversationName] = useState(false);
   const socketRef = useRef(null);
+  const playedHandoffConversationIdsRef = useRef(new Set());
   const selectedConversationIdRef = useRef(null);
   const activeConversationRoomRef = useRef(null);
   const messagesViewportRef = useRef(null);
@@ -323,6 +324,15 @@ function InboxPage({ defaultPlatform = null }) {
     socket.on('connect', handleConnect);
     socket.on('newMessage', handleNewMessage);
     socket.on('messages:refreshed', handleMessagesRefreshed);
+    socket.on('playHandoffAudio', ({ conversationId } = {}) => {
+      const id = String(conversationId || '');
+      if (!id || playedHandoffConversationIdsRef.current.has(id)) return;
+      playedHandoffConversationIdsRef.current.add(id);
+      escalationAudio.currentTime = 0;
+      escalationAudio.play().catch(() => {
+        // Ignore autoplay restrictions; the escalation notification still appears.
+      });
+    });
 
     return () => {
       if (activeConversationRoomRef.current && socket) {
@@ -331,8 +341,9 @@ function InboxPage({ defaultPlatform = null }) {
       socket.off('connect', handleConnect);
       socket.off('newMessage', handleNewMessage);
       socket.off('messages:refreshed', handleMessagesRefreshed);
+      socket.off('playHandoffAudio');
     };
-  }, []);
+  }, [escalationAudio]);
 
   // When user selects a conversation, tell the server and request a socket refresh
   useEffect(() => {

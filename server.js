@@ -1853,16 +1853,14 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
         conversationSession.draftOrder?.items || []
     );
     const messageIntent = detectConversationIntent(customerMessage, conversationSession);
-    const isCompletedOrderSession = String(conversationSession.workflowState || '').toLowerCase() === 'order created';
-    const isNewOrderIntent = messageIntent === 'New Order'
-        || (isCompletedOrderSession && extractedMenuItems.length > 0 && !isOrderConfirmation(customerMessage));
+    const isNewOrderIntent = messageIntent === 'New Order';
     const transitionedSession = applyWorkflowTransition(conversationSession, {
         customerMessage,
         draftOrder: {
             ...(isNewOrderIntent ? {} : conversationSession.draftOrder),
             items: extractedMenuItems
         },
-        intent: isNewOrderIntent ? 'New Order' : messageIntent,
+        intent: messageIntent,
     });
     const resolvedSession = mergeConversationState(transitionedSession, {
         lastMessageAt: new Date().toISOString(),
@@ -4869,9 +4867,7 @@ function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
 
 function isOrderConfirmation(text) {
     const lowerText = String(text || '').toLowerCase().trim();
-    return /^(?:yes|yeah|yep|yup|sure|confirm|okay|ok|go ahead|order it|proceed|do it|yes please|sure thing)(?:[,!\s]+(?:please\s+)?(?:place|order|confirm|go ahead|proceed|do it)(?:\s+the)?\s*order)?$/.test(lowerText)
-        || /^(?:yes|yeah|yep|yup|sure|okay|ok)[,!\s]+(?:that(?:'s| is)\s+correct|everything\s+is\s+correct|it(?:'s| is)\s+correct|looks\s+good)$/.test(lowerText)
-        || /^(?:yes|yeah|yep|sure|please)\b.*\b(?:confirm|place|create|finalize|proceed|go ahead)\b.*\border\b.*$/.test(lowerText);
+    return /^(?:yes|yeah|yep|yup|sure|confirm|okay|ok|go ahead|order it|proceed|do it|yes please|sure thing)(?:[,!\s]+(?:please\s+)?(?:place|order|confirm|go ahead|proceed|do it)(?:\s+the)?\s*order)?$/.test(lowerText);
 }
 
 function sanitizePrematureOrderConfirmation(reply, customerMessage, conversationState) {
@@ -5246,23 +5242,10 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
     const draftItems = Array.isArray(conversationSession?.draftOrder?.items)
         ? conversationSession.draftOrder.items.filter((item) => item && String(item.name || '').trim() && Number(item.quantity || 0) > 0)
         : [];
-    const draftOrder = conversationSession?.draftOrder || {};
-    const hasAllergyConfirmation = draftOrder.allergyConfirmed === true
-        || (Array.isArray(draftOrder.allergies) && draftOrder.allergies.length > 0);
-    const hasDeliveryDetails = String(draftOrder.pickup || '').toLowerCase() !== 'delivery'
-        || String(draftOrder.address || '').trim().length > 0;
-    const hasPaymentDetails = String(draftOrder.paymentMethod || '').trim().length > 0;
-    const hasCompleteDraft = draftItems.length > 0
-        && hasAllergyConfirmation
-        && hasDeliveryDetails
-        && hasPaymentDetails;
-    const hasRecentConfirmationPrompt = Array.isArray(conversationSession?.history)
-        && conversationSession.history.some((entry) => entry?.role === 'ai'
-            && /(?:would you like|is everything correct|once you confirm|confirm(?:ing)? your order|place your order|create your order|finalize your order)/i.test(String(entry.message || '')));
 
     // A branch-bound conversation is not an order-confirmation flow. Require the
     // persisted workflow state and a non-empty draft before touching the orders table.
-    if ((!hasActiveConfirmationStep && !(hasRecentConfirmationPrompt && hasCompleteDraft)) || draftItems.length === 0) {
+    if (!hasActiveConfirmationStep || draftItems.length === 0) {
         console.log('Order confirmation ignored because no complete order is awaiting confirmation', {
             conversationId,
             workflowState: conversationSession?.workflowState || null,

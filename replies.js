@@ -781,6 +781,13 @@ function isRequestingStaff(message) {
     return staffKeywords.some(keyword => lowerMessage.includes(keyword));
 }
 
+function isCashPaymentRequest(message) {
+    const lowerMessage = String(message || '').toLowerCase();
+    return /\b(?:pay|payment|paying|purchase|order)\b[\s\S]{0,40}\bcash\b|\bcash\b[\s\S]{0,40}\b(?:pay|payment|paying|purchase|order)\b/i.test(lowerMessage)
+        || /\b(?:with|by|using|in)\s+cash\b/i.test(lowerMessage)
+        || /\bcash\s+(?:payment|purchase)\b/i.test(lowerMessage);
+}
+
 function extractOrderId(message) {
     if (!message) return null;
     const match = message.toUpperCase().match(/\bORD[-_\s]?\d+\b/);
@@ -1831,6 +1838,20 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
         }
 
+        if (isCashPaymentRequest(message)) {
+            console.log("Customer selected cash payment - disabling AI and handing off to staff");
+            if (conversationId && disableAICallback) {
+                disableAICallback(conversationId);
+            }
+            if (conversationId && handoffCallback) {
+                handoffCallback(conversationId);
+            }
+            if (conversationId && playHandoffAudioCallback) {
+                playHandoffAudioCallback(conversationId);
+            }
+            return "I'm connecting you with a staff member to continue your payment. Please hold for a moment while someone assists you.";
+        }
+
         const supportReply = await buildSupportReply(message, {
             branchId: effectiveBranchId,
             intent,
@@ -2202,4 +2223,4 @@ IMPORTANT: Do not confirm or create the order until the customer clearly indicat
     }
 }
 
-export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, createOrderFromConversation, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize, isMenuAvailabilityInquiry };
+export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isCashPaymentRequest, isHandoffReply, MENU_ITEMS, createTicket, createOrderFromConversation, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize, isMenuAvailabilityInquiry };

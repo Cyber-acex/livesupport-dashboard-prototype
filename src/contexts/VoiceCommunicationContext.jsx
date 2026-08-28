@@ -90,15 +90,26 @@ export function VoiceCommunicationProvider({ children }) {
       if (!voiceConfig?.channelId || !Array.isArray(voiceConfig.iceServers)) throw new Error('Voice configuration is unavailable. Please reload and try again.');
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = localStream;
-      const engine = new MeshVoiceEngine({ socket, localStream, iceServers: voiceConfig.iceServers, onRemoteStream: (peerId, stream) => {
+      const engine = new MeshVoiceEngine({ socket, localStream, iceServers: voiceConfig.iceServers, logger: (message, detail) => {
+        if (message === 'offer failed' || message === 'remote description failed') setDiagnostic('lastError', detail?.message || message);
+      }, onRemoteStream: (peerId, stream) => {
         let audio = remoteAudioRef.current.get(peerId);
-        if (!audio) { audio = new Audio(); audio.autoplay = true; remoteAudioRef.current.set(peerId, audio); }
+        if (!audio) {
+          audio = document.createElement('audio');
+          audio.autoplay = true;
+          audio.playsInline = true;
+          audio.setAttribute('playsinline', 'true');
+          audio.dataset.voicePeer = peerId;
+          document.body.appendChild(audio);
+          remoteAudioRef.current.set(peerId, audio);
+        }
         audio.srcObject = stream;
         audio.volume = deafened ? 0 : 1;
-        void audio.play().catch(() => {});
+        void audio.play().catch((playError) => setDiagnostic('lastError', `Remote audio playback failed: ${playError.message}`));
         setDiagnostic('remoteAudioTracks', String(remoteAudioRef.current.size));
       }, onPeerState: (peerId, state) => {
         if (state === 'connected') { setChannelState('connected'); setConnectionState('connected'); refreshParticipants(); }
+        if (state === 'failed') { setConnectionState('error'); setDiagnostic('lastError', `Voice connection failed for peer ${peerId}`); }
         if (state === 'disconnected' || state === 'closed') { engine.removePeer(peerId); refreshParticipants(); }
       }});
       voiceEngineRef.current = engine;
