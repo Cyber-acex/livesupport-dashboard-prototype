@@ -1,18 +1,28 @@
 export function buildMenuSeedRows(menuItems = {}) {
   const rows = [];
 
-  for (const [category, items] of Object.entries(menuItems || {})) {
-    for (const [key, item] of Object.entries(items || {})) {
+  function visit(group, category = null) {
+    for (const [key, value] of Object.entries(group || {})) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+
+      const isMenuItem = Object.prototype.hasOwnProperty.call(value, 'name')
+        || Object.prototype.hasOwnProperty.call(value, 'price');
+      if (!isMenuItem) {
+        visit(value, key);
+        continue;
+      }
+
       rows.push({
-        category,
+        category: category || 'Menu',
         key_name: key,
-        name: item?.name || key,
-        price: parseFloat(item?.price || 0),
-        available: parseInt(item?.available ?? item?.stock ?? 0, 10) || 0,
-        image_url: item?.image_url || null
+        name: value.name || key,
+        price: parseFloat(value.price || 0),
+        available: parseInt(value.available ?? value.stock ?? 0, 10) || 0,
+        image_url: value.image_url || null
       });
     }
   }
 
+  visit(menuItems);
   return rows;
 }

@@ -85,9 +85,12 @@ export function VoiceCommunicationProvider({ children }) {
       const socket = socketRef.current;
       if (!socket) throw new Error('Voice signaling is unavailable. Please reload and try again.');
       if (!socket.connected) await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); socket.connect(); });
+      const configResponse = await fetch('/api/voice/config', { credentials: 'same-origin' });
+      const voiceConfig = configResponse.ok ? await configResponse.json() : null;
+      if (!voiceConfig?.channelId || !Array.isArray(voiceConfig.iceServers)) throw new Error('Voice configuration is unavailable. Please reload and try again.');
       const localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       localStreamRef.current = localStream;
-      const engine = new MeshVoiceEngine({ socket, localStream, onRemoteStream: (peerId, stream) => {
+      const engine = new MeshVoiceEngine({ socket, localStream, iceServers: voiceConfig.iceServers, onRemoteStream: (peerId, stream) => {
         let audio = remoteAudioRef.current.get(peerId);
         if (!audio) { audio = new Audio(); audio.autoplay = true; remoteAudioRef.current.set(peerId, audio); }
         audio.srcObject = stream;
@@ -108,7 +111,7 @@ export function VoiceCommunicationProvider({ children }) {
       socket.on('voice:peer-list', handlePeerList); socket.on('voice:peer-joined', handlePeerJoined); socket.on('voice:peer-left', handlePeerLeft);
       socket.on('voice:offer', handleOffer); socket.on('voice:answer', handleAnswer); socket.on('voice:ice-candidate', handleCandidate);
       signalingHandlersRef.current = { 'voice:peer-list': handlePeerList, 'voice:peer-joined': handlePeerJoined, 'voice:peer-left': handlePeerLeft, 'voice:offer': handleOffer, 'voice:answer': handleAnswer, 'voice:ice-candidate': handleCandidate };
-      const joined = await new Promise((resolve, reject) => socket.emit('voice:join', { channelId: 'branch' }, (result) => result?.ok ? resolve(result) : reject(new Error(result?.error || 'Unable to join staff voice.'))));
+      const joined = await new Promise((resolve, reject) => socket.emit('voice:join', { channelId: voiceConfig.channelId }, (result) => result?.ok ? resolve(result) : reject(new Error(result?.error || 'Unable to join staff voice.'))));
       void joined;
       setChannelState('connected'); setConnectionState('connected'); setMicrophoneState('available'); setDiagnostic('tokenRequest', 'AUTHORIZED'); setDiagnostic('branch', 'AUTHORIZED'); setDiagnostic('localParticipant', 'CONNECTED'); setDiagnostic('microphonePermission', 'GRANTED');
     } catch (joinError) {

@@ -14,6 +14,8 @@ export function createDefaultConversationSession({
   draftOrder = null,
   history = [],
   lastMessageAt = null,
+  activeIntent = null,
+  orderMode = null,
   sessionData = {}
 } = {}) {
   const now = new Date().toISOString();
@@ -23,6 +25,7 @@ export function createDefaultConversationSession({
         quantities: draftOrder.quantities || {},
         modifiers: draftOrder.modifiers || {},
         allergies: Array.isArray(draftOrder.allergies) ? draftOrder.allergies : [],
+        allergyConfirmed: draftOrder.allergyConfirmed === true,
         delivery: draftOrder.delivery || null,
         pickup: draftOrder.pickup || null,
         tableNumber: draftOrder.tableNumber || null,
@@ -64,6 +67,8 @@ export function createDefaultConversationSession({
     pendingQuestions: Array.isArray(pendingQuestions) ? pendingQuestions : [],
     draftOrder: normalizedDraftOrder,
     history: Array.isArray(history) ? history : [],
+    activeIntent: activeIntent || null,
+    orderMode: orderMode || null,
     lastMessageAt: lastMessageAt || now,
     createdAt: now,
     updatedAt: now,
@@ -86,6 +91,8 @@ export function normalizeConversationState(state = {}) {
     workflowState: state.workflowState || normalized.workflowState,
     pendingQuestions: Array.isArray(state.pendingQuestions) ? state.pendingQuestions : normalized.pendingQuestions,
     history: Array.isArray(state.history) ? state.history : normalized.history,
+    activeIntent: state.activeIntent || normalized.activeIntent,
+    orderMode: state.orderMode || normalized.orderMode,
     draftOrder: normalizeDraftOrder(state.draftOrder || normalized.draftOrder),
     lastMessageAt: state.lastMessageAt || normalized.lastMessageAt,
     updatedAt: state.updatedAt || normalized.updatedAt
@@ -104,6 +111,7 @@ export function normalizeDraftOrder(draftOrder = null) {
     quantities: draftOrder?.quantities && typeof draftOrder.quantities === 'object' ? draftOrder.quantities : base.quantities,
     modifiers: draftOrder?.modifiers && typeof draftOrder.modifiers === 'object' ? draftOrder.modifiers : base.modifiers,
     allergies: Array.isArray(draftOrder?.allergies) ? draftOrder.allergies : base.allergies,
+    allergyConfirmed: draftOrder?.allergyConfirmed === true,
     discounts: Array.isArray(draftOrder?.discounts) ? draftOrder.discounts : base.discounts,
     notes: draftOrder?.notes || base.notes,
     address: draftOrder?.address || base.address,
@@ -193,8 +201,8 @@ function inferOrderFieldsFromMessage(message, currentDraft) {
     draftUpdate.pickup = 'pickup';
   }
 
-  if (!currentDraft?.address && /\b(?:deliver to|delivery to|address is|at|to)\b/.test(lower)) {
-    const addressMatch = text.match(/(?:deliver to|delivery to|address is|at|to)\s+(.+)/i);
+  if (!currentDraft?.address && /\b(?:delivery|deliver|address|house|street|road|avenue|lane|drive|close|crescent|apartment|flat|unit|suite|building|block|estate)\b/.test(lower)) {
+    const addressMatch = text.match(/(?:deliver to|delivery to|address is|at)\s+(.+)/i);
     if (addressMatch && addressMatch[1]) {
       draftUpdate.address = addressMatch[1].trim();
     }
@@ -215,6 +223,9 @@ function inferOrderFieldsFromMessage(message, currentDraft) {
   }
 
   if (!currentDraft?.allergies || !currentDraft.allergies.length) {
+    if (/\b(?:no|none|nothing|not)\s+(?:allergies|allergy|food allergies)\b/i.test(text)) {
+      draftUpdate.allergyConfirmed = true;
+    }
     const allergies = extractAllergyKeywords(text);
     if (allergies.length > 0) {
       draftUpdate.allergies = Array.from(new Set(allergies));
@@ -237,7 +248,8 @@ function hasOrderItems(session) {
 }
 
 function hasAllergyInfo(session) {
-  return Array.isArray(session?.draftOrder?.allergies) && session.draftOrder.allergies.length > 0;
+  return session?.draftOrder?.allergyConfirmed === true
+    || (Array.isArray(session?.draftOrder?.allergies) && session.draftOrder.allergies.length > 0);
 }
 
 function hasDeliveryAddress(session) {
@@ -260,12 +272,14 @@ function isPickup(session) {
   return String(session?.draftOrder?.pickup || '').toLowerCase() === 'pickup';
 }
 
-export function applyWorkflowTransition(currentState = {}, { customerMessage = '', draftOrder = null, action = null } = {}) {
+export function applyWorkflowTransition(currentState = {}, { customerMessage = '', draftOrder = null, action = null, intent = null } = {}) {
   const session = normalizeConversationState(currentState);
-  const patchDraft = mergeDraftOrder(session.draftOrder, inferOrderFieldsFromMessage(customerMessage, session.draftOrder));
+  const isNewOrderIntent = intent === 'New Order' || /\b(?:new|fresh)\s+order\b|\b(?:place|create|start)\s+(?:a\s+)?(?:new|fresh)?\s*order\b/i.test(String(customerMessage || ''));
+  const baseDraft = isNewOrderIntent ? normalizeDraftOrder({}) : session.draftOrder;
+  const patchDraft = mergeDraftOrder(baseDraft, inferOrderFieldsFromMessage(customerMessage, baseDraft));
   
   // Try to extract order items from the customer message if we're building an order
-  const workflowState = String(session.workflowState || '').toLowerCase();
+  const workflowState = String(isNewOrderIntent ? 'Building Order' : session.workflowState || '').toLowerCase();
   if (workflowState.includes('building') || workflowState.includes('greeting')) {
     const extractedItems = tryExtractOrderItems(customerMessage);
     if (extractedItems && extractedItems.length > 0) {
@@ -275,7 +289,12 @@ export function applyWorkflowTransition(currentState = {}, { customerMessage = '
   }
   
   const mergedDraft = mergeDraftOrder(patchDraft, draftOrder);
+  if (/\b(?:no|none|nothing|not)\s+(?:allergies|allergy|food allergies)\b/i.test(String(customerMessage || ''))) {
+    mergedDraft.allergyConfirmed = true;
+  }
   const next = mergeConversationState(session, {
+    activeIntent: isNewOrderIntent ? 'New Order' : (session.activeIntent || null),
+    orderMode: isNewOrderIntent ? 'new' : (session.orderMode || null),
     draftOrder: mergedDraft,
     history: [...session.history, { role: 'customer', message: String(customerMessage || '') }],
     lastMessageAt: new Date().toISOString()
@@ -286,6 +305,11 @@ export function applyWorkflowTransition(currentState = {}, { customerMessage = '
     next.pendingQuestions = [];
     next.active = false;
     return next;
+  }
+
+  if (isNewOrderIntent) {
+    next.workflowState = 'Building Order';
+    next.pendingQuestions = hasOrderItems(next) ? [] : ['What would you like to order?'];
   }
 
   if (next.workflowState === 'Order Created' || next.workflowState === 'Cancelled') {
@@ -378,6 +402,45 @@ export function tryExtractOrderItems(message = '', currentItems = []) {
   }
   
   return extractedItems.length > 0 ? extractedItems : currentItems;
+}
+
+function normalizeMenuItemName(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+export function extractMenuItemsFromMessage(message = '', menuRows = [], currentItems = []) {
+  const text = normalizeMenuItemName(message);
+  if (!text || !Array.isArray(menuRows) || menuRows.length === 0) return currentItems;
+
+  const numberWords = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const matches = [];
+  const sortedRows = menuRows
+    .filter((row) => row && (row.name || row.key_name) && Number(row.available || 0) > 0)
+    .sort((left, right) => normalizeMenuItemName(right.name || right.key_name).length - normalizeMenuItemName(left.name || left.key_name).length);
+
+  for (const row of sortedRows) {
+    const itemName = normalizeMenuItemName(row.name || row.key_name);
+    if (!itemName || !text.includes(itemName)) continue;
+
+    const itemIndex = text.indexOf(itemName);
+    const prefix = text.slice(Math.max(0, itemIndex - 12), itemIndex);
+    const quantityMatch = prefix.match(/(?:^|\s)(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:x\s*)?$/i);
+    const quantityToken = quantityMatch?.[1]?.toLowerCase();
+    const quantity = quantityToken ? Number(quantityToken) || numberWords[quantityToken] || 1 : 1;
+    const existing = matches.find((item) => item.name === (row.name || row.key_name));
+    if (existing) existing.quantity += quantity;
+    else matches.push({ name: row.name || row.key_name, quantity });
+  }
+
+  const matchedNames = new Set(matches.map((item) => normalizeMenuItemName(item.name)));
+  const specificMatches = matches.filter((item) => {
+    const normalizedName = normalizeMenuItemName(item.name);
+    return !Array.from(matchedNames).some((otherName) => otherName !== normalizedName
+      && otherName.length > normalizedName.length
+      && otherName.includes(normalizedName));
+  });
+
+  return specificMatches.length > 0 ? specificMatches : currentItems;
 }
 
 export { ORDER_WORKFLOW_STATES };

@@ -8,6 +8,7 @@ import { resolveMenuItemMatches, calculateOrderPricing, validateCreatedOrder, bu
 import { detectConversationIntent, shouldInjectBusinessContext, buildPromptContext, createGreetingReply, isAddressReplyForPendingQuestion } from './utils/aiConversationFlow.js';
 import { getActiveBranchContext } from './utils/branchSelection.js';
 import { retrieveRelevantKnowledge, safeAiLog, logAiActivity, recordDecision, recordAction } from './services/aiLearningService.js';
+import { createStructuredOrderConfirmation, validateStructuredConfirmation, validateCreatedOrderRecord, createPostOrderConversationState } from './utils/orderStateManagement.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -262,12 +263,8 @@ function formatQuickPricingInfo(menuItems) {
         `Delivery fee: $${DELIVERY_FEE.toFixed(2)} per order.`,
         `Free delivery for orders above $${FREE_DELIVERY_THRESHOLD.toFixed(2)}.`
     ];
-    const categories = new Set(menuItems.map(item => item.category || 'Menu'));
-    const featured = menuItems.slice(0, 6).map(item => `- ${item.name}: $${item.price.toFixed(2)}`);
-    lines.push('Featured menu items:');
-    lines.push(...featured);
-    lines.push(`
-To see the full menu, ask for menu items by category or say "show me the menu".`);
+    lines.push('Current menu:');
+    lines.push(formatMenuItemsForPrompt(menuItems));
     return lines.join('\n');
 }
 
@@ -311,7 +308,7 @@ async function handleQuickOption(choice, phone, conversationId) {
     if (choice === 'menu') {
         const menuItemsFromDb = await getMenuItemsFromDb();
         const menuItems = menuItemsFromDb.length > 0 ? menuItemsFromDb : getFallbackMenuItems();
-        const formatted = formatMenuItemsForPrompt(menuItems).split('\n').slice(0, 18).join('\n');
+        const formatted = formatMenuItemsForPrompt(menuItems);
         return `Here is a quick menu overview:\n${formatted}\n\nTell me what you'd like to order, or ask me anything about the menu.`;
     }
 
@@ -481,17 +478,66 @@ function formatMenuItemsForPrompt(menuItems) {
     const lines = [];
     for (const category of Object.keys(grouped)) {
         lines.push(`${category}:`);
-        grouped[category].slice(0, 12).forEach(item => {
+        grouped[category].forEach(item => {
             const availableText = typeof item.available === 'number' ? ` (${item.available} available)` : '';
             const descriptionText = item.description ? ` - ${item.description}` : '';
             lines.push(`- ${item.name}: $${item.price.toFixed(2)}${availableText}${descriptionText}`);
         });
-        if (grouped[category].length > 12) {
-            lines.push(`- ...plus ${grouped[category].length - 12} more items in ${category}`);
-        }
         lines.push('');
     }
     return lines.join('\n').trim();
+}
+
+function normalizeMenuSearchText(value = '') {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+}
+
+function isMenuAvailabilityInquiry(message = '') {
+    const lowerMessage = String(message || '').toLowerCase();
+    return /\b(?:do you have|have you got|is there|are there|can i get|can i order)\b/.test(lowerMessage)
+        || /\b(?:is|are)\b.+\b(?:available|in stock)\b/.test(lowerMessage);
+}
+
+function extractMenuAvailabilityName(message = '') {
+    const text = String(message || '').trim();
+    const match = text.match(/(?:do you have|have you got|is there|are there|can i get|can i order)\s+(?:(?:a|an|some)\s+)?(.+?)(?:\?|$)/i)
+        || text.match(/(?:is|are)\s+(.+?)\s+(?:available|in stock)(?:\?|$)/i);
+    return match?.[1]?.replace(/\b(?:please|right now|today)\b/gi, '').trim() || '';
+}
+
+export function formatMenuAvailabilityReply(message, menuItems = []) {
+    if (!isMenuAvailabilityInquiry(message)) return null;
+    if (!Array.isArray(menuItems) || menuItems.length === 0) {
+        return "I can't verify that item against the current menu right now. Please try again in a moment.";
+    }
+
+    const normalizedMessage = normalizeMenuSearchText(message);
+    const requestedName = extractMenuAvailabilityName(message);
+    const normalizedRequestedName = normalizeMenuSearchText(requestedName);
+    const match = menuItems
+        .filter(item => item && item.name)
+        .sort((left, right) => normalizeMenuSearchText(right.name).length - normalizeMenuSearchText(left.name).length)
+        .find(item => {
+            const normalizedName = normalizeMenuSearchText(item.name);
+            return normalizedName === normalizedRequestedName
+                || (normalizedName.length > 2 && normalizedMessage.includes(normalizedName))
+                || (normalizedRequestedName.length > 2 && normalizedName.includes(normalizedRequestedName));
+        });
+
+    if (!match) {
+        const displayName = requestedName || 'that item';
+        return `I couldn't find ${displayName} on the current menu.`;
+    }
+
+    const available = Number(match.available || 0);
+    if (available <= 0) {
+        return `${match.name} is currently unavailable.`;
+    }
+
+    return `Yes, ${match.name} is on the current menu and available now${available > 0 ? ` (${available} available)` : ''}.`;
 }
 
 function isMenuInquiry(message) {
@@ -501,6 +547,12 @@ function isMenuInquiry(message) {
         'menu',
         'show me the menu',
         'what do you have',
+        'do you have',
+        'have you got',
+        'is there',
+        'are there',
+        'can i get',
+        'can i order',
         'what can i order',
         'available items',
         'food options',
@@ -545,26 +597,20 @@ function isModificationRequest(message, conversationState = null) {
         return false;
     }
     const lowerMessage = message.toLowerCase();
-    const modificationKeywords = [
-        'remove',
-        'add',
-        'extra',
-        'substitute',
-        'without',
-        'no onions',
-        'no cheese',
-        'hold the',
-        'add more',
-        'extra chicken',
-        'add chicken',
-        'no onions',
-        'actually make that',
-        'make that',
-        'change it to',
-        'change my order',
-        'update my order'
+    const modificationPatterns = [
+        /\bremove\b/i,
+        /\badd\b/i,
+        /\bextra\b/i,
+        /\bsubstitute\b/i,
+        /\bwithout\b/i,
+        /\bhold the\b/i,
+        /\bactually make that\b/i,
+        /\bmake that\b/i,
+        /\bchange it to\b/i,
+        /\bchange my order\b/i,
+        /\bupdate my order\b/i
     ];
-    return modificationKeywords.some(keyword => lowerMessage.includes(keyword));
+    return modificationPatterns.some(pattern => pattern.test(lowerMessage));
 }
 
 function isMissingItemRequest(message) {
@@ -842,6 +888,11 @@ async function buildSupportReply(message = '', options = {}) {
     }
 
     if (isMenuInquiry(message)) {
+        if (isMenuAvailabilityInquiry(message)) {
+            const menuItems = await getMenuItemsFromDb();
+            return formatMenuAvailabilityReply(message, menuItems);
+        }
+
         // Try reading live menu from the database first; fall back to canned text when unavailable
         try {
             const menuItems = await getMenuItemsFromDb();
@@ -865,7 +916,7 @@ async function buildSupportReply(message = '', options = {}) {
         return `I’m very sorry your food arrived cold. I sincerely apologize for the inconvenience. I can offer a replacement, expedited redelivery, or a manager review right away. Please tell me which option you prefer and I’ll start the resolution process.`;
     }
 
-    if (isModificationRequest(message)) {
+    if (isModificationRequest(message, options?.conversationState)) {
         return `${branchContext}I can help update your order if the change is still within the allowed modification window. Please send your order ID and the exact change you want, such as removing onions or adding extra chicken.`;
     }
 
@@ -1349,12 +1400,42 @@ function isOrderConfirmationResponse(message, conversationState = null, conversa
         return false;
     }
 
-    return /^(?:yes|yeah|yep|sure|confirm|okay|ok|go ahead|please|yes please|sure thing|no|nope|nah|cancel|stop|dont|don't|never mind|not now)$/.test(lowerMessage);
+    return /^(?:(?:yes|yeah|yep|sure|okay|ok|go ahead|please|yes please|sure thing|come on)[,!\s]+)?(?:confirm|place|order|go ahead|proceed|do it)(?:\s+(?:my|the))?(?:\s+order)?[.!]?$/.test(lowerMessage)
+        || /^(?:yes|yeah|yep|sure|okay|ok)[,!\s]+(?:please\s+)?(?:confirm|place|order|go ahead|proceed|do it)\b.*$/i.test(lowerMessage)
+        || /^(?:no|nope|nah|cancel|stop|dont|don't|never mind|not now)$/.test(lowerMessage);
 }
 
 function isPositiveConfirmation(message) {
     const lowerMessage = message.toLowerCase().trim();
-    return /^(?:yes|yeah|yep|sure|confirm|okay|ok|go ahead|please|yes please|sure thing)$/.test(lowerMessage);
+    return /^(?:(?:yes|yeah|yep|sure|okay|ok|go ahead|please|yes please|sure thing|come on)[,!\s]+)?(?:confirm|place|order|go ahead|proceed|do it)(?:\s+(?:my|the))?(?:\s+order)?[.!]?$/.test(lowerMessage)
+        || /^(?:yes|yeah|yep|sure|okay|ok)[,!\s]+(?:please\s+)?(?:confirm|place|order|go ahead|proceed|do it)\b.*$/i.test(lowerMessage);
+}
+
+function removeUnsolicitedOrderUpsell(reply, customerMessage, conversationState) {
+    const replyText = String(reply || '');
+    const customerText = String(customerMessage || '').toLowerCase();
+    const extrasRequested = /\b(side|sides|topping|toppings|drink|drinks|add[- ]?on|add[- ]?ons|extra)\b/.test(customerText);
+    const upsellGenerated = /\b(?:side|sides|topping|toppings|drink|drinks|add[- ]?ons?|extras?)\b/i.test(replyText)
+        && /\b(?:would you like|do you want|anything else|want any|with that)\b/i.test(replyText);
+    if (extrasRequested || !upsellGenerated) return replyText;
+
+    const workflow = String(conversationState?.workflowState || '').toLowerCase();
+    const pending = Array.isArray(conversationState?.pendingQuestions)
+        ? conversationState.pendingQuestions.join(' ')
+        : '';
+    if (workflow.includes('allergy') || /allerg/.test(pending.toLowerCase())) {
+        return 'Before I continue, do you have any allergies we should know about?';
+    }
+    if (workflow.includes('delivery address') || /deliver|address/.test(pending.toLowerCase())) {
+        return 'Where should we deliver your order?';
+    }
+    if (workflow.includes('payment') || /pay/.test(pending.toLowerCase())) {
+        return 'How would you like to pay for your order?';
+    }
+    if (workflow.includes('ready to create order') || /confirm|place the order/.test(pending.toLowerCase())) {
+        return 'Your order is ready. Would you like me to place it now?';
+    }
+    return 'I have your selected items. Please provide any required delivery and payment details so I can continue.';
 }
 
 function detectTicketCategory(message) {
@@ -1581,25 +1662,47 @@ async function createOrderFromConversation(conversationId, phone, branchId = nul
         });
         safeAiLog(() => recordAction({ conversation_id: conversationId, action_type: 'ORDER_CREATE', input_ref: String(conversationId), result: { orderId: order.order_id || null }, success: true, execution_ms: Date.now() - actionStart }));
 
-        if (!order || !order.order_id || !String(order.order_id).trim()) {
+        if (!validateCreatedOrder(order, { lineItems: resolved, pricing })) {
+            console.error('createOrderFromConversation: Created order failed authoritative response validation', {
+                orderId: order?.order_id || null,
+                orderStatus: order?.status || null
+            });
+            return { success: false, orderId: null, message: 'I’m sorry, the order could not be verified after creation.' };
+        }
+
+        let structuredConfirmation;
+        try {
+            structuredConfirmation = createStructuredOrderConfirmation(order, resolved, pricing);
+            validateStructuredConfirmation(structuredConfirmation);
+        } catch (confirmationError) {
+            console.error('createOrderFromConversation: Confirmation validation failed', confirmationError.message);
+            return { success: false, orderId: null, message: 'I’m sorry, the order could not be verified after creation.' };
+        }
+
+        try {
+            if (typeof saveConversationSession === 'function') {
+                await saveConversationSession(createPostOrderConversationState(conversationState || {}, order));
+            }
+        } catch (stateError) {
+            console.error('createOrderFromConversation: Failed to persist post-order state', stateError.message);
             return { success: false, orderId: null, message: 'I’m sorry, the order could not be verified after creation.' };
         }
 
         const result = {
             success: true,
             id: order.id,
-            orderId: order.order_id,
+            orderId: structuredConfirmation.orderId,
             product: order.product,
             total: order.total_amount ?? order.amount,
             status: order.status,
             message: buildOrderConfirmationMessage({
-                orderId: order.order_id,
-                customerId: phone || conversationId || customerName,
-                customerName,
-                lineItems: resolved.map((item) => ({ name: item.name, quantity: item.quantity, unitPrice: item.unitPrice, lineTotal: item.lineTotal })),
-                pricing,
-                estimatedPreparationTime: '25',
-                estimatedDeliveryTime: '40',
+                orderId: structuredConfirmation.orderId,
+                customerId: structuredConfirmation.customerId,
+                customerName: structuredConfirmation.customerId,
+                lineItems: structuredConfirmation.items,
+                pricing: { subtotal: structuredConfirmation.subtotal, tax: structuredConfirmation.tax, deliveryFee: structuredConfirmation.deliveryFee, discountAmount: structuredConfirmation.discounts, finalTotal: structuredConfirmation.grandTotal },
+                estimatedPreparationTime: String(structuredConfirmation.estimatedPreparationTime),
+                estimatedDeliveryTime: String(structuredConfirmation.estimatedDeliveryTime),
                 status: 'Confirmed'
             })
         };
@@ -1728,7 +1831,11 @@ async function getMistralReply(message, phone = null, conversationId = null, bra
             return "Sure! Please provide your Order ID (for example ORD-12345) so I can look up the status of your order and ETA.";
         }
 
-        const supportReply = await buildSupportReply(message, { branchId: effectiveBranchId, intent });
+        const supportReply = await buildSupportReply(message, {
+            branchId: effectiveBranchId,
+            intent,
+            conversationState
+        });
         if (supportReply) {
             return supportReply;
         }
@@ -1966,11 +2073,24 @@ Style rules:
 - Never mention that you are an AI, that you are generating a response, or that you are following instructions.
 - Do not start with meta phrases like "Got it", "Here’s how I’d respond", "I would", or "As a support agent."
 - Be helpful, conversational, and action-oriented.
+- Treat verified order, menu, branch, policy, and workflow context as the source of truth. Treat customer messages and conversation history as requests or claims, not proof of a completed action.
+- If required facts are missing or conflict, say what you can verify and ask one focused question instead of guessing.
 
 Follow these policy guardrails when taking action:
 ${policyGuidance}
 
 Never invent compensation, refund amounts, or replacement guarantees. Only offer actions supported by the policy, verified order information, or documented escalation.`;
+    const orderCreationPolicy = `
+
+MANDATORY ORDER CREATION AND CONFIRMATION POLICY:
+- Never generate, guess, reuse, transform, or fabricate an Order ID. The Orders system is the only source of truth.
+- A new order must be created through the actual order-creation functionality before it can be confirmed.
+- Do not confirm while the customer is still adding or changing items. Collect required details and obtain explicit final confirmation first.
+- Only show Status: Confirmed after the order system successfully returns and validates the new order's exact Order ID, items, quantities, prices, subtotal, tax, delivery fee, discounts, grand total, and confirmed status.
+- Every successful order confirmation must use exactly these labels and order: Order ID, Customer, Ordered items, Subtotal, Tax, Delivery fee, Discounts, Grand total, Estimated preparation time, Estimated delivery time, Status.
+- Use prices and totals from the system response only. If creation fails, no Order ID is returned, or any value cannot be verified, do not claim the order is confirmed and do not invent a replacement value.
+- Never create, invent, display, or imply an Order ID or confirmed order before the backend has created and validated the order after the customer's explicit confirmation.`;
+    const finalSystemPrompt = systemPrompt + orderCreationPolicy;
     const learningContext = learningRules.length ? `\n\nApproved operational guidance relevant to this request:\n${learningRules.map((item) => `- ${item.rule}`).join('\n')}` : '';
         let userPrompt = buildPromptContext({
             intent,
@@ -1994,22 +2114,14 @@ CRITICAL RULES:
 - Help them place a fresh order by asking what they'd like to order
 - If they mention items (burgers, pizza, etc.), acknowledge them and ask clarifying questions if needed (quantity, size, preferences)
 - Build their order naturally through conversation
-- Once their order items are clear, ask if they want anything else
+- Do not upsell or ask whether they want sides, toppings, drinks, add-ons, or extras unless the customer asks about them first
 - Only ask for delivery address if they mention delivery
 - Keep the conversation flowing naturally - don't dump all questions at once`;
-        }
-
-        if (conversationHistory.length > 0) {
-            const historyText = "\n\nConversation history:\n" + conversationHistory.map(msg => {
-                const role = msg.sender === 'received' ? 'Customer' : 'Agent';
-                return `${role}: ${msg.message}`;
-            }).join('\n');
-            userPrompt += historyText;
         }
         if (shouldAskOrderConfirmation(message, conversationState)) {
             userPrompt += `
 
-The customer has finished ordering and the order is ready for final confirmation. Ask the customer: "Anything else you'd like to add?" before generating a final confirmation.
+The customer has finished ordering and the order is ready for final confirmation. Do not ask about sides, toppings, drinks, add-ons, or extras. Continue with the required confirmation step only.
 
 IMPORTANT: Do not confirm or create the order until the customer clearly indicates they are done ordering and all required details have been collected. Only generate a final confirmation after the customer says they are finished and every required field is known.`;
         }
@@ -2029,7 +2141,7 @@ IMPORTANT: Do not confirm or create the order until the customer clearly indicat
                 body: JSON.stringify({
                     model: aiConfig.model,
                     messages: [
-                        { role: "system", content: systemPrompt },
+                        { role: "system", content: finalSystemPrompt },
                         { role: "user", content: userPrompt }
                     ],
                     max_tokens: aiConfig.maxTokens,
@@ -2081,7 +2193,7 @@ IMPORTANT: Do not confirm or create the order until the customer clearly indicat
         latency.totalMs = Date.now() - totalStart;
         logLatencySummary(latency);
         safeAiLog(() => logAiActivity({ conversation_id: conversationId || null, event_type: 'RESPONSE', intent, outcome: 'SUCCESS', metadata: { model: aiConfig.model, latencyMs: latency.totalMs } }));
-        return reply;
+        return removeUnsolicitedOrderUpsell(reply, message, conversationState);
     } catch (error) {
         console.log("Mistral reply error:", error.message);
         latency.totalMs = Date.now() - totalStart;
@@ -2090,4 +2202,4 @@ IMPORTANT: Do not confirm or create the order until the customer clearly indicat
     }
 }
 
-export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, createOrderFromConversation, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize };
+export { getMistralReply, buildPolicyGuidance, buildSupportReply, initDatabase, setDisableAICallback, setHandoffCallback, setPlayHandoffAudioCallback, isTicketCreationRequest, isRequestingStaff, isHandoffReply, MENU_ITEMS, createTicket, createOrderFromConversation, detectTicketCategory, extractOrderItemsFromMessage, isMenuInquiry, isReservationInquiry, isModificationRequest, isMissingItemRequest, isRefundInquiry, isOrderStatusInquiry, isColdFoodComplaint, extractPartySize, isMenuAvailabilityInquiry };

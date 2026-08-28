@@ -45,6 +45,9 @@ export class MeshVoiceEngine {
     state.ignoreOffer = !state.polite && offerCollision;
     if (state.ignoreOffer) return;
     try {
+      if (offerCollision && state.polite) {
+        await state.pc.setLocalDescription({ type: 'rollback' });
+      }
       state.isSettingRemoteAnswerPending = offer.type === 'answer';
       await state.pc.setRemoteDescription(offer);
       state.isSettingRemoteAnswerPending = false;

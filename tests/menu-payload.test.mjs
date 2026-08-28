@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { flattenMenuItems } from '../utils/menuPayload.js';
+import { buildMenuSeedRows } from '../utils/menuDb.js';
 
 test('flattenMenuItems expands nested menu payloads into list items', () => {
   const payload = {
@@ -31,4 +32,23 @@ test('flattenMenuItems expands nested menu payloads into list items', () => {
   });
   assert.equal(menu[2].category, 'Drinks');
   assert.equal(menu[2].tags[0], 'Featured');
+});
+
+test('buildMenuSeedRows flattens nested groups without inserting category placeholders', () => {
+  const rows = buildMenuSeedRows({
+    ordersPageMenu: {
+      Pizza: {
+        margherita: { name: 'Margherita', price: 8.99, available: 24 }
+      },
+      Burgers: {
+        classic: { name: 'Classic Burger', price: 8.99, available: 10 }
+      }
+    }
+  });
+
+  assert.deepEqual(rows.map(({ category, key_name, name }) => ({ category, key_name, name })), [
+    { category: 'Pizza', key_name: 'margherita', name: 'Margherita' },
+    { category: 'Burgers', key_name: 'classic', name: 'Classic Burger' }
+  ]);
+  assert.equal(rows.some((row) => row.name === 'Pizza' || row.name === 'Burgers'), false);
 });

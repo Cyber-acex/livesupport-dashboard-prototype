@@ -5,6 +5,34 @@ import { createGuestSessionStorage, loadGuestSession, saveGuestSession } from '.
 
 const branchNames = { 1: 'Ikeja', 2: 'Lekki', 3: 'Victoria Island' };
 const typingIndicatorIds = new Set();
+const staffSenders = new Set(['ai', 'agent', 'assistant', 'bot', 'sent', 'sent_by_agent', 'staff', 'system']);
+
+function isCustomerMessage(message) {
+  const sender = String(message?.sender || '').trim().toLowerCase();
+  return !staffSenders.has(sender);
+}
+
+function getMessageKey(message) {
+  return String(message?.id || message?.messageId || `${message?.created_at || message?.timestamp || ''}:${message?.message || message?.text || ''}`);
+}
+
+function mergeMessages(currentMessages, incomingMessages) {
+  const merged = [...currentMessages];
+  const seen = new Set(currentMessages.map(getMessageKey));
+
+  incomingMessages.forEach((message) => {
+    const key = getMessageKey(message);
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(message);
+  });
+
+  return merged.sort((left, right) => {
+    const leftTime = new Date(left?.created_at || left?.timestamp || 0).getTime();
+    const rightTime = new Date(right?.created_at || right?.timestamp || 0).getTime();
+    return leftTime - rightTime;
+  });
+}
 
 function formatTime(value) {
   const date = value ? new Date(value) : new Date();
@@ -78,14 +106,12 @@ export default function CustomerWebChatPage() {
       const activeConversationId = String(selectedConversationId);
       if (conversationId && conversationId !== activeConversationId) return;
       setMessages((prev) => {
-        const exists = prev.some((message) => String(message.id || message.messageId || '') === String(payload.id || payload.messageId || ''));
-        if (exists) return prev;
-        return [...prev, {
+        return mergeMessages(prev, [{
           id: payload.id || payload.messageId || `${Date.now()}-${Math.random()}`,
           sender: payload.sender,
           message: payload.message || payload.text || '',
           created_at: payload.created_at || payload.timestamp || new Date().toISOString()
-        }];
+        }]);
       });
       setTyping(false);
     });
@@ -104,7 +130,10 @@ export default function CustomerWebChatPage() {
         const response = await fetch(`/api/customer-web-chat/conversations/${selectedConversationId}/messages`);
         const data = await response.json().catch(() => ({}));
         if (response.ok) {
-          setMessages(Array.isArray(data?.messages) ? data.messages : []);
+          setMessages((currentMessages) => mergeMessages(
+            currentMessages,
+            Array.isArray(data?.messages) ? data.messages : []
+          ));
         }
       } catch (error) {
         console.warn('Unable to load conversation history', error);
@@ -294,7 +323,7 @@ export default function CustomerWebChatPage() {
                       ) : null}
 
                       {messages.map((message) => {
-                        const isCustomer = String(message.sender || '').toLowerCase() === 'customer';
+                        const isCustomer = isCustomerMessage(message);
                         return (
                           <div key={message.id} className={`flex ${isCustomer ? 'justify-end' : 'justify-start'}`}>
                             <div className={`max-w-[82%] rounded-[1.75rem] px-5 py-4 shadow-sm ${isCustomer ? 'bg-gradient-to-br from-orange-500 to-amber-400 text-white shadow-[0_18px_40px_-30px_rgba(249,115,22,0.6)]' : 'border border-slate-200 bg-slate-950/5 text-slate-900'}`}>

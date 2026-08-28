@@ -9,7 +9,7 @@ import session from "express-session";
 import path from "path";
 import fs from "fs";
 import multer from "multer";
-import { randomUUID, randomBytes, createHash } from 'crypto';
+import { randomUUID, randomBytes, randomInt, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -31,7 +31,7 @@ import { shouldReuseCustomerConversation } from './utils/customerWebChat.js';
 import { resolveMenuItemMatches, calculateOrderPricing, buildOrderConfirmationMessage } from './utils/orderPipeline.js';
 import { resolveBranchId } from './utils/branchContext.js';
 import { buildMenuSeedRows } from './utils/menuDb.js';
-import { createDefaultConversationSession, normalizeConversationState, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition } from './utils/conversationState.js';
+import { createDefaultConversationSession, normalizeConversationState, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition, extractMenuItemsFromMessage } from './utils/conversationState.js';
 import { saveRiderLocation, updateDeliveryRouteAndEta, getDeliveryEta, getDeliveryDistance } from './services/deliveryTrackingService.js';
 import { joinDeliveryRooms, leaveDeliveryRooms, publishDeliveryUpdates } from './sockets/deliverySocket.js';
 import { validateEnv } from './utils/validateEnv.js';
@@ -39,6 +39,7 @@ import { buildDeliveryFromOrder, shouldCreateDeliveryForOrder } from './utils/de
 import { extractInsertId } from './utils/dbInsert.js';
 import { normalizeOrderRiderId } from './utils/orderRider.js';
 import { routeIncomingPlatformMessage } from './services/platformConversationService.js';
+import { detectConversationIntent } from './utils/aiConversationFlow.js';
 import { ensureNotificationsTable, getNotificationsForUser, markNotificationRead, markAllNotificationsRead, dismissNotification, createNotification, createBranchNotification } from './services/notificationService.js';
 import { parseReservationDateTime } from './src/utils/tableReservation.js';
 import { DEFAULT_VOICE_CHANNEL, voiceChannelName, isValidSignalDescription, isValidIceCandidate, isAuthorizedVoiceTarget, createVoiceRateLimiter } from './src/services/voice/voiceProtocol.js';
@@ -1705,7 +1706,7 @@ app.post('/api/customer-web-chat/sessions', express.json(), async (req, res) => 
                 data: {
                     name: trimmedCustomerName,
                     phone: phone || null,
-                    branch_id: normalizedBranchId
+                    branch_id: normalizedBranchId || null
                 },
                 select: { id: true, name: true, phone: true, branch_id: true }
             });
@@ -1838,9 +1839,30 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
     if (!normalizedConversationId || !customerMessage) return null;
 
     const conversationSession = await loadConversationSession(normalizedConversationId, Number(branchId || 0) || null, null, null, resolvedPhone);
+    let menuRows = [];
+    try {
+        menuRows = await prisma.menu.findMany({
+            select: { name: true, key_name: true, available: true }
+        });
+    } catch (error) {
+        console.warn('Unable to load menu for order item extraction:', error?.message || error);
+    }
+    const extractedMenuItems = extractMenuItemsFromMessage(
+        customerMessage,
+        menuRows,
+        conversationSession.draftOrder?.items || []
+    );
+    const messageIntent = detectConversationIntent(customerMessage, conversationSession);
+    const isCompletedOrderSession = String(conversationSession.workflowState || '').toLowerCase() === 'order created';
+    const isNewOrderIntent = messageIntent === 'New Order'
+        || (isCompletedOrderSession && extractedMenuItems.length > 0 && !isOrderConfirmation(customerMessage));
     const transitionedSession = applyWorkflowTransition(conversationSession, {
         customerMessage,
-        draftOrder: conversationSession.draftOrder,
+        draftOrder: {
+            ...(isNewOrderIntent ? {} : conversationSession.draftOrder),
+            items: extractedMenuItems
+        },
+        intent: isNewOrderIntent ? 'New Order' : messageIntent,
     });
     const resolvedSession = mergeConversationState(transitionedSession, {
         lastMessageAt: new Date().toISOString(),
@@ -1872,7 +1894,7 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
     let replyText = null;
 
     if (orderConfirmed?.success === true && orderConfirmed.orderId) {
-        replyText = orderConfirmed.message || `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`;
+        replyText = orderConfirmed.message || 'I’m sorry, the order could not be confirmed because the backend did not return a complete order record.';
     } else if (aiAutoAllowed && (forceAI || shouldAIRespond(normalizedConversationId))) {
         replyText = await getMistralReply(
             customerMessage,
@@ -1882,6 +1904,15 @@ async function maybeGenerateCustomerWebChatReply({ conversationId, customerMessa
             resolvedSession,
             messageId
         );
+        replyText = sanitizePrematureOrderConfirmation(replyText, customerMessage, resolvedSession);
+    }
+
+    if (orderConfirmed?.success === true && orderConfirmed.orderId) {
+        const persistedReply = await persistCustomerWebChatReply(normalizedConversationId, replyText, 'sent');
+        if (persistedReply) {
+            checkAndCreateTicket(normalizedConversationId, resolvedPhone, customerMessage);
+        }
+        return persistedReply;
     }
 
     if (replyText) {
@@ -4838,7 +4869,22 @@ function getOrCreateConversationByPhone(phone, platform = 'whatsapp') {
 
 function isOrderConfirmation(text) {
     const lowerText = String(text || '').toLowerCase().trim();
-    return /^(?:yes|yeah|yep|yup|sure|confirm|okay|ok|go ahead|order it|proceed|do it|yes please|sure thing)$/.test(lowerText);
+    return /^(?:yes|yeah|yep|yup|sure|confirm|okay|ok|go ahead|order it|proceed|do it|yes please|sure thing)(?:[,!\s]+(?:please\s+)?(?:place|order|confirm|go ahead|proceed|do it)(?:\s+the)?\s*order)?$/.test(lowerText)
+        || /^(?:yes|yeah|yep|yup|sure|okay|ok)[,!\s]+(?:that(?:'s| is)\s+correct|everything\s+is\s+correct|it(?:'s| is)\s+correct|looks\s+good)$/.test(lowerText)
+        || /^(?:yes|yeah|yep|sure|please)\b.*\b(?:confirm|place|create|finalize|proceed|go ahead)\b.*\border\b.*$/.test(lowerText);
+}
+
+function sanitizePrematureOrderConfirmation(reply, customerMessage, conversationState) {
+    const replyText = String(reply || '');
+    const workflow = String(conversationState?.workflowState || '').toLowerCase();
+    const customerConfirmed = isOrderConfirmation(customerMessage);
+    const claimsOrderCreated = /\border\s*id\b|\bstatus\s*:\s*confirmed\b|\bconfirmed\s+order\b|\bplace(?:d|ing)?\s+your\s+order\b/i.test(replyText);
+
+    if (customerConfirmed || !claimsOrderCreated) return replyText;
+    if (workflow.includes('ready to create order') || workflow.includes('payment') || workflow.includes('delivery address')) {
+        return 'Your order details are ready. Would you like me to place the order now?';
+    }
+    return replyText;
 }
 
 function findMostRecentCustomerOrderMessage(messages) {
@@ -5075,7 +5121,7 @@ async function getFreshOrderRecordById(databaseId = null, orderId = null) {
                 resolve(null);
                 return;
             }
-            const row = Array.isArray(rows) ? rows[0] : null;
+            const row = Array.isArray(rows) ? rows[0] : (Array.isArray(rows?.rows) ? rows.rows[0] : null);
             if (!row) {
                 resolve(null);
                 return;
@@ -5106,17 +5152,19 @@ async function createFreshOrderRecord({
     branchId,
     lineItems = []
 }) {
-    const generatedOrderId = String(orderId || `ORD-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`);
+    if (orderId) {
+        throw new Error('Caller-supplied Order IDs are not allowed for conversation order creation');
+    }
     const resolvedStatus = String(status || 'confirmed').toLowerCase();
     const resolvedPhone = phone || null;
     const resolvedConversationId = Number(conversationId || 0) || null;
     const resolvedBranchId = Number(branchId || 0) || null;
     const insertSql = isPg
-        ? 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11, $12) RETURNING id, order_id, customer_name, phone, product, amount, total_amount, subtotal, final_total, discount_amount, status, conversation_id, branch_id'
-        : 'INSERT INTO orders (order_id, customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)';
+        ? 'INSERT INTO orders (customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9, $10, $11) RETURNING id, order_id, customer_name, phone, product, amount, total_amount, subtotal, final_total, discount_amount, status, conversation_id, branch_id'
+        : 'INSERT INTO orders (customer_name, phone, product, amount, total_amount, status, order_date, conversation_id, subtotal, final_total, discount_amount, branch_id) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)';
 
     return new Promise((resolve, reject) => {
-        db.query(insertSql, [generatedOrderId, customerName || 'Customer', resolvedPhone, product || lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), Number(amount ?? subtotal ?? 0), Number(totalAmount ?? finalTotal ?? amount ?? subtotal ?? 0), resolvedStatus, resolvedConversationId, Number(subtotal ?? 0), Number(finalTotal ?? totalAmount ?? amount ?? subtotal ?? 0), Number(discountAmount ?? 0), resolvedBranchId], async (err, result) => {
+        db.query(insertSql, [customerName || 'Customer', resolvedPhone, product || lineItems.map((item) => `${item.name} x${item.quantity}`).join(', '), Number(amount ?? subtotal ?? 0), Number(totalAmount ?? finalTotal ?? amount ?? subtotal ?? 0), resolvedStatus, resolvedConversationId, Number(subtotal ?? 0), Number(finalTotal ?? totalAmount ?? amount ?? subtotal ?? 0), Number(discountAmount ?? 0), resolvedBranchId], async (err, result) => {
             if (err) {
                 console.error('Order insert failed:', err);
                 return reject(new Error('Database order insert failed'));
@@ -5127,19 +5175,40 @@ async function createFreshOrderRecord({
                 return reject(new Error('Order insert returned no database id'));
             }
 
-            let persistedOrder = null;
-            if (isPg && result && Array.isArray(result.rows) && result.rows[0]) {
-                persistedOrder = { ...result.rows[0], orderId: result.rows[0].order_id ? String(result.rows[0].order_id) : null };
-            } else {
-                persistedOrder = await getFreshOrderRecordById(insertedId, generatedOrderId);
+            if (insertedId) {
+                const orderIdSql = isPg
+                    ? 'UPDATE orders SET order_id = $1 WHERE id = $2 AND (order_id IS NULL OR order_id = \'\')'
+                    : 'UPDATE orders SET order_id = ? WHERE id = ? AND (order_id IS NULL OR order_id = \'\')';
+                let assigned = false;
+                for (let attempt = 0; attempt < 5 && !assigned; attempt += 1) {
+                    const generatedOrderId = `ORD-${randomInt(100000000000, 1000000000000)}`;
+                    await new Promise((resolveAssignment, rejectAssignment) => {
+                        db.query(orderIdSql, [generatedOrderId, insertedId], (orderIdErr) => {
+                            if (!orderIdErr) {
+                                assigned = true;
+                                return resolveAssignment();
+                            }
+                            const isUniqueCollision = orderIdErr.code === '23505' || orderIdErr.code === 'ER_DUP_ENTRY';
+                            if (isUniqueCollision && attempt < 4) return resolveAssignment();
+                            rejectAssignment(new Error('Database order ID assignment failed'));
+                        });
+                    });
+                }
             }
+
+            let persistedOrder = null;
+            persistedOrder = await getFreshOrderRecordById(insertedId, null);
 
             if (!persistedOrder || !persistedOrder.orderId || !String(persistedOrder.orderId).trim()) {
                 console.error('Fresh order record validation failed after insert', {
-                    generatedOrderId,
                     insertedId,
                     persistedOrder: persistedOrder ? { ...persistedOrder, orderId: persistedOrder.orderId || null } : null
                 });
+                if (insertedId) {
+                    await new Promise((resolveDelete) => {
+                        db.query('DELETE FROM orders WHERE id = ?', [insertedId], () => resolveDelete());
+                    });
+                }
                 return reject(new Error('Persisted order record did not return a valid order ID'));
             }
 
@@ -5177,10 +5246,23 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
     const draftItems = Array.isArray(conversationSession?.draftOrder?.items)
         ? conversationSession.draftOrder.items.filter((item) => item && String(item.name || '').trim() && Number(item.quantity || 0) > 0)
         : [];
+    const draftOrder = conversationSession?.draftOrder || {};
+    const hasAllergyConfirmation = draftOrder.allergyConfirmed === true
+        || (Array.isArray(draftOrder.allergies) && draftOrder.allergies.length > 0);
+    const hasDeliveryDetails = String(draftOrder.pickup || '').toLowerCase() !== 'delivery'
+        || String(draftOrder.address || '').trim().length > 0;
+    const hasPaymentDetails = String(draftOrder.paymentMethod || '').trim().length > 0;
+    const hasCompleteDraft = draftItems.length > 0
+        && hasAllergyConfirmation
+        && hasDeliveryDetails
+        && hasPaymentDetails;
+    const hasRecentConfirmationPrompt = Array.isArray(conversationSession?.history)
+        && conversationSession.history.some((entry) => entry?.role === 'ai'
+            && /(?:would you like|is everything correct|once you confirm|confirm(?:ing)? your order|place your order|create your order|finalize your order)/i.test(String(entry.message || '')));
 
     // A branch-bound conversation is not an order-confirmation flow. Require the
     // persisted workflow state and a non-empty draft before touching the orders table.
-    if (!hasActiveConfirmationStep || draftItems.length === 0) {
+    if ((!hasActiveConfirmationStep && !(hasRecentConfirmationPrompt && hasCompleteDraft)) || draftItems.length === 0) {
         console.log('Order confirmation ignored because no complete order is awaiting confirmation', {
             conversationId,
             workflowState: conversationSession?.workflowState || null,
@@ -5207,17 +5289,11 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
     }
 
     if (conversationSession?.draftOrder?.orderId && isConfirmedOrderState) {
-        console.log('Order confirmation already handled for active session', {
+        console.log('Ignoring confirmation for an already-created order; no cached Order ID will be returned', {
             conversationId,
-            sessionId: conversationSession.sessionId,
-            orderId: conversationSession.draftOrder.orderId
+            sessionId: conversationSession.sessionId
         });
-        return {
-            success: true,
-            orderId: conversationSession.draftOrder.orderId,
-            message: `Your order ${conversationSession.draftOrder.orderId} is already confirmed and in progress.`,
-            orderAlreadyExists: true
-        };
+        return false;
     }
 
     return new Promise(async (resolve) => {
@@ -5238,36 +5314,38 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                 const aiText = String(aiMessage?.message || '');
                 const customerText = String(customerOrderMessage || '');
 
-                const parsedItems = [];
-                try {
-                    const aiConfig = resolveAiRequestConfig({ maxTokens: 80, timeoutMs: 3000 });
-                    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-                        method: 'POST',
-                        signal: AbortSignal.timeout(aiConfig.timeoutMs),
-                        headers: {
-                            'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            model: aiConfig.model,
-                            messages: [
-                                { role: 'system', content: 'Extract the ordered items and quantities from the customer message and return JSON only. Do not include prices or totals.' },
-                                { role: 'user', content: customerText || aiText }
-                            ],
-                            temperature: aiConfig.temperature,
-                            max_tokens: aiConfig.maxTokens
-                        })
-                    });
-                    if (response.ok) {
-                        const data = await response.json();
-                        const raw = data.choices?.[0]?.message?.content || '';
-                        const parsed = JSON.parse(raw.replace(/^```json|```$/g, '').trim());
-                        if (Array.isArray(parsed?.items)) {
-                            parsedItems.push(...parsed.items.filter((item) => item && Number(item.quantity) > 0));
+                const parsedItems = draftItems.map((item) => ({ name: item.name, quantity: item.quantity }));
+                if (parsedItems.length === 0) {
+                    try {
+                        const aiConfig = resolveAiRequestConfig({ maxTokens: 80, timeoutMs: 3000 });
+                        const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+                            method: 'POST',
+                            signal: AbortSignal.timeout(aiConfig.timeoutMs),
+                            headers: {
+                                'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                model: aiConfig.model,
+                                messages: [
+                                    { role: 'system', content: 'Extract the ordered items and quantities from the customer message and return JSON only. Do not include prices or totals.' },
+                                    { role: 'user', content: customerText || aiText }
+                                ],
+                                temperature: aiConfig.temperature,
+                                max_tokens: aiConfig.maxTokens
+                            })
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            const raw = data.choices?.[0]?.message?.content || '';
+                            const parsed = JSON.parse(raw.replace(/^```json|```$/g, '').trim());
+                            if (Array.isArray(parsed?.items)) {
+                                parsedItems.push(...parsed.items.filter((item) => item && Number(item.quantity) > 0));
+                            }
                         }
+                    } catch (parseErr) {
+                        console.warn('Order extraction fallback failed:', parseErr?.message || parseErr);
                     }
-                } catch (parseErr) {
-                    console.warn('Order extraction fallback failed:', parseErr?.message || parseErr);
                 }
 
                 if (parsedItems.length === 0) {
@@ -5334,24 +5412,38 @@ async function checkAndSaveOrderConfirmation(phone, conversationId, customerMess
                         lineItems
                     });
 
+                    if (!createdOrder || !String(createdOrder.orderId || '').trim() || String(createdOrder.status || '').toLowerCase() !== 'confirmed') {
+                        throw new Error('Persisted order did not return a valid confirmed Order ID');
+                    }
+
                     const confirmationMessage = buildOrderConfirmationMessage({
                         orderId: createdOrder.orderId,
+                        customerId: phone || customerName,
                         customerName,
                         lineItems,
                         pricing,
-                        estimatedPreparationTime: '25 mins',
-                        estimatedDeliveryTime: '40 mins',
-                        status: 'Confirmed'
+                        estimatedPreparationTime: '25',
+                        estimatedDeliveryTime: '40',
+                        status: createdOrder.status === 'confirmed' ? 'Confirmed' : createdOrder.status
                     });
 
                     const nextSession = mergeConversationState(conversationSession, {
                         workflowState: 'Order Created',
                         draftOrder: {
-                            ...(conversationSession?.draftOrder || {}),
-                            items: resolved.map((item) => ({ name: item.name, quantity: item.quantity })),
-                            orderId: createdOrder.orderId,
-                            total: pricing.finalTotal,
-                            status: 'confirmed',
+                            items: [],
+                            quantities: {},
+                            modifiers: {},
+                            allergies: [],
+                            delivery: null,
+                            pickup: null,
+                            tableNumber: null,
+                            address: null,
+                            paymentMethod: null,
+                            discounts: [],
+                            notes: '',
+                            orderId: null,
+                            total: null,
+                            status: null,
                             updatedAt: new Date().toISOString()
                         },
                         history: [...(Array.isArray(conversationSession?.history) ? conversationSession.history : []), { role: 'system', message: `Order ${createdOrder.orderId} created` }]
@@ -5748,23 +5840,15 @@ app.post("/webhook", async (req, res) => {
         if (isCustomerGreeting(text)) {
             enableAIForConversation(convoId);
         }
-        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone, branchId: null, customerId: null });
-        if (isHighRiskAnalysis.shouldEscalate) {
-            if (isHighRiskAnalysis.reply) {
-                await sendAutoReply(phone, isHighRiskAnalysis.reply);
-            }
-        } else {
-            const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text);
-            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-            if (orderConfirmed?.success === true && orderConfirmed.orderId) {
-                await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
-            } else {
-                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                    const reply = await getMistralReply(text, phone, convoId);
-                    await sendAutoReply(phone, reply);
-                }
-            }
+        const replyPayload = await maybeGenerateCustomerWebChatReply({
+            conversationId: convoId,
+            customerMessage: text,
+            phone,
+            branchId: null,
+            messageId: msgId
+        });
+        if (replyPayload?.message) {
+            await sendAutoReply(phone, replyPayload.message, 'whatsapp');
         }
         checkAndCreateTicket(convoId, phone, text);
     }
@@ -5898,7 +5982,7 @@ app.post('/webhook/messenger', async (req, res) => {
             const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text);
             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
             if (orderConfirmed?.success === true && orderConfirmed.orderId) {
-                await sendAutoReply(conversationIdValue, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`, platform);
+                await sendAutoReply(conversationIdValue, orderConfirmed.message || 'I’m sorry, the order could not be confirmed because the backend did not return a complete order record.', platform);
             } else {
                 const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                 if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
@@ -5991,7 +6075,7 @@ app.post("/api/test-message", (req, res) => {
                             const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text, requestBranchId);
                             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                             if (orderConfirmed?.success === true && orderConfirmed.orderId) {
-                                await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+                                await sendAutoReply(phone, orderConfirmed.message || 'I’m sorry, the order could not be confirmed because the backend did not return a complete order record.');
                             } else {
                                 // Check if AI should respond
                                 if (aiAutoAllowed && shouldAIRespond(convoId)) {
@@ -6034,7 +6118,7 @@ app.post("/api/test-message", (req, res) => {
                         const orderConfirmed = await checkAndSaveOrderConfirmation(phone, convoId, text, requestBranchId);
                         const aiAutoAllowed = isAIAutoSendEnabled(convoId);
                             if (orderConfirmed?.success === true && orderConfirmed.orderId) {
-                            await sendAutoReply(phone, `Great! Your order has been placed. Order ID: ${orderConfirmed.orderId}. We'll prepare and deliver it soon. Thank you!`);
+                            await sendAutoReply(phone, orderConfirmed.message || 'I’m sorry, the order could not be confirmed because the backend did not return a complete order record.');
                         } else {
                             const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                             if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {

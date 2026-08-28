@@ -1373,7 +1373,7 @@ function InboxPage({ defaultPlatform = null }) {
 
                       <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
                         <div ref={messagesViewportRef} className="relative h-[360px] flex-none overflow-y-scroll overscroll-contain bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.09),_transparent_30%)] px-6 py-6 pr-1 custom-scrollbar dark:bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.14),_transparent_30%)]">
-                          <div className="mx-auto flex w-full max-w-xl flex-col gap-5">
+                          <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
                             {messagesLoading ? (
                               <div className="rounded-3xl border border-dashed border-slate-300 bg-white/80 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-400">
                                 Loading message thread...
@@ -1385,14 +1385,14 @@ function InboxPage({ defaultPlatform = null }) {
                                     <span className="inline-flex h-1.5 w-1.5 rounded-full bg-brand-500" />
                                     <span>{group.sender === 'agent' ? 'Support' : 'Customer'}</span>
                                   </div>
-                                  <div className="space-y-3">
+                                  <div className="space-y-2">
                                     {group.messages.map((message) => (
                                       <div key={message.id} className={`flex ${message.sender === 'agent' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`relative max-w-[80%] rounded-[24px] border px-5 py-4 text-sm leading-7 shadow-sm ${
+                                        <div className={`relative max-w-[92%] rounded-[20px] border px-4 py-3 text-sm leading-6 shadow-sm ${
                                           message.sender === 'agent'
                                             ? palette.outgoing
                                             : palette.incoming
-                                        }`}>
+                                        } ${message.content.length > 600 ? 'max-h-[280px] overflow-y-auto custom-scrollbar' : ''}`}>
                                           <div className="whitespace-pre-wrap break-words">{message.content}</div>
                                           {message.isAi ? (
                                             <button type="button" onClick={() => openAiFeedback(message)} className="mt-3 inline-flex items-center gap-1 rounded-lg border border-white/30 px-2 py-1 text-[11px] font-semibold text-current opacity-80 transition hover:opacity-100">

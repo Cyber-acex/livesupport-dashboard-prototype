@@ -91,7 +91,12 @@ function validateCreatedOrder(order, { lineItems = [], pricing = {}, status = 'c
   const expectedProduct = lineItems.map((item) => `${item.name} x${item.quantity}`).join(', ');
   if (order.product !== expectedProduct) return false;
 
+  const expectedFinalTotal = Number((Number(pricing.subtotal || 0) + Number(pricing.tax || 0)
+    + Number(pricing.deliveryFee || 0) - Number(pricing.discountAmount || 0)).toFixed(2));
+  if (expectedFinalTotal !== Number(pricing.finalTotal)) return false;
+
   return [
+    ['amount', pricing.subtotal],
     ['subtotal', pricing.subtotal],
     ['total_amount', pricing.finalTotal],
     ['final_total', pricing.finalTotal],

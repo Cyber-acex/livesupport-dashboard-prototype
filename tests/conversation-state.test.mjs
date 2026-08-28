@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createDefaultConversationSession, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition, ORDER_WORKFLOW_STATES } from '../utils/conversationState.js';
+import { createDefaultConversationSession, mergeConversationState, buildSessionOrderKey, applyWorkflowTransition, extractMenuItemsFromMessage, ORDER_WORKFLOW_STATES } from '../utils/conversationState.js';
 
 test('conversation session preserves the active draft order and workflow state between updates', () => {
   const session = createDefaultConversationSession({
@@ -124,4 +124,49 @@ test('new cart updates clear stale order IDs so the next order gets a fresh ID',
   assert.equal(nextDraft.draftOrder.orderId, null);
   assert.equal(nextDraft.workflowState, 'Building Order');
   assert.equal(nextDraft.draftOrder.items[0].name, 'Grilled Chicken Steak');
+});
+
+test('order item extraction matches real menu names and quantities', () => {
+  const items = extractMenuItemsFromMessage('I want 2 BBQ Chicken please', [
+    { name: 'BBQ Chicken', key_name: 'bbq-chicken', available: 20 },
+    { name: 'Chicken', key_name: 'chicken', available: 20 }
+  ]);
+
+  assert.deepEqual(items, [{ name: 'BBQ Chicken', quantity: 2 }]);
+});
+
+test('explicitly stating no allergies advances the order workflow', () => {
+  const state = applyWorkflowTransition({
+    ...createDefaultConversationSession({ conversationId: 303 }),
+    workflowState: 'Waiting for Allergy Confirmation',
+    draftOrder: { items: [{ name: 'BBQ Chicken', quantity: 1 }] }
+  }, { customerMessage: 'I have no allergies' });
+
+  assert.equal(state.draftOrder.allergyConfirmed, true);
+  assert.equal(state.workflowState, 'Waiting for Payment Method');
+});
+
+test('starting a fresh order clears the previous order context and preserves new-order intent', () => {
+  const state = applyWorkflowTransition({
+    ...createDefaultConversationSession({ conversationId: 404 }),
+    workflowState: 'Waiting for Delivery Address',
+    activeIntent: 'Order Tracking',
+    draftOrder: {
+      items: [{ name: 'Burger', quantity: 2 }],
+      pickup: 'delivery',
+      address: 'Old address',
+      orderId: 'ORD-OLD-9'
+    }
+  }, {
+    customerMessage: 'I would like to start a fresh order for two blueberry cheese cakes',
+    intent: 'New Order',
+    draftOrder: { items: [{ name: 'Blueberry Cheese Cake', quantity: 2 }] }
+  });
+
+  assert.equal(state.activeIntent, 'New Order');
+  assert.equal(state.orderMode, 'new');
+  assert.equal(state.workflowState, 'Waiting for Allergy Confirmation');
+  assert.deepEqual(state.draftOrder.items, [{ name: 'Blueberry Cheese Cake', quantity: 2 }]);
+  assert.equal(state.draftOrder.orderId, null);
+  assert.equal(state.draftOrder.address, null);
 });

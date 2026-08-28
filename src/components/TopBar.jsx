@@ -448,15 +448,18 @@ function TopBar({ onSidebarToggle }) {
             <div className="relative" ref={notifRef}>
               <button
                 onClick={(e) => { e.stopPropagation(); setNotificationsOpen(!notificationsOpen); }}
-                className="relative flex h-11 w-11 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900"
+                className={`group relative flex h-11 w-11 items-center justify-center rounded-2xl border transition-all duration-200 ${notificationsOpen ? 'border-slate-900 bg-slate-900 text-white shadow-[0_10px_24px_rgba(15,23,42,0.2)] dark:border-white dark:bg-white dark:text-slate-900' : 'border-gray-200 bg-white text-gray-500 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-800 dark:hover:text-white'}`}
                 aria-label="Notifications"
+                aria-expanded={notificationsOpen}
+                aria-haspopup="dialog"
               >
-                {unreadCount > 0 && !notificationsOpen ? (
-                  <span className="absolute -top-1 -right-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-orange-500 px-1.5 text-[11px] font-semibold text-white">
+                {unreadCount > 0 ? (
+                  <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-[20px] items-center justify-center rounded-full border-2 px-1 text-[10px] font-bold tracking-tight text-white shadow-sm ${notificationsOpen ? 'border-slate-900 bg-orange-500 dark:border-white' : 'border-white bg-orange-500 dark:border-gray-900'}`}>
                     {unreadCount > 99 ? '99+' : unreadCount}
                   </span>
                 ) : null}
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <span className={`pointer-events-none absolute inset-1 rounded-xl bg-current opacity-0 blur-md transition-opacity group-hover:opacity-10 ${notificationsOpen ? 'opacity-10' : ''}`} />
+                <svg className="relative h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M18.25 12.34c0-3.02-1.97-5.58-4.75-6.23V5.5a1.5 1.5 0 0 0-3 0v.61c-2.78.65-4.75 3.21-4.75 6.23 0 2.96-.5 4.2-1.12 5.04-.33.45-.13 1.05.42 1.28.55.23 1.17.04 1.4-.49.46-.95 1.04-2.24 1.04-5.83h10.52c0 3.6.58 4.88 1.04 5.83.23.53.85.72 1.4.49.55-.23.75-.83.42-1.28-.62-.84-1.12-2.08-1.12-5.04Z" />
                   <path d="M8.5 18.5a3.5 3.5 0 0 0 7 0" />
                   <path d="M12 8.75v.01" />

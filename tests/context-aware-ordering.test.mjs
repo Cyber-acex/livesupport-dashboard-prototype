@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { detectConversationIntent, buildPromptContext, isAddressReplyForPendingQuestion } from '../utils/aiConversationFlow.js';
+import { isModificationRequest } from '../replies.js';
 
 test('address provided after delivery prompt is treated as delivery context, not order modification', () => {
   const state = {
@@ -52,4 +53,15 @@ test('modification language is only treated as order modification when the custo
 
   assert.equal(detectConversationIntent('actually make that two', state), 'Order Modification');
   assert.equal(detectConversationIntent('what time do you close?', state), 'FAQ');
+});
+
+test('delivery address replies are not treated as order modifications', () => {
+  const state = {
+    workflowState: 'Waiting for Delivery Address',
+    pendingQuestions: ['Where should we deliver your order?'],
+    draftOrder: { items: [{ name: 'BBQ Beef Ribs', quantity: 1 }] }
+  };
+
+  assert.equal(isModificationRequest('delivery address is 1 Saidat Kilani Street', state), false);
+  assert.equal(detectConversationIntent('delivery address is 1 Saidat Kilani Street', state), 'Delivery');
 });
