@@ -5953,6 +5953,36 @@ app.post('/webhook/messenger', async (req, res) => {
 
     if (serviceResult?.path === 'existing-conversation' && serviceResult?.conversationId && senderType !== 'sent') {
         const convoId = serviceResult.conversationId;
+        const conversationSession = await loadConversationSession(convoId, null, null, null, conversationIdValue);
+        let menuRows = [];
+        try {
+            menuRows = await prisma.menu.findMany({
+                select: { name: true, key_name: true, available: true }
+            });
+        } catch (error) {
+            console.warn('Unable to load menu for Messenger order extraction:', error?.message || error);
+        }
+
+        const messageIntent = detectConversationIntent(text, conversationSession);
+        const isNewOrderIntent = messageIntent === 'New Order';
+        const extractedMenuItems = extractMenuItemsFromMessage(
+            text,
+            menuRows,
+            isNewOrderIntent ? [] : conversationSession.draftOrder?.items || []
+        );
+        const transitionedSession = applyWorkflowTransition(conversationSession, {
+            customerMessage: text,
+            draftOrder: {
+                ...(isNewOrderIntent ? {} : conversationSession.draftOrder),
+                items: extractedMenuItems
+            },
+            intent: messageIntent
+        });
+        const resolvedSession = mergeConversationState(transitionedSession, {
+            lastMessageAt: new Date().toISOString(),
+            history: [...(Array.isArray(transitionedSession.history) ? transitionedSession.history : []), { role: 'customer', message: text }]
+        });
+
         if (isCustomerGreeting(text)) {
             enableAIForConversation(convoId);
         }
@@ -5962,15 +5992,22 @@ app.post('/webhook/messenger', async (req, res) => {
                 await sendAutoReply(conversationIdValue, isHighRiskAnalysis.reply, platform);
             }
         } else {
-            const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text);
+            const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text, null, resolvedSession);
             const aiAutoAllowed = isAIAutoSendEnabled(convoId);
             if (orderConfirmed?.success === true && orderConfirmed.orderId) {
                 await sendAutoReply(conversationIdValue, orderConfirmed.message || 'I’m sorry, the order could not be confirmed because the backend did not return a complete order record.', platform);
             } else {
                 const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
                 if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                    const reply = await getMistralReply(text, conversationIdValue, convoId);
+                    const reply = await getMistralReply(text, conversationIdValue, convoId, null, resolvedSession);
                     await sendAutoReply(conversationIdValue, reply, platform);
+                    const nextSessionSnapshot = mergeConversationState(resolvedSession, {
+                        workflowState: resolvedSession.workflowState || 'Greeting',
+                        pendingQuestions: resolvedSession.pendingQuestions || [],
+                        draftOrder: resolvedSession.draftOrder || null,
+                        history: [...resolvedSession.history, { role: 'ai', message: reply }]
+                    });
+                    await saveConversationSession(nextSessionSnapshot);
                 }
             }
         }

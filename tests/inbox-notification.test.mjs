@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildIncomingMessageNotification, shouldShowIncomingMessageNotification, buildTicketEventNotification } from '../src/utils/inboxNotifications.js';
+import {
+  buildIncomingMessageNotification,
+  shouldShowIncomingMessageNotification,
+  buildTicketEventNotification,
+  getActiveConversationIdFromEvent
+} from '../src/utils/inboxNotifications.js';
 
 test('buildIncomingMessageNotification includes the incoming message content', () => {
   const notification = buildIncomingMessageNotification({
@@ -37,4 +42,9 @@ test('buildTicketEventNotification formats ticket created events', () => {
 test('buildTicketEventNotification formats resolved events without subject', () => {
   const notification = buildTicketEventNotification({ ticket_id: 7 }, 'resolved');
   assert.equal(notification, 'Ticket #7 resolved');
+});
+
+test('getActiveConversationIdFromEvent reads the detail payload emitted by the inbox page', () => {
+  const event = new CustomEvent('inbox:activeConversationChanged', { detail: { conversationId: 42 } });
+  assert.equal(getActiveConversationIdFromEvent(event), '42');
 });

@@ -49,6 +49,13 @@ function SettingsPage() {
     { label: 'Rider', value: 'rider' }
   ];
 
+  const profileHealthScore = [
+    settings.displayName?.trim(),
+    settings.email?.trim(),
+    settings.monthlyTargetAmount !== '' && settings.monthlyTargetAmount !== null && settings.monthlyTargetAmount !== undefined,
+    passwordChanged
+  ].filter(Boolean).length * 25;
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const requestedSection = params.get('section');
@@ -519,7 +526,7 @@ function SettingsPage() {
                             min="0"
                             step="100"
                             value={settings.monthlyTargetAmount ?? 20000}
-                            onChange={(e) => setSettings({ ...settings, monthlyTargetAmount: Number(e.target.value || 0) })}
+                            onChange={(e) => setSettings({ ...settings, monthlyTargetAmount: e.target.value === '' ? '' : Number(e.target.value) })}
                             className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 dark:border-slate-700 dark:bg-slate-900"
                             placeholder="20000"
                           />
@@ -573,8 +580,8 @@ function SettingsPage() {
                   </div>
                   <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-theme-xs dark:border-slate-800 dark:bg-white/[0.03]">
                     <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Profile health</p>
-                    <div className="mt-4 flex items-end justify-between"><span className="text-3xl font-bold text-slate-900 dark:text-white">82%</span><span className="text-xs font-semibold text-emerald-600">Good standing</span></div>
-                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full w-[82%] rounded-full bg-brand-500" /></div>
+                    <div className="mt-4 flex items-end justify-between"><span className="text-3xl font-bold text-slate-900 dark:text-white">{profileHealthScore}%</span><span className="text-xs font-semibold text-emerald-600">{profileHealthScore === 100 ? 'Complete' : 'In progress'}</span></div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800"><div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${profileHealthScore}%` }} /></div>
                     <p className="mt-3 text-xs leading-5 text-slate-400">Complete your profile to help teammates identify you faster.</p>
                   </div>
                   </div>

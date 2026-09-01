@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { buildIncomingMessageNotification, buildTicketEventNotification, shouldShowIncomingMessageNotification } from '../utils/inboxNotifications';
+import {
+  buildIncomingMessageNotification,
+  buildTicketEventNotification,
+  getActiveConversationIdFromEvent,
+  shouldShowIncomingMessageNotification
+} from '../utils/inboxNotifications';
 
 const NotificationContext = createContext();
 
@@ -247,7 +252,7 @@ export function NotificationProvider({ children }) {
     };
 
     const handleActiveConversationChanged = (event) => {
-      const conversationId = event && event.conversationId != null ? String(event.conversationId) : '';
+      const conversationId = getActiveConversationIdFromEvent(event);
       activeConversationIdRef.current = conversationId;
     };
 

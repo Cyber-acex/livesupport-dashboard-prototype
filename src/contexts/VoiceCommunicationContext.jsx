@@ -9,11 +9,12 @@ const defaultCurrentUser = { id: null, name: 'Staff', role: 'staff', department:
 function resolveCurrentUser() {
   if (typeof window === 'undefined') return defaultCurrentUser;
   const user = window.currentUser || window.__CURRENT_USER__;
-  return user ? { ...defaultCurrentUser, id: user.id || user.userId || null, name: user.name || user.displayName || 'Staff', role: user.role || 'staff', branch: user.branchName || user.branch || 'Current Branch', avatar: user.avatar_url || user.avatarUrl || 'ST' } : defaultCurrentUser;
+  const resolvedName = user?.fullName || user?.displayName || user?.name || user?.email || 'Staff';
+  return user ? { ...defaultCurrentUser, id: user.id || user.userId || null, name: resolvedName, role: user.role || 'staff', branch: user.branchName || user.branch || 'Current Branch', avatar: user.avatar_url || user.avatarUrl || 'ST' } : defaultCurrentUser;
 }
 
 function participantView(participant, speakingIds) {
-  return { userId: participant.identity, name: participant.name || participant.identity, speaking: speakingIds.has(participant.identity), connected: true };
+  return { userId: participant.identity, name: participant.name || participant.displayName || participant.identity, speaking: speakingIds.has(participant.identity), connected: true };
 }
 
 export function VoiceCommunicationProvider({ children }) {
@@ -41,13 +42,17 @@ export function VoiceCommunicationProvider({ children }) {
   const signalingHandlersRef = useRef(null);
   const socketRef = useRef(null);
   const speakingIdsRef = useRef(new Set());
+  const peerNamesRef = useRef(new Map());
   const transmitRef = useRef(false);
 
   const setDiagnostic = useCallback((key, value) => setDiagnostics((previous) => ({ ...previous, [key]: value })), []);
   const refreshParticipants = useCallback(() => {
     const engine = voiceEngineRef.current;
     if (!engine) return;
-    const participants = Array.from(engine.peers.values()).map(({ peerId }) => participantView({ identity: peerId }, speakingIdsRef.current));
+    const participants = Array.from(engine.peers.keys()).map((peerId) => {
+      const peerName = peerNamesRef.current.get(peerId) || peerId;
+      return participantView({ identity: peerId, name: peerName }, speakingIdsRef.current);
+    });
     setActiveParticipants(participants);
     setDiagnostic('remoteParticipants', String(participants.length));
   }, [setDiagnostic]);
@@ -113,9 +118,18 @@ export function VoiceCommunicationProvider({ children }) {
         if (state === 'disconnected' || state === 'closed') { engine.removePeer(peerId); refreshParticipants(); }
       }});
       voiceEngineRef.current = engine;
-      const handlePeerList = (peers = []) => { peers.forEach(({ peerId }) => engine.createPeer(peerId)); refreshParticipants(); };
-      const handlePeerJoined = ({ peerId }) => { engine.createPeer(peerId); refreshParticipants(); };
-      const handlePeerLeft = ({ peerId }) => { engine.removePeer(peerId); remoteAudioRef.current.get(peerId)?.remove(); remoteAudioRef.current.delete(peerId); refreshParticipants(); };
+      const handlePeerList = (peers = []) => {
+        peers.forEach(({ peerId, name }) => {
+          if (peerId && name) peerNamesRef.current.set(peerId, name);
+          engine.createPeer(peerId);
+        });
+        refreshParticipants();
+      };
+      const handlePeerJoined = ({ peerId, name }) => {
+        if (peerId && name) peerNamesRef.current.set(peerId, name);
+        engine.createPeer(peerId); refreshParticipants();
+      };
+      const handlePeerLeft = ({ peerId }) => { peerNamesRef.current.delete(peerId); engine.removePeer(peerId); remoteAudioRef.current.get(peerId)?.remove(); remoteAudioRef.current.delete(peerId); refreshParticipants(); };
       const handleOffer = ({ peerId, offer }) => void engine.handleOffer(peerId, offer);
       const handleAnswer = ({ peerId, answer }) => void engine.handleAnswer(peerId, answer);
       const handleCandidate = ({ peerId, candidate }) => void engine.handleCandidate(peerId, candidate);
@@ -154,7 +168,10 @@ export function VoiceCommunicationProvider({ children }) {
     const hydrate = async () => { try {
       const [sessionResponse, staffResponse] = await Promise.all([fetch('/api/user', { credentials: 'same-origin' }), fetch('/api/voice/staff', { credentials: 'same-origin' })]);
       const user = sessionResponse.ok ? await sessionResponse.json() : null;
-      if (user?.id && active) setCurrentUser({ ...defaultCurrentUser, ...user, branch: user.branchName || user.branch || 'Current Branch', name: user.name || 'Staff' });
+      if (user?.id && active) {
+        const resolvedName = user.fullName || user.displayName || user.name || user.email || 'Staff';
+        setCurrentUser({ ...defaultCurrentUser, ...user, branch: user.branchName || user.branch || 'Current Branch', name: resolvedName });
+      }
       const staff = staffResponse.ok ? await staffResponse.json() : [];
       if (active) { setStaffDirectory(mergePresenceIntoDirectory(Array.isArray(staff) ? staff : [], Array.isArray(staff) ? staff : [])); setIsHydrated(true); }
       setDiagnostic('authentication', user?.id ? 'AUTHENTICATED' : 'UNAUTHENTICATED');
@@ -164,7 +181,16 @@ export function VoiceCommunicationProvider({ children }) {
   useEffect(() => {
     if (!currentUser?.id || socketRef.current) return undefined;
     const socket = io(window.location.origin, { transports: ['polling', 'websocket'] }); socketRef.current = socket;
-    socket.on('connect', () => socket.emit('voice:register', { userId: currentUser.id, name: currentUser.name, role: currentUser.role, branch: currentUser.branch, status: 'online' }));
+    socket.on('connect', () => socket.emit('voice:register', {
+      userId: currentUser.id,
+      name: currentUser.name,
+      fullName: currentUser.fullName || currentUser.name,
+      displayName: currentUser.displayName || currentUser.name,
+      email: currentUser.email,
+      role: currentUser.role,
+      branch: currentUser.branch,
+      status: 'online'
+    }));
     socket.on('voice:presenceUpdate', (payload) => setStaffDirectory((previous) => mergePresenceIntoDirectory(previous, Array.isArray(payload) ? payload : [])));
     return () => { socket.disconnect(); socketRef.current = null; };
   }, [currentUser]);

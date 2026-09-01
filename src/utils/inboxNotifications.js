@@ -4,6 +4,20 @@ export function buildIncomingMessageNotification(messagePayload = {}) {
   return text ? `New message from ${customerName}: ${text}` : `New message from ${customerName}`;
 }
 
+export function getActiveConversationIdFromEvent(event = null) {
+  if (!event) return '';
+
+  if (event?.detail && Object.prototype.hasOwnProperty.call(event.detail, 'conversationId')) {
+    return String(event.detail.conversationId ?? '').trim();
+  }
+
+  if (event?.conversationId != null) {
+    return String(event.conversationId).trim();
+  }
+
+  return '';
+}
+
 export function shouldShowIncomingMessageNotification(messagePayload = {}, activeConversationId = null) {
   if (!messagePayload || !messagePayload.conversation_id) return false;
 
