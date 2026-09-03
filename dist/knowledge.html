@@ -2507,6 +2507,8 @@
 			Object.entries(articles).forEach(([articleId, article]) => {
 				const card = document.createElement('div');
 				card.className = 'article-card';
+				card.tabIndex = 0;
+				card.setAttribute('role', 'button');
 				card.dataset.article = articleId;
 				card.dataset.category = article.category.toLowerCase().replace(/\s+/g, '-');
 				card.innerHTML = `
@@ -2526,16 +2528,29 @@
 
 		// Article cards functionality
 		function initializeArticleCards() {
-			const articleCards = document.querySelectorAll('.article-card');
-			
-			articleCards.forEach(card => {
-				card.removeEventListener('click', card._openListener);
-				const openListener = function() {
-					const articleId = this.dataset.article;
-					openArticleModal(articleId);
-				};
-				card._openListener = openListener;
-				card.addEventListener('click', openListener);
+			if (initializeArticleCards.initialized) return;
+			initializeArticleCards.initialized = true;
+
+			['featuredArticles', 'allArticles'].forEach(containerId => {
+				const container = document.getElementById(containerId);
+				if (!container) return;
+
+				container.addEventListener('click', event => {
+					const card = event.target.closest('.article-card');
+					if (card && container.contains(card)) openArticleModal(card.dataset.article);
+				});
+				container.addEventListener('keydown', event => {
+					if (event.key !== 'Enter' && event.key !== ' ') return;
+					const card = event.target.closest('.article-card');
+					if (!card || !container.contains(card)) return;
+					event.preventDefault();
+					openArticleModal(card.dataset.article);
+				});
+			});
+
+			document.querySelectorAll('.article-card').forEach(card => {
+				card.tabIndex = 0;
+				card.setAttribute('role', 'button');
 			});
 		}
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Bot, CheckCheck, Circle, Command, Filter, Inbox, MessageCircle, MoreHorizontal, Paperclip, Phone, Search, Send, ShieldCheck, Smile, Sparkles, Video, Zap } from 'lucide-react';
+import { ArrowDown, ArrowUpRight, Bot, CheckCheck, Circle, Command, Filter, Inbox, MessageCircle, MoreHorizontal, Paperclip, Phone, Search, Send, ShieldCheck, Smile, Sparkles, Video, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
@@ -121,7 +121,6 @@ function InboxPage({ defaultPlatform = null }) {
   const [autopilotMode, setAutopilotMode] = useState('assist');
   const [recentOrders, setRecentOrders] = useState([]);
   const [recentOrdersLoading, setRecentOrdersLoading] = useState(false);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const navigate = useNavigate();
   const [editingConversationId, setEditingConversationId] = useState(null);
   const [editingConversationName, setEditingConversationName] = useState('');
@@ -132,6 +131,7 @@ function InboxPage({ defaultPlatform = null }) {
   const activeConversationRoomRef = useRef(null);
   const messagesViewportRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -897,29 +897,16 @@ function InboxPage({ defaultPlatform = null }) {
     previewWindow.focus();
   }
 
-  function updateScrollToBottomVisibility() {
-    const container = messagesViewportRef.current;
-    if (!container) return;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    setShowScrollToBottom(distanceFromBottom > 140);
-  }
-
   function scrollToBottom(behavior = 'auto') {
     const container = messagesViewportRef.current;
     if (!container) return;
 
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior });
-    } else {
-      const targetScrollTop = container.scrollHeight;
-      try {
-        container.scrollTo({ top: targetScrollTop, behavior });
-      } catch (error) {
-        container.scrollTop = targetScrollTop;
-      }
+    const targetScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    try {
+      container.scrollTo({ top: targetScrollTop, behavior });
+    } catch (error) {
+      container.scrollTop = targetScrollTop;
     }
-
-    setShowScrollToBottom(false);
   }
 
   function openAiFeedback(message) {
@@ -988,23 +975,6 @@ function InboxPage({ defaultPlatform = null }) {
   }, [conversationMessages]);
 
   useEffect(() => {
-    const container = messagesViewportRef.current;
-    if (!container) return;
-
-    const handleScroll = () => updateScrollToBottomVisibility();
-    const handleResize = () => updateScrollToBottomVisibility();
-
-    container.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', handleResize);
-    updateScrollToBottomVisibility();
-
-    return () => {
-      container.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [activeConversation?.id, messagesLoading, conversationMessages.length]);
-
-  useEffect(() => {
     if (!activeConversation || messagesLoading) return;
     const container = messagesViewportRef.current;
     if (!container) return;
@@ -1014,7 +984,6 @@ function InboxPage({ defaultPlatform = null }) {
       if (distanceFromBottom < 140) {
         scrollToBottom('auto');
       }
-      updateScrollToBottomVisibility();
     };
 
     const frameId = window.requestAnimationFrame(runAutoScroll);
@@ -1032,6 +1001,24 @@ function InboxPage({ defaultPlatform = null }) {
     if (!activeConversation || messagesLoading) return;
     scrollToBottom('auto');
   }, [activeConversation?.id, messagesLoading]);
+
+  // Handle scroll to bottom button visibility
+  useEffect(() => {
+    const container = messagesViewportRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      // Show button if user is scrolled up more than 140px from bottom
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      setShowScrollButton(distanceFromBottom > 140);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    handleScroll();
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [activeConversation?.id, messagesLoading, conversationMessages.length]);
 
   async function saveConversationName(conversation) {
     const trimmedName = editingConversationName.trim();
@@ -1429,18 +1416,20 @@ function InboxPage({ defaultPlatform = null }) {
                             <div ref={messagesEndRef} />
                           </div>
 
+                        </div>
+                        {showScrollButton && (
                           <button
                             type="button"
-                            onClick={() => scrollToBottom('smooth')}
-                            aria-label="Scroll to bottom"
-                            className={`pointer-events-none absolute bottom-5 left-1/2 z-20 inline-flex h-12 w-12 -translate-x-1/2 items-center justify-center rounded-full border border-white/30 bg-gradient-to-br from-brand-500 via-sky-500 to-cyan-400 text-white shadow-[0_16px_40px_rgba(14,165,233,0.35),0_8px_18px_rgba(15,23,42,0.2)] backdrop-blur-sm transition-all duration-200 ${showScrollToBottom ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none translate-y-3 opacity-0'}`}
+                            onClick={() => {
+                              setShowScrollButton(false);
+                              scrollToBottom('smooth');
+                            }}
+                            aria-label="Scroll to latest message"
+                            className="absolute bottom-4 right-4 z-20 flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-blue-600 text-white shadow-[0_12px_30px_rgba(37,99,235,0.35)] transition-all duration-300 hover:scale-110 hover:shadow-[0_16px_40px_rgba(37,99,235,0.45)] sm:bottom-6 sm:right-6 dark:from-brand-600 dark:to-blue-700"
                           >
-                            <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M12 5v14" />
-                              <path d="m6 13 6 6 6-6" />
-                            </svg>
+                            <ArrowDown className="h-5 w-5" />
                           </button>
-                        </div>
+                        )}
                       </div>
 
                       <div className="border-t border-slate-200/80 bg-white/70 p-4 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/70">

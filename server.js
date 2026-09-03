@@ -5760,8 +5760,22 @@ app.post("/webhook", async (req, res) => {
         }
     }
 
+    // Detect attachment-only messages (no text, caption, or filename)
+    let hasAttachmentOnly = false;
     if (!text) {
-        text = msg.image?.caption || msg.document?.filename || msg.button?.text || msg.interactive?.type || "[Non-text message]";
+        if (msg.image && !msg.image.caption && !text) {
+            hasAttachmentOnly = true;
+            text = '';
+        } else if (msg.document && !msg.document.caption && !msg.document.filename && !text) {
+            hasAttachmentOnly = true;
+            text = '';
+        } else if ((msg.video || msg.sticker) && !text) {
+            hasAttachmentOnly = true;
+            text = '';
+        } else if (!hasAttachmentOnly) {
+            // Only use metadata if it's not a bare attachment
+            text = msg.image?.caption || msg.document?.filename || msg.button?.text || msg.interactive?.type || "[Non-text message]";
+        }
     }
 
     logIncomingMessagePayload('whatsapp', phone, sender, text, {
@@ -5773,6 +5787,7 @@ app.post("/webhook", async (req, res) => {
         businessPhoneNumberId,
         isSent: isOutgoingWebhook,
         hasAudio: !!msg.audio,
+        hasAttachmentOnly,
         webhook: '/webhook'
     });
 
@@ -5796,6 +5811,13 @@ app.post("/webhook", async (req, res) => {
         } catch (clarificationError) {
             console.error('CSAT clarification failed:', clarificationError);
         }
+        return res.sendStatus(200);
+    }
+
+    // Handle attachment-only messages by asking customer to describe what they want
+    if (hasAttachmentOnly && !text && sender === 'received') {
+        console.log('📎 Customer sent attachment without text, requesting description', { phone });
+        await sendAutoReply(phone, "I'm sorry, but I can't process attachments directly. Could you please describe what you'd like to share in text? For example, if you took a photo of a menu item, just tell me the name and I'm happy to help!");
         return res.sendStatus(200);
     }
 
@@ -5860,10 +5882,14 @@ app.post('/webhook/messenger', async (req, res) => {
 
     // Extract message text early for deduplication
     let messageText = message.text || '';
+    let hasAttachmentOnly = false;
     if (!messageText && Array.isArray(message.attachments) && message.attachments.length > 0) {
-        messageText = message.attachments[0].payload?.url || message.attachments[0].type || '[Attachment]';
+        hasAttachmentOnly = true;
+        // Don't send attachment metadata to AI - this causes AI to think customer sent an image
+        // We'll handle attachment-only messages with a specific response
+        messageText = '';
     }
-    if (!messageText) {
+    if (!messageText && !hasAttachmentOnly) {
         messageText = message.quick_reply?.payload || '[Non-text message]';
     }
 
@@ -5899,6 +5925,7 @@ app.post('/webhook/messenger', async (req, res) => {
         recipientId,
         isEcho,
         hasAttachments: Array.isArray(message.attachments) && message.attachments.length > 0,
+        hasAttachmentOnly,
         webhook: '/webhook/messenger'
     });
 
@@ -5909,6 +5936,13 @@ app.post('/webhook/messenger', async (req, res) => {
             text,
             conversationIdValue
         });
+        return res.sendStatus(200);
+    }
+
+    // Handle attachment-only messages by asking customer to describe what they want
+    if (hasAttachmentOnly && !messageText && senderType === 'received') {
+        console.log('📎 Customer sent attachment without text, requesting description', { conversationIdValue });
+        await sendAutoReply(conversationIdValue, "I'm sorry, but I can't process attachments directly. Could you please describe what you'd like to share in text? For example, if you took a photo of a menu item, just tell me the name and I'm happy to help!", platform);
         return res.sendStatus(200);
     }
 
@@ -5953,63 +5987,18 @@ app.post('/webhook/messenger', async (req, res) => {
 
     if (serviceResult?.path === 'existing-conversation' && serviceResult?.conversationId && senderType !== 'sent') {
         const convoId = serviceResult.conversationId;
-        const conversationSession = await loadConversationSession(convoId, null, null, null, conversationIdValue);
-        let menuRows = [];
-        try {
-            menuRows = await prisma.menu.findMany({
-                select: { name: true, key_name: true, available: true }
-            });
-        } catch (error) {
-            console.warn('Unable to load menu for Messenger order extraction:', error?.message || error);
-        }
-
-        const messageIntent = detectConversationIntent(text, conversationSession);
-        const isNewOrderIntent = messageIntent === 'New Order';
-        const extractedMenuItems = extractMenuItemsFromMessage(
-            text,
-            menuRows,
-            isNewOrderIntent ? [] : conversationSession.draftOrder?.items || []
-        );
-        const transitionedSession = applyWorkflowTransition(conversationSession, {
-            customerMessage: text,
-            draftOrder: {
-                ...(isNewOrderIntent ? {} : conversationSession.draftOrder),
-                items: extractedMenuItems
-            },
-            intent: messageIntent
-        });
-        const resolvedSession = mergeConversationState(transitionedSession, {
-            lastMessageAt: new Date().toISOString(),
-            history: [...(Array.isArray(transitionedSession.history) ? transitionedSession.history : []), { role: 'customer', message: text }]
-        });
-
         if (isCustomerGreeting(text)) {
             enableAIForConversation(convoId);
         }
-        const isHighRiskAnalysis = await handleHighRiskMessage({ conversationId: convoId, customerMessage: text, phone: conversationIdValue, branchId: null, customerId: null });
-        if (isHighRiskAnalysis.shouldEscalate) {
-            if (isHighRiskAnalysis.reply) {
-                await sendAutoReply(conversationIdValue, isHighRiskAnalysis.reply, platform);
-            }
-        } else {
-            const orderConfirmed = await checkAndSaveOrderConfirmation(conversationIdValue, convoId, text, null, resolvedSession);
-            const aiAutoAllowed = isAIAutoSendEnabled(convoId);
-            if (orderConfirmed?.success === true && orderConfirmed.orderId) {
-                await sendAutoReply(conversationIdValue, orderConfirmed.message || 'I’m sorry, the order could not be confirmed because the backend did not return a complete order record.', platform);
-            } else {
-                const forceAI = isTicketCreationRequest(text) || isRequestingStaff(text);
-                if (aiAutoAllowed && (forceAI || shouldAIRespond(convoId))) {
-                    const reply = await getMistralReply(text, conversationIdValue, convoId, null, resolvedSession);
-                    await sendAutoReply(conversationIdValue, reply, platform);
-                    const nextSessionSnapshot = mergeConversationState(resolvedSession, {
-                        workflowState: resolvedSession.workflowState || 'Greeting',
-                        pendingQuestions: resolvedSession.pendingQuestions || [],
-                        draftOrder: resolvedSession.draftOrder || null,
-                        history: [...resolvedSession.history, { role: 'ai', message: reply }]
-                    });
-                    await saveConversationSession(nextSessionSnapshot);
-                }
-            }
+        const replyPayload = await maybeGenerateCustomerWebChatReply({
+            conversationId: convoId,
+            customerMessage: text,
+            phone: conversationIdValue,
+            branchId: null,
+            messageId
+        });
+        if (replyPayload?.message) {
+            await sendAutoReply(conversationIdValue, replyPayload.message, platform);
         }
         checkAndCreateTicket(convoId, conversationIdValue, text);
     }
