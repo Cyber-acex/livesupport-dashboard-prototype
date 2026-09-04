@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
+import { useNotification } from '../contexts/NotificationContext';
 
 const policyCategories = [
   {
@@ -174,6 +175,8 @@ const priorityClasses = {
 };
 
 function PolicyPage() {
+  const { success, error } = useNotification();
+  const [policies, setPolicies] = useState(policySeed);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -182,11 +185,13 @@ function PolicyPage() {
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [selectedPolicy, setSelectedPolicy] = useState(policySeed[0]);
   const [activeTab, setActiveTab] = useState('Overview');
+  const [newPolicyOpen, setNewPolicyOpen] = useState(false);
+  const [policyDraft, setPolicyDraft] = useState({ title: '', category: 'Customer Service', description: '' });
 
   const filteredPolicies = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    return policySeed.filter((policy) => {
+    return policies.filter((policy) => {
       const matchesCategory = selectedCategory === 'All' || policy.category === selectedCategory;
       const matchesStatus = statusFilter === 'All' || policy.status === statusFilter;
       const matchesBranch = branchFilter === 'All' || policy.branchScope === branchFilter;
@@ -199,18 +204,70 @@ function PolicyPage() {
 
       return matchesCategory && matchesStatus && matchesBranch && matchesDepartment && matchesPriority && matchesSearch;
     });
-  }, [searchQuery, selectedCategory, statusFilter, branchFilter, departmentFilter, priorityFilter]);
+  }, [policies, searchQuery, selectedCategory, statusFilter, branchFilter, departmentFilter, priorityFilter]);
 
   const metrics = useMemo(() => [
-    { label: 'Total Policies', value: policySeed.length, tone: 'from-slate-900 to-slate-700' },
-    { label: 'Published', value: policySeed.filter((item) => item.status === 'Published').length, tone: 'from-emerald-600 to-teal-500' },
-    { label: 'Pending Review', value: policySeed.filter((item) => item.status === 'Review').length, tone: 'from-amber-500 to-orange-500' },
-    { label: 'AI Enabled', value: policySeed.filter((item) => item.aiEnabled).length, tone: 'from-violet-600 to-fuchsia-500' }
-  ], []);
+    { label: 'Total Policies', value: policies.length, tone: 'from-slate-900 to-slate-700' },
+    { label: 'Published', value: policies.filter((item) => item.status === 'Published').length, tone: 'from-emerald-600 to-teal-500' },
+    { label: 'Pending Review', value: policies.filter((item) => item.status === 'Review').length, tone: 'from-amber-500 to-orange-500' },
+    { label: 'AI Enabled', value: policies.filter((item) => item.aiEnabled).length, tone: 'from-violet-600 to-fuchsia-500' }
+  ], [policies]);
 
   const visiblePolicies = filteredPolicies.length > 0 ? filteredPolicies : [];
 
   const summaryTabs = ['Overview', 'Conditions', 'AI Instructions', 'Escalation'];
+
+  const createPolicy = (event) => {
+    event.preventDefault();
+    if (!policyDraft.title.trim() || !policyDraft.description.trim()) {
+      error('Add a policy title and description');
+      return;
+    }
+    const policy = {
+      id: Date.now(), title: policyDraft.title.trim(), category: policyDraft.category,
+      department: 'Support Ops', priority: 'Medium', status: 'Draft', branchScope: 'All branches',
+      version: 'v1.0', owner: 'You', aiEnabled: false, lastUpdated: 'just now', usageCount: '0',
+      approval: 'Draft', description: policyDraft.description.trim(), tags: [], effectiveDate: 'Not set',
+      expiry: 'No expiry', summary: policyDraft.description.trim(), aiInstructions: 'Add guidance before publishing.'
+    };
+    setPolicies((current) => [policy, ...current]);
+    setSelectedPolicy(policy);
+    setPolicyDraft({ title: '', category: 'Customer Service', description: '' });
+    setNewPolicyOpen(false);
+    success('Policy draft created');
+  };
+
+  const exportPolicies = () => {
+    const blob = new Blob([JSON.stringify(policies, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'livesupport-policies.json';
+    link.click();
+    URL.revokeObjectURL(url);
+    success('Policies exported');
+  };
+
+  const importPolicies = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = JSON.parse(reader.result);
+        if (!Array.isArray(imported)) throw new Error('Expected an array');
+        const valid = imported.filter((policy) => policy?.title && policy?.description).map((policy, index) => ({
+          ...policy, id: `${Date.now()}-${index}`, status: policy.status || 'Draft'
+        }));
+        setPolicies((current) => [...valid, ...current]);
+        success(`${valid.length} policies imported`);
+      } catch {
+        error('Import must be a JSON array of policies');
+      }
+      event.target.value = '';
+    };
+    reader.readAsText(file);
+  };
 
   return (
     <div className="flex min-h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
@@ -232,13 +289,14 @@ function PolicyPage() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  <button onClick={() => setNewPolicyOpen(true)} className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                     + New Policy
                   </button>
-                  <button className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  <label className="cursor-pointer rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                     Import Policies
-                  </button>
-                  <button className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition hover:-translate-y-0.5 dark:bg-white dark:text-slate-900">
+                    <input type="file" accept="application/json" onChange={importPolicies} className="hidden" />
+                  </label>
+                  <button onClick={exportPolicies} className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 transition hover:-translate-y-0.5 dark:bg-white dark:text-slate-900">
                     Export
                   </button>
                 </div>
@@ -478,6 +536,25 @@ function PolicyPage() {
             ) : null}
           </div>
         </motion.aside>
+      ) : null}
+
+      {newPolicyOpen ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm" onClick={() => setNewPolicyOpen(false)}>
+          <form onSubmit={createPolicy} onClick={(event) => event.stopPropagation()} className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-500">Policy studio</p><h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Create policy draft</h2></div>
+              <button type="button" aria-label="Close policy form" onClick={() => setNewPolicyOpen(false)} className="rounded-full px-3 py-1 text-2xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">x</button>
+            </div>
+            <div className="space-y-4">
+              <input value={policyDraft.title} onChange={(event) => setPolicyDraft((current) => ({ ...current, title: event.target.value }))} placeholder="Policy title" autoFocus className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-cyan-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+              <select value={policyDraft.category} onChange={(event) => setPolicyDraft((current) => ({ ...current, category: event.target.value }))} className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 outline-none focus:border-cyan-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
+                {policyCategories.map((group) => <option key={group.title}>{group.title}</option>)}
+              </select>
+              <textarea value={policyDraft.description} onChange={(event) => setPolicyDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Describe when this policy applies and what the team should do..." rows={6} className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 leading-6 outline-none focus:border-cyan-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+            </div>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setNewPolicyOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">Cancel</button><button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white dark:bg-white dark:text-slate-900">Create draft</button></div>
+          </form>
+        </div>
       ) : null}
     </div>
   );

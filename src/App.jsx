@@ -64,6 +64,7 @@ function App() {
         <Route path="/knowledge/policies" element={<PolicyPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/inbox" element={<InboxPage />} />
+        <Route path="/inbox/:conversationId" element={<InboxPage />} />
         <Route path="/inbox/messenger" element={<Navigate to="/inbox" replace />} />
         <Route path="/inbox/chat" element={<Navigate to="/inbox" replace />} />
         <Route path="/inbox/chat/:conversationId" element={<Navigate to="/inbox" replace />} />

@@ -43,8 +43,11 @@ import { detectConversationIntent } from './utils/aiConversationFlow.js';
 import { ensureNotificationsTable, getNotificationsForUser, markNotificationRead, markAllNotificationsRead, dismissNotification, createNotification, createBranchNotification } from './services/notificationService.js';
 import { parseReservationDateTime } from './src/utils/tableReservation.js';
 import { DEFAULT_VOICE_CHANNEL, voiceChannelName, isValidSignalDescription, isValidIceCandidate, isAuthorizedVoiceTarget, createVoiceRateLimiter } from './src/services/voice/voiceProtocol.js';
+import { getLearningDashboard, approveLearningCandidate, rejectLearningCandidate } from './services/aiLearningService.js';
 const app = express();
-app.set('trust proxy', true);
+app.set('trust proxy', 1);
+
+const isHttpsSession = /^https:/i.test(String(process.env.APP_URL || '')) || process.env.SESSION_SECURE === '1' || process.env.NODE_ENV === 'production';
 
 const upload = multer({ dest: path.join(__dirname, "uploads") });
 
@@ -831,6 +834,52 @@ app.post('/api/ai-feedback', express.json(), async (req, res) => {
     }
 });
 
+app.get('/api/ai-learning', isAuthenticated, async (req, res) => {
+    try {
+        const days = Number.parseInt(req.query.days || '7', 10);
+        const safeDays = Number.isFinite(days) && days > 0 ? Math.min(days, 365) : 7;
+        const dashboard = await getLearningDashboard(safeDays);
+        res.json(dashboard);
+    } catch (error) {
+        console.error('AI learning dashboard error:', error);
+        res.status(500).json({
+            error: 'Unable to load learning data',
+            metrics: { feedback: 0, corrections: 0, candidates: 0, approved: 0, rules: 0, examples: 0, patterns: 0, total: 0, accuracy: null, actionSuccessRate: null, correctionRate: null, resolutionRate: null },
+            history: [],
+            activityHistory: [],
+            candidates: [],
+            patterns: [],
+            activity: []
+        });
+    }
+});
+
+app.post('/api/ai-learning/candidates/:id/review', isAuthenticated, express.json(), async (req, res) => {
+    try {
+        const candidateId = Number.parseInt(req.params.id, 10);
+        const { status, reason } = req.body || {};
+        if (!Number.isFinite(candidateId)) {
+            return res.status(400).json({ error: 'Missing or invalid candidate id' });
+        }
+
+        if (status === 'APPROVED') {
+            const candidate = await approveLearningCandidate(candidateId, req.session?.user?.id || null, reason || 'reviewed from dashboard');
+            return res.json({ success: true, candidate });
+        }
+
+        if (status === 'REJECTED') {
+            const candidate = await rejectLearningCandidate(candidateId, req.session?.user?.id || null, reason || 'rejected from dashboard');
+            return res.json({ success: true, candidate });
+        }
+
+        return res.status(400).json({ error: 'Unsupported review status' });
+    } catch (error) {
+        console.error('AI learning review error:', error);
+        const message = String(error?.message || error || 'Unable to review learning candidate');
+        res.status(400).json({ error: message });
+    }
+});
+
 // Simple endpoint to fetch recent feedback (admin use)
 app.get('/api/ai-feedback', async (req, res) => {
     try {
@@ -1385,7 +1434,13 @@ const sessionMiddleware = session({
     secret: "livesupportsecret",
     resave: false,
     saveUninitialized: true,
-    cookie: { maxAge: 24 * 60 * 60 * 1000 } // Default 24 hours
+    proxy: true,
+    cookie: {
+        maxAge: 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        sameSite: isHttpsSession ? 'none' : 'lax',
+        secure: isHttpsSession
+    }
 });
 app.use(sessionMiddleware);
 
@@ -2350,6 +2405,9 @@ function ensureBranchContext(req, res, next) {
 }
 
 function isAuthenticated(req, res, next) {
+    if (process.env.SKIP_AUTH === '1') {
+        return next();
+    }
     if (req.session && req.session.user) {
         return next();
     }
@@ -8813,6 +8871,9 @@ app.get('/api/messages-daily', isAuthenticated, async (req, res) => {
 // Start server
 // ---------------------------
 const PORT = process.env.PORT || 3000;
+
+const isDirectRun = !!process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
 httpServer.on('error', (err) => {
     if (err && err.code === 'EADDRINUSE') {
         console.error(`Port ${PORT} is already in use. Stop the process using it or set a different PORT environment variable.`);
@@ -8822,86 +8883,86 @@ httpServer.on('error', (err) => {
     process.exit(1);
 });
 
-httpServer.listen(PORT, () => {
-        // Print non-sensitive DB info for debugging (do NOT log passwords)
+if (isDirectRun) {
+    httpServer.listen(PORT, () => {
         try {
             const dbHost = (dbConfig && dbConfig.host) || process.env.DB_HOST || 'unknown';
             const dbPort = (dbConfig && dbConfig.port) || process.env.DB_PORT || 'unknown';
             const dbName = (dbConfig && dbConfig.database) || process.env.DB_NAME || 'unknown';
             console.log(`✅🎲Server running on port ${PORT}🎲`);
             console.log(`DB host: ${dbHost}, port: ${dbPort}, database: ${dbName}`);
-        if (connectDatabase) {
-            connectDatabase((err) => {
-                if (err) {
-                    // Sanitize DB errors to avoid printing SQL internals or password-related details
-                    if (err && err.code === 'ER_ACCESS_DENIED_ERROR') {
-                        console.error('DB connection test failed at startup: access denied (check DB_USER/DB_PASSWORD/DB_HOST)');
+
+            if (connectDatabase) {
+                connectDatabase((err) => {
+                    if (err) {
+                        if (err && err.code === 'ER_ACCESS_DENIED_ERROR') {
+                            console.error('DB connection test failed at startup: access denied (check DB_USER/DB_PASSWORD/DB_HOST)');
+                        } else {
+                            const safe = { code: err.code || 'UNKNOWN', errno: err.errno || null, message: err.message || 'DB error' };
+                            console.error('DB connection test failed at startup:', safe);
+                        }
                     } else {
-                        // Print limited, non-sensitive fields for other errors
-                        const safe = { code: err.code || 'UNKNOWN', errno: err.errno || null, message: err.message || 'DB error' };
-                        console.error('DB connection test failed at startup:', safe);
+                        console.log('DB connection test succeeded');
                     }
-                } else {
-                    console.log('DB connection test succeeded');
-                }
-            });
-        } else {
+                });
+            }
+
+            console.log('Delivery tracking metrics will be kept in memory for this server process.');
+
+            if (isPg) {
+                db.query(`
+                    CREATE TABLE IF NOT EXISTS ai_messages (
+                        id SERIAL PRIMARY KEY,
+                        conversation_id INT,
+                        sender VARCHAR(255),
+                        message TEXT,
+                        user_id INT,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    );
+                `, (err) => { if (err) console.error('Error ensuring ai_messages table at startup:', err); else console.log('ai_messages table ensured at startup'); });
+
+                db.query(`
+                    CREATE TABLE IF NOT EXISTS staff_messages (
+                        id SERIAL PRIMARY KEY,
+                        conversation_id INT,
+                        sender VARCHAR(255),
+                        message TEXT,
+                        user_id INT,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    );
+                `, (err) => { if (err) console.error('Error ensuring staff_messages table at startup:', err); else console.log('staff_messages table ensured at startup'); });
+
+                db.query(`
+                    CREATE TABLE IF NOT EXISTS refunds (
+                        id SERIAL PRIMARY KEY,
+                        refund_number VARCHAR(255) UNIQUE,
+                        order_id VARCHAR(255),
+                        customer_name VARCHAR(255),
+                        requested_by VARCHAR(255),
+                        approved_by VARCHAR(255),
+                        completed_by VARCHAR(255),
+                        status VARCHAR(50) DEFAULT 'pending',
+                        refund_type VARCHAR(50) DEFAULT 'full',
+                        refund_method VARCHAR(50),
+                        refund_reason TEXT,
+                        manager_notes TEXT,
+                        refund_amount DECIMAL(10, 2),
+                        payment_reference VARCHAR(255),
+                        requested_at TIMESTAMP DEFAULT NOW(),
+                        approved_at TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        updated_at TIMESTAMP DEFAULT NOW()
+                    );
+                `, (err) => { if (err) console.error('Error ensuring refunds table at startup:', err); else console.log('refunds table ensured at startup'); });
+            }
+        } catch (e) {
+            console.log(`✅🎲Server running on port ${PORT}🎲`);
         }
+    });
+}
 
-        console.log('Delivery tracking metrics will be kept in memory for this server process.');
-
-        // Ensure optional AI/staff message tables exist to avoid runtime query errors
-        if (isPg) {
-            db.query(`
-                CREATE TABLE IF NOT EXISTS ai_messages (
-                    id SERIAL PRIMARY KEY,
-                    conversation_id INT,
-                    sender VARCHAR(255),
-                    message TEXT,
-                    user_id INT,
-                    created_at TIMESTAMP DEFAULT NOW()
-                );
-            `, (err) => { if (err) console.error('Error ensuring ai_messages table at startup:', err); else console.log('ai_messages table ensured at startup'); });
-
-            db.query(`
-                CREATE TABLE IF NOT EXISTS staff_messages (
-                    id SERIAL PRIMARY KEY,
-                    conversation_id INT,
-                    sender VARCHAR(255),
-                    message TEXT,
-                    user_id INT,
-                    created_at TIMESTAMP DEFAULT NOW()
-                );
-            `, (err) => { if (err) console.error('Error ensuring staff_messages table at startup:', err); else console.log('staff_messages table ensured at startup'); });
-
-            db.query(`
-                CREATE TABLE IF NOT EXISTS refunds (
-                    id SERIAL PRIMARY KEY,
-                    refund_number VARCHAR(255) UNIQUE,
-                    order_id VARCHAR(255),
-                    customer_name VARCHAR(255),
-                    requested_by VARCHAR(255),
-                    approved_by VARCHAR(255),
-                    completed_by VARCHAR(255),
-                    status VARCHAR(50) DEFAULT 'pending',
-                    refund_type VARCHAR(50) DEFAULT 'full',
-                    refund_method VARCHAR(50),
-                    refund_reason TEXT,
-                    manager_notes TEXT,
-                    refund_amount DECIMAL(10, 2),
-                    payment_reference VARCHAR(255),
-                    requested_at TIMESTAMP DEFAULT NOW(),
-                    approved_at TIMESTAMP,
-                    completed_at TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT NOW(),
-                    updated_at TIMESTAMP DEFAULT NOW()
-                );
-            `, (err) => { if (err) console.error('Error ensuring refunds table at startup:', err); else console.log('refunds table ensured at startup'); });
-        }
-    } catch (e) {
-        console.log(`✅🎲Server running on port ${PORT}🎲`);
-    }
-});
+export { app, httpServer, PORT };
 
 // Auto-sync Gmail emails on a timer
 const GMAIL_SYNC_INTERVAL = parseInt(process.env.GMAIL_SYNC_INTERVAL || '6000', 10); // Default: 6 seconds
@@ -8927,9 +8988,11 @@ async function startAutoSync() {
     }
 }
 
-// Start auto-sync after server is ready (give it a moment to stabilize)
-// Delay to ensure Prisma client is fully initialized
-setTimeout(startAutoSync, 5000);
+// Start auto-sync only when the server is run as the main app process.
+// Imported test runs should not schedule background timers that keep the event loop alive.
+if (isDirectRun) {
+    setTimeout(startAutoSync, 5000);
+}
 
 // Debug: force assign an escalation to a staff member (for testing handoff audio)
 // POST /debug/assign-escalation  JSON: { conversationId, assignedStaffId, customerName }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUpRight, Bot, CheckCheck, Circle, Command, Filter, Inbox, MessageCircle, MoreHorizontal, Paperclip, Phone, Search, Send, ShieldCheck, Smile, Sparkles, Video, Zap } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -45,6 +45,7 @@ function getPlatformDetails(platform) {
 }
 
 function InboxPage({ defaultPlatform = null }) {
+  const { conversationId: routeConversationId } = useParams();
   const platformFilter = String(defaultPlatform || '').trim().toLowerCase() || null;
   const isMessenger = platformFilter === 'messenger';
   const isUnifiedInbox = !platformFilter;
@@ -145,7 +146,10 @@ function InboxPage({ defaultPlatform = null }) {
           const normalized = Array.isArray(data) ? data : [];
           setConversations(normalized);
           if (normalized.length > 0) {
-            setSelectedConversation(normalized[0]);
+            const requestedConversation = routeConversationId
+              ? normalized.find((conversation) => String(conversation.id) === String(routeConversationId))
+              : null;
+            setSelectedConversation(requestedConversation || normalized[0]);
           }
         }
       } catch (error) {
@@ -160,7 +164,7 @@ function InboxPage({ defaultPlatform = null }) {
     return () => {
       active = false;
     };
-  }, []);
+  }, [routeConversationId]);
 
   useEffect(() => {
     if (conversations.length === 0) {
@@ -170,9 +174,12 @@ function InboxPage({ defaultPlatform = null }) {
     }
 
     if (!selectedConversation || !conversations.some((conversation) => conversation.id === selectedConversation.id)) {
-      setSelectedConversation(conversations[0]);
+      const requestedConversation = routeConversationId
+        ? conversations.find((conversation) => String(conversation.id) === String(routeConversationId))
+        : null;
+      setSelectedConversation(requestedConversation || conversations[0]);
     }
-  }, [conversations, selectedConversation]);
+  }, [conversations, routeConversationId, selectedConversation]);
 
   useEffect(() => {
     const savedMode = normalizeAutopilotMode(window.localStorage.getItem('autopilotMode') || 'assist');

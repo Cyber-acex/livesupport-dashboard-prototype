@@ -34,8 +34,8 @@ function KnowledgePage() {
       const data = await fetchArticles();
       setArticles(data);
       setCustomArticles(getCustomArticles());
-    } catch (error) {
-      console.error('Failed to load articles', error);
+    } catch (err) {
+      console.error('Failed to load articles', err);
       error('Unable to load articles');
     }
   };
@@ -285,6 +285,14 @@ function KnowledgePage() {
                       <div
                         key={article.id}
                         onClick={() => openArticle(article)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            openArticle(article);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                         className="group relative cursor-pointer overflow-hidden rounded-[24px] border border-slate-200/80 bg-gradient-to-br from-white via-white to-indigo-50/40 p-5 shadow-[var(--shadow-theme-md)] transition-all hover:-translate-y-1 hover:shadow-[var(--shadow-theme-lg)] dark:border-slate-700 dark:from-slate-900 dark:via-slate-900 dark:to-indigo-950/40"
                       >
                         <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-500 via-cyan-400 to-violet-500" />
@@ -327,6 +335,14 @@ function KnowledgePage() {
                       <div
                         key={article.id}
                         onClick={() => openArticle(article)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            openArticle(article);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
                         className="group flex cursor-pointer items-start justify-between gap-4 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-4 transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-white hover:shadow-[var(--shadow-theme-md)] dark:border-slate-800 dark:bg-slate-950/70 dark:hover:border-indigo-500/60 dark:hover:bg-slate-900"
                       >
                         <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -360,6 +376,130 @@ function KnowledgePage() {
             </div>
           </div>
         </main>
+
+        {modalOpen && selectedArticle && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+            role="presentation"
+            onClick={closeArticle}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="article-dialog-title"
+              className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-5 sm:px-7 dark:border-slate-700">
+                <div>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-indigo-500">{selectedArticle.category}</p>
+                  <h2 id="article-dialog-title" className="text-xl font-semibold text-slate-900 sm:text-2xl dark:text-white">
+                    {selectedArticle.title}
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Close article"
+                  onClick={closeArticle}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-2xl leading-none text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-white"
+                >
+                  x
+                </button>
+              </header>
+              <div className="overflow-y-auto px-5 py-6 text-sm leading-7 text-slate-700 sm:px-7 dark:text-slate-300">
+                <div className="whitespace-pre-wrap">{selectedArticle.content}</div>
+              </div>
+              <footer className="flex flex-wrap gap-2 border-t border-slate-200 px-5 py-4 sm:px-7 dark:border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => handleCopyArticleLink(selectedArticle)}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Copy link
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handlePrintArticle(selectedArticle)}
+                  className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Print
+                </button>
+                {selectedArticle.custom && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteArticle(selectedArticle.id)}
+                    className="ml-auto rounded-xl border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                  >
+                    Delete
+                  </button>
+                )}
+              </footer>
+            </section>
+          </div>
+        )}
+
+        {addModalOpen && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+            role="presentation"
+            onClick={() => setAddModalOpen(false)}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-article-title"
+              className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl sm:p-7 dark:border-slate-700 dark:bg-slate-900"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="mb-6 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-cyan-500">Knowledge workflow</p>
+                  <h2 id="add-article-title" className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Create article</h2>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Publish a searchable guide for the support team.</p>
+                </div>
+                <button type="button" aria-label="Close create article" onClick={() => setAddModalOpen(false)} className="rounded-full px-3 py-1 text-2xl text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">x</button>
+              </div>
+              <form onSubmit={handleAddArticle} className="space-y-4">
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Title
+                  <input
+                    value={formData.title}
+                    onChange={(event) => setFormData((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="e.g. Handling a missing item"
+                    className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                    autoFocus
+                  />
+                </label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Category
+                  <select
+                    value={formData.category}
+                    onChange={(event) => setFormData((current) => ({ ...current, category: event.target.value }))}
+                    className="mt-2 h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 font-normal outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  >
+                    <option value="">Choose a category</option>
+                    {categories.filter((category) => category !== 'All').map((category) => <option key={category} value={category}>{category}</option>)}
+                    <option value="General">General</option>
+                  </select>
+                </label>
+                <label className="block text-sm font-semibold text-slate-700 dark:text-slate-200">
+                  Article content
+                  <textarea
+                    value={formData.content}
+                    onChange={(event) => setFormData((current) => ({ ...current, content: event.target.value }))}
+                    placeholder="Write the steps, examples, and escalation guidance..."
+                    rows={8}
+                    className="mt-2 w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 font-normal leading-6 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </label>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button type="button" onClick={() => setAddModalOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">Cancel</button>
+                  <button type="submit" className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/20 hover:bg-slate-700 dark:bg-white dark:text-slate-900">Publish article</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -183,10 +183,26 @@ async function updateConversationTimestamp(conversationId) {
   await db.promise().query('UPDATE conversations SET updated_at = NOW(), last_message_at = NOW() WHERE id = ?', [conversationId]);
 }
 
+async function getConversationNotificationContext(conversationId) {
+  const conversationRows = await db.promise().query(
+    'SELECT name, phone, platform, platform_user_id FROM conversations WHERE id = ?',
+    [conversationId]
+  );
+  const conversation = Array.isArray(conversationRows) && conversationRows.length ? conversationRows[0] : {};
+  const messageRows = await db.promise().query(
+    "SELECT message FROM messages WHERE conversation_id = ? AND sender NOT IN ('agent', 'staff', 'ai', 'assistant', 'system') ORDER BY created_at DESC LIMIT 1",
+    [conversationId]
+  );
+  const latestMessage = Array.isArray(messageRows) && messageRows.length ? messageRows[0]?.message : null;
+  const customerName = conversation.name || conversation.phone || conversation.platform_user_id || 'Customer';
+  return { customerName, platform: conversation.platform || 'chat', latestMessage };
+}
+
 async function notifyBranchConversation(conversationId, branchId, platform, platformUserId) {
   try {
     const io = globalThis.io;
     if (!io) throw new Error('socket_io_not_initialized');
+    const context = await getConversationNotificationContext(conversationId);
     // Emit only to the selected branch room so other branches don't receive this event.
     io.to(`branch:${branchId}`).emit('conversation:new', {
       conversationId,
@@ -199,13 +215,13 @@ async function notifyBranchConversation(conversationId, branchId, platform, plat
       branchId,
       type: 'conversation',
       icon: 'message-circle',
-      title: 'New conversation started',
-      message: `A new ${platform} conversation has been created.`,
+      title: `New conversation from ${context.customerName}`,
+      message: context.latestMessage || `New ${platform || context.platform} conversation started.`,
       priority: 'important',
       entityType: 'conversation',
       entityId: conversationId,
       route: `/inbox/${conversationId}`,
-      metadata: { platform, platformUserId }
+      metadata: { platform, platformUserId, customerName: context.customerName }
     });
     return true;
   } catch (error) {
@@ -221,6 +237,7 @@ async function notifyConversationUpdate(conversationId) {
     const conversationRows = await db.promise().query('SELECT branch_id, platform, platform_user_id FROM conversations WHERE id = ?', [conversationId]);
     const conversation = Array.isArray(conversationRows) && conversationRows.length ? conversationRows[0] : null;
     if (!conversation?.branch_id) return;
+    const context = await getConversationNotificationContext(conversationId);
     io.to(`branch:${conversation.branch_id}`).emit('conversation:updated', {
       conversationId,
       branchId: conversation.branch_id,
@@ -232,27 +249,27 @@ async function notifyConversationUpdate(conversationId) {
       branchId: conversation.branch_id,
       type: 'message',
       icon: 'message-circle',
-      title: 'Conversation updated',
-      message: `Existing conversation #${conversationId} received a new message.`,
+      title: `New message from ${context.customerName}`,
+      message: context.latestMessage || `New message in ${context.platform} conversation.`,
       priority: 'normal',
       entityType: 'conversation',
       entityId: conversationId,
       route: `/inbox/${conversationId}`,
-      metadata: { platform: conversation.platform, platformUserId: conversation.platform_user_id }
+      metadata: { platform: conversation.platform, platformUserId: conversation.platform_user_id, customerName: context.customerName }
     });
   } catch (error) {
     console.warn('Unable to emit conversation update notification:', error?.message || error);
   }
 }
 
-async function createConversationFromPendingSelection({ platform, platformUserId, phone, branchId, branchName, initialMessages = [], promptText, selectionReply, messageId, sendReply, skipSocketCheck = false, skipNotification = false }) {
+async function createConversationFromPendingSelection({ platform, platformUserId, customerName, phone, branchId, branchName, initialMessages = [], promptText, selectionReply, messageId, sendReply, skipSocketCheck = false, skipNotification = false }) {
   let committed = false;
   let fallbackConversationId = null;
 
   try {
     await db.promise().query('BEGIN');
     const insertConvSql = 'INSERT INTO conversations (phone, name, platform, platform_user_id, branch_id, status, created_at, updated_at, last_message_at) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW(), NOW()) RETURNING id';
-    const insertResult = await db.promise().query(insertConvSql, [phone, phone, platform, platformUserId, branchId, 'OPEN']);
+    const insertResult = await db.promise().query(insertConvSql, [phone, customerName || phone, platform, platformUserId, branchId, 'OPEN']);
     const convoId = extractInsertId(insertResult);
     if (!convoId) {
       throw new Error('conversation_id_missing');
@@ -346,6 +363,9 @@ async function processPlatformMessage(input = {}) {
 
   if (openConversation) {
     console.log('🧭 Open conversation found', { platform, platformUserId, conversationId: openConversation.id, messageId });
+    if (normalized.customerName && normalized.customerName !== openConversation.name) {
+      await db.promise().query('UPDATE conversations SET name = ? WHERE id = ?', [normalized.customerName, openConversation.id]);
+    }
     await appendCustomerMessage(openConversation.id, text || '[non-text message]', 'received');
     await updateConversationTimestamp(openConversation.id);
     await notifyConversationUpdate(openConversation.id);
@@ -369,6 +389,7 @@ async function processPlatformMessage(input = {}) {
     const directConversationId = await createConversationFromPendingSelection({
       platform,
       platformUserId,
+      customerName: normalized.customerName,
       phone: platformUserId,
       branchId: defaultBranchId,
       branchName: 'Ikeja',
@@ -429,6 +450,7 @@ async function processPlatformMessage(input = {}) {
     const conversationId = await createConversationFromPendingSelection({
       platform,
       platformUserId,
+      customerName: normalized.customerName,
       phone: platformUserId,
       branchId: selectedBranch.id,
       branchName: selectedBranch.name,

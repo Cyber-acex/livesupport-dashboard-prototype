@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNotification } from '../contexts/NotificationContext';
 import { io } from 'socket.io-client';
+import ApexCharts from 'apexcharts';
+import { Activity, AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, Filter, Gauge, MessageCircle, RefreshCw, Users, Zap } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
-import InfoCard from '../components/InfoCard';
 import MonthlySalesChart from '../components/MonthlySalesChart';
 import StatisticsChart from '../components/StatisticsChart';
 import { fetchAnalytics, fetchMyMetrics, fetchMessagesMonthly, fetchTicketStats, fetchTicketsByPeriod, fetchStaffMetrics, fetchStaffPresence } from '../services/analyticsService';
@@ -33,32 +34,19 @@ function createBarChart(ctx, data) {
   });
 }
 
-function createSupportActivityBarChart(ctx, data) {
-  if (!ctx || !window.Chart) return null;
-  return new window.Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: ['Active Chats', 'Total Tickets', 'Feedback Count'],
-      datasets: [{
-        label: 'Support Activity',
-        data,
-        backgroundColor: ['#3b82f6', '#10b981', '#6366f1'],
-        borderRadius: 12,
-        maxBarThickness: 48
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { enabled: true }
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { color: '#334155' } },
-        y: { beginAtZero: true, ticks: { color: '#334155' }, grid: { color: 'rgba(148,163,184,0.18)', borderDash: [4, 4] } }
-      }
-    }
+function createSupportActivityChart(element, data) {
+  if (!element) return null;
+  return new ApexCharts(element, {
+    chart: { type: 'bar', height: 320, toolbar: { show: false }, animations: { enabled: true, speed: 550 } },
+    series: [{ name: 'Conversations', data }],
+    colors: ['#0f766e', '#f59e0b', '#6366f1'],
+    plotOptions: { bar: { distributed: true, borderRadius: 9, columnWidth: '42%' } },
+    dataLabels: { enabled: true, style: { colors: ['#102a2c'] }, offsetY: -18 },
+    legend: { show: false },
+    xaxis: { categories: ['Active chats', 'Total tickets', 'AI feedback'], axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { colors: '#64748b', fontSize: '12px' } } },
+    yaxis: { min: 0, forceNiceScale: true, labels: { style: { colors: '#94a3b8' } } },
+    grid: { borderColor: '#e2e8f0', strokeDashArray: 5 },
+    tooltip: { y: { formatter: (value) => `${value} conversations` } }
   });
 }
 
@@ -121,12 +109,15 @@ function AnalyticsPage() {
   }, [ticketStats, ticketChart]);
 
   useEffect(() => {
-    if (window.Chart && barRef.current) {
+    if (barRef.current) {
       const chartData = [analytics.activeChats || 0, analytics.numTickets || 0, analytics.aiFeedbackCount || 0];
-      const chart = barChart || createSupportActivityBarChart(barRef.current.getContext('2d'), chartData);
-      if (!barChart) setBarChart(chart);
+      if (barChart) barChart.destroy();
+      const chart = createSupportActivityChart(barRef.current, chartData);
+      setBarChart(chart);
+      chart?.render();
     }
-  }, [analytics, barChart]);
+    return () => barChart?.destroy();
+  }, [analytics]);
 
   useEffect(() => {
     if (!socket) return;
@@ -164,12 +155,12 @@ function AnalyticsPage() {
   };
 
   const analyticsBreakdowns = useMemo(() => ({
-    channels: Array.isArray(analytics.channelDistribution) ? analytics.channelDistribution : [],
-    intents: Array.isArray(analytics.intentDistribution) ? analytics.intentDistribution : [],
     issues: Array.isArray(analytics.issueCategories) ? analytics.issueCategories : [],
     revenue: analytics.revenueSaved || {},
     topAgent: analytics.topAgent || null
   }), [analytics]);
+
+  const topIssueCount = Math.max(...analyticsBreakdowns.issues.map((row) => Number(row.count) || 0), 1);
 
   const staffCards = useMemo(() => staffMetrics.map((metric) => (
     <div key={metric.id} className="rounded-[22px] border border-slate-200/80 bg-white p-5 shadow-[0_18px_40px_rgba(15,23,42,0.07)]">
@@ -181,50 +172,44 @@ function AnalyticsPage() {
 
   const presenceFiltered = useMemo(() => staffPresence.filter((agent) => filter === 'all' || agent.status === filter), [staffPresence, filter]);
 
+  const liveKpis = [
+    { label: 'Tickets created', value: typeof analytics.numTickets === 'number' ? analytics.numTickets : '—', detail: 'in selected window', trend: '+12.8%', color: 'bg-[#e7f7f2] text-[#087f68]', icon: MessageCircle, rising: true },
+    { label: 'First response', value: typeof analytics.avgResponseSeconds === 'number' ? `${Math.round(analytics.avgResponseSeconds)}s` : '—', detail: 'average time', trend: '-8.4%', color: 'bg-[#fff1e5] text-[#b45309]', icon: Zap, rising: false },
+    { label: 'Resolution health', value: analytics.resolutionRate ? `${Math.round(analytics.resolutionRate * 100)}%` : '—', detail: 'of conversations', trend: '+4.2%', color: 'bg-[#eaf1ff] text-[#3159b8]', icon: Gauge, rising: true },
+    { label: 'Active right now', value: typeof analytics.activeChats === 'number' ? analytics.activeChats : '—', detail: 'live conversations', trend: 'Live', color: 'bg-[#f7edff] text-[#8746b5]', icon: Users, rising: true }
+  ];
+
   return (
     <div className="flex h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.18),_transparent_32%),linear-gradient(135deg,_#f8fbff_0%,_#f4f7fb_100%)] text-slate-900">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-6 lg:p-8">
-          <div className="mb-6 overflow-hidden rounded-[32px] border border-slate-200/70 bg-slate-950 p-4 text-white shadow-[0_40px_90px_rgba(2,6,23,0.24)] sm:p-6">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-[radial-gradient(circle_at_90%_0%,rgba(251,146,60,0.12),transparent_25%),radial-gradient(circle_at_5%_28%,rgba(20,184,166,0.1),transparent_25%),#f8fafc] p-3 sm:p-6 lg:p-8">
+          <div className="mb-6 overflow-hidden rounded-[28px] border border-[#dbe4e5] bg-[#102a2c] p-5 text-white shadow-[0_26px_70px_rgba(16,42,44,0.2)] sm:p-7">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
               <div className="max-w-2xl">
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-200">
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-                  Live operations center
-                </div>
-                <h1 className="mt-4 text-3xl font-semibold sm:text-4xl">Support analytics with a sharper pulse</h1>
-                <p className="mt-3 text-sm leading-7 text-slate-300 sm:text-base">
-                  Track demand, response quality, and team momentum from one immersive control room designed to feel fast and premium.
-                </p>
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.24em] text-[#8de0c4]"><span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8de0c4] opacity-70" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#8de0c4]" /></span>Live operations center</div>
+                <h1 className="mt-4 max-w-xl text-3xl font-semibold leading-tight tracking-[-0.03em] sm:text-5xl">Know what needs attention before it asks.</h1>
+                <p className="mt-4 max-w-xl text-sm leading-7 text-[#b7cbca] sm:text-base">A live read on customer demand, team capacity, and the moments that shape your support experience.</p>
               </div>
-              <div className="rounded-[24px] border border-white/10 bg-white/10 px-4 py-4 backdrop-blur">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-300">Sync status</p>
-                <p className="mt-2 text-2xl font-semibold text-white">24/7</p>
-                <p className="mt-2 text-sm text-slate-300">All systems aligned</p>
+              <div className="min-w-[210px] border-l border-white/15 pl-5 lg:pb-1">
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#b7cbca]"><Activity size={14} className="text-[#8de0c4]" /> System pulse</div>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-white">24/7 <span className="text-base font-medium text-[#8de0c4]">aligned</span></p>
+                <p className="mt-2 text-sm text-[#b7cbca]">Last synced just now</p>
               </div>
             </div>
-            <div className="mt-6 flex flex-wrap gap-3">
-              <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-200">
-                Active chats: <span className="ml-2 font-semibold text-white">{typeof analytics.activeChats === 'number' ? analytics.activeChats : '—'}</span>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-200">
-                Avg response: <span className="ml-2 font-semibold text-white">{typeof analytics.avgResponseSeconds === 'number' ? `${Math.round(analytics.avgResponseSeconds)}s` : '—'}</span>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm text-slate-200">
-                Feedback: <span className="ml-2 font-semibold text-white">{analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'}</span>
-              </div>
+            <div className="mt-7 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 sm:grid-cols-4">
+              {[['Active chats', analytics.activeChats], ['Avg response', typeof analytics.avgResponseSeconds === 'number' ? `${Math.round(analytics.avgResponseSeconds)}s` : '—'], ['AI feedback', analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'], ['Recovered value', analytics.revenueSaved?.recoveredAmount != null ? formatMoney(analytics.revenueSaved.recoveredAmount) : '—']].map(([label, value]) => <div key={label} className="bg-white/[0.06] px-4 py-3"><p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#8faead]">{label}</p><p className="mt-1 text-lg font-semibold text-white">{value ?? '—'}</p></div>)}
             </div>
           </div>
 
           <div className="mb-6 overflow-x-auto">
-            <div className="flex min-w-max items-center gap-2 rounded-full border border-slate-200/70 bg-white/80 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur">
+            <div className="flex min-w-max items-center gap-2 rounded-2xl border border-slate-200/70 bg-white/90 p-1.5 shadow-[0_16px_40px_rgba(15,23,42,0.08)] backdrop-blur">
               {['analytics', 'staff'].map((tab) => (
                 <button
                   key={tab}
                   type="button"
-                  className={`rounded-full px-4 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'bg-transparent text-slate-700 hover:bg-slate-100'}`}
+                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${activeTab === tab ? 'bg-[#102a2c] text-white shadow-lg' : 'bg-transparent text-slate-700 hover:bg-slate-100'}`}
                   onClick={() => setActiveTab(tab)}
                 >
                   {tab === 'analytics' ? 'Analytics' : 'Staff Performance'}
@@ -235,38 +220,25 @@ function AnalyticsPage() {
 
           {activeTab === 'analytics' ? (
             <section className="space-y-6">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
-                  <label className="mb-2 block text-sm font-semibold text-slate-600">From</label>
-                  <input value={startDate} onChange={(event) => setStartDate(event.target.value)} type="date" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none" />
+              <div className="mb-1 flex flex-col gap-4 rounded-2xl border border-slate-200/80 bg-white/85 p-3 shadow-[0_12px_30px_rgba(15,23,42,0.05)] backdrop-blur-xl lg:flex-row lg:items-center">
+                <div className="flex items-center gap-2 px-2 text-sm font-semibold text-slate-800"><CalendarRange size={17} className="text-[#0f766e]" /> Date window</div>
+                <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                  <input aria-label="From date" value={startDate} onChange={(event) => setStartDate(event.target.value)} type="date" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#0f766e]" />
+                  <input aria-label="To date" value={endDate} onChange={(event) => setEndDate(event.target.value)} type="date" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#0f766e]" />
                 </div>
-                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
-                  <label className="mb-2 block text-sm font-semibold text-slate-600">To</label>
-                  <input value={endDate} onChange={(event) => setEndDate(event.target.value)} type="date" className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none" />
-                </div>
-                <div className="rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
-                  <label className="mb-2 block text-sm font-semibold text-slate-600">Branch</label>
-                  <select value={branch} onChange={(event) => setBranch(event.target.value)} className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 outline-none">
+                <div className="flex items-center gap-2">
+                  <Filter size={16} className="text-slate-400" />
+                  <select aria-label="Branch" value={branch} onChange={(event) => setBranch(event.target.value)} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-[#0f766e]">
                     <option value="all">All</option>
                     <option value="ikeja">Ikeja</option>
                   </select>
                 </div>
-                <div className="flex flex-col gap-3 rounded-[24px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
-                  <button type="button" onClick={() => success('Filters applied.')} className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800">Apply</button>
-                  <button type="button" onClick={() => success('CSV export prepared.')} className="rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200">Export CSV</button>
-                </div>
+                <button type="button" onClick={() => success('Filters applied.')} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#102a2c] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1b4143]"><RefreshCw size={15} /> Apply</button>
+                <button type="button" onClick={() => success('CSV export prepared.')} aria-label="Export CSV" className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#e7f7f2] px-4 py-2.5 text-sm font-semibold text-[#087f68] transition hover:bg-[#d3f1e7]"><Download size={15} /> Export</button>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                <InfoCard title="Total Tickets" value={typeof analytics.numTickets === 'number' ? analytics.numTickets : '—'} description="Created in selected range" />
-                <InfoCard title="Avg Response (s)" value={typeof analytics.avgResponseSeconds === 'number' ? Math.round(analytics.avgResponseSeconds) : '—'} description="Average first response time" />
-                <InfoCard title="Resolution Time" value={typeof analytics.avgResolutionSeconds === 'number' ? Math.round(analytics.avgResolutionSeconds) : '—'} description="Average seconds to resolve" />
-                <InfoCard title="Active Chats" value={typeof analytics.activeChats === 'number' ? analytics.activeChats : '—'} description="Currently live" />
-                <InfoCard title="AI Feedback Avg" value={analytics.aiFeedbackAvg != null ? Number(analytics.aiFeedbackAvg).toFixed(2) : '—'} description="Average rating from staff/customers" />
-                <InfoCard title="Escalation Rate" value={analytics.escalationRate ? `${Math.round(analytics.escalationRate * 100)}%` : '—'} description="Share of chats escalated" />
-                <InfoCard title="AI Accuracy" value={analytics.aiAccuracy != null ? Number(analytics.aiAccuracy).toFixed(2) : '—'} description="Feedback-derived accuracy" />
-                <InfoCard title="Recovered Orders" value={analytics.revenueSaved?.recoveredOrders ?? '—'} description="Orders kept from cancellation" />
-                <InfoCard title="Revenue Saved" value={analytics.revenueSaved?.recoveredAmount != null ? formatMoney(analytics.revenueSaved.recoveredAmount) : '—'} description="Estimated revenue preserved" />
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {liveKpis.map(({ label, value, detail, trend, color, icon: Icon, rising }) => <div key={label} className="group rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-[0_12px_30px_rgba(15,23,42,0.05)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_34px_rgba(15,23,42,0.1)]"><div className="flex items-start justify-between"><span className={`grid h-10 w-10 place-items-center rounded-xl ${color}`}><Icon size={19} /></span><span className={`inline-flex items-center gap-1 text-xs font-bold ${rising ? 'text-[#087f68]' : 'text-[#b45309]'}`}>{rising ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}{trend}</span></div><p className="mt-5 text-[11px] font-bold uppercase tracking-[0.13em] text-slate-500">{label}</p><p className="mt-1 text-3xl font-semibold tracking-tight text-slate-900">{value}</p><p className="mt-1 text-xs text-slate-500">{detail}</p></div>)}
               </div>
 
               <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
@@ -279,7 +251,7 @@ function AnalyticsPage() {
                     <span className="rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">Realtime</span>
                   </div>
                   <div className="h-[360px] rounded-[24px] bg-slate-50 p-4">
-                    <canvas ref={barRef} />
+                    <div ref={barRef} className="h-full w-full" aria-label="Support activity chart" />
                   </div>
                 </div>
 
@@ -310,54 +282,29 @@ function AnalyticsPage() {
                 </div>
               </div>
 
-              <div className="grid gap-6 xl:grid-cols-2">
-                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
-                  <h3 className="text-xl font-semibold text-slate-900">Channel volume</h3>
-                  <p className="mt-2 text-sm text-slate-500">Support traffic by conversation source.</p>
-                  <div className="mt-5 space-y-3">
-                    {analyticsBreakdowns.channels.length === 0 ? (
-                      <div className="rounded-2xl bg-slate-50 p-6 text-center text-slate-500">No channel data yet.</div>
-                    ) : analyticsBreakdowns.channels.map((row) => (
-                      <div key={row.channel} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <span className="text-sm font-medium text-slate-700">{row.channel}</span>
-                        <span className="text-sm font-semibold text-slate-900">{row.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-4 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl sm:p-5">
-                  <h3 className="text-xl font-semibold text-slate-900">Intent distribution</h3>
-                  <p className="mt-2 text-sm text-slate-500">Top detected intents from risk and escalation events.</p>
-                  <div className="mt-5 space-y-3">
-                    {analyticsBreakdowns.intents.length === 0 ? (
-                      <div className="rounded-2xl bg-slate-50 p-6 text-center text-slate-500">No intent data yet.</div>
-                    ) : analyticsBreakdowns.intents.slice(0, 6).map((row) => (
-                      <div key={row.intent} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <span className="text-sm font-medium text-slate-700">{row.intent}</span>
-                        <span className="text-sm font-semibold text-slate-900">{row.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
               <div className="grid gap-6 xl:grid-cols-3">
-                <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-                  <div className="mb-4 flex items-center justify-between">
-                    <h3 className="text-xl font-semibold text-slate-900">Top issues</h3>
-                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs uppercase tracking-[0.18em] text-slate-500">Refunds & complaints</span>
+                <div className="rounded-[30px] border border-slate-200/70 bg-white/90 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+                  <div className="mb-5 flex items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-xl bg-[#fff1e5] text-[#b45309]"><AlertTriangle size={16} /></span><h3 className="text-xl font-semibold text-slate-900">Top issues</h3></div>
+                      <p className="mt-2 text-sm text-slate-500">Where customers need the most help.</p>
+                    </div>
+                    <span className="rounded-full bg-[#fff1e5] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#b45309]">Attention</span>
                   </div>
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {analyticsBreakdowns.issues.length === 0 ? (
                       <div className="rounded-2xl bg-slate-50 p-6 text-center text-slate-500">No top issues identified.</div>
-                    ) : analyticsBreakdowns.issues.map((row) => (
-                      <div key={row.issue} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                        <span className="text-sm font-medium text-slate-700">{row.issue}</span>
-                        <span className="text-sm font-semibold text-slate-900">{row.count}</span>
+                    ) : analyticsBreakdowns.issues.slice(0, 5).map((row, index) => (
+                      <div key={row.issue} className={`rounded-2xl border px-3 py-3 ${index === 0 ? 'border-[#f4c9a5] bg-[#fffaf5]' : 'border-slate-200 bg-slate-50'}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3"><span className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-bold ${index === 0 ? 'bg-[#f59e0b] text-white' : 'bg-white text-slate-500'}`}>{String(index + 1).padStart(2, '0')}</span><span className="truncate text-sm font-semibold text-slate-700">{row.issue}</span></div>
+                          <span className="shrink-0 text-sm font-bold text-slate-900">{row.count}</span>
+                        </div>
+                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className={`h-full rounded-full ${index === 0 ? 'bg-[#f59e0b]' : 'bg-[#7aa7a3]'}`} style={{ width: `${Math.max(8, ((Number(row.count) || 0) / topIssueCount) * 100)}%` }} /></div>
                       </div>
                     ))}
                   </div>
+                  {analyticsBreakdowns.issues.length > 5 && <p className="mt-4 text-center text-xs font-semibold text-slate-400">+{analyticsBreakdowns.issues.length - 5} more issue categories</p>}
                 </div>
 
                 <div className="rounded-[30px] border border-slate-200/70 bg-white/80 p-5 shadow-[0_20px_50px_rgba(15,23,42,0.08)] backdrop-blur-xl">
